@@ -1,0 +1,42 @@
+{
+  "format": "dispatchatlas.catalog",
+  "problems": [
+    {
+      "family": "flexible-job-shop",
+      "file": "problems/flexible-job-shop-3x3-1.json",
+      "id": "flexible-job-shop-3x3-1",
+      "parameters": {
+        "flexibility": 3,
+        "jobs": 3,
+        "machines": 3,
+        "max_operations": 7,
+        "max_time": 20,
+        "min_operations": 5,
+        "min_time": 1,
+        "objectives": "makespan",
+        "weighted": false
+      },
+      "seed": 1,
+      "sha256": "523807fdb413bc0face215f1da62a53abddd26c0289a10ee75f99c3cdc491892"
+    },
+    {
+      "family": "flexible-job-shop",
+      "file": "problems/flexible-job-shop-3x3-2.json",
+      "id": "flexible-job-shop-3x3-2",
+      "parameters": {
+        "flexibility": 3,
+        "jobs": 3,
+        "machines": 3,
+        "max_operations": 7,
+        "max_time": 20,
+        "min_operations": 5,
+        "min_time": 1,
+        "objectives": "makespan",
+        "weighted": false
+      },
+      "seed": 2,
+      "sha256": "bef88979ccfafa53a9fe3de0495fd9629c941ce80d7a9b0458f80b6979d10e1a"
+    }
+  ],
+  "version": 1
+}

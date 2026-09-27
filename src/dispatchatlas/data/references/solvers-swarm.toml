@@ -1,0 +1,190 @@
+# Sources of the population metaheuristics on priority vectors, and the published critiques of them.
+
+[abualigah2021arithmetic]
+authors = "L. Abualigah, A. Diabat, S. Mirjalili, M. Abd Elaziz and A. H. Gandomi"
+year = 2021
+title = "The Arithmetic Optimization Algorithm"
+venue = "Computer Methods in Applied Mechanics and Engineering 376:113609"
+doi = "10.1016/j.cma.2020.113609"
+
+[camachovillalon2020grey]
+authors = "C. L. Camacho-Villalón, T. Stützle and M. Dorigo"
+year = 2020
+title = "Grey wolf, firefly and bat algorithms: Three widespread algorithms that do not contain any novelty"
+venue = "Swarm Intelligence (ANTS 2020), Lecture Notes in Computer Science 12421:121-133"
+doi = "10.1007/978-3-030-60376-2_10"
+
+[camachovillalon2022analysis]
+authors = "C. L. Camacho-Villalón, M. Dorigo and T. Stützle"
+year = 2022
+title = "An analysis of why cuckoo search does not bring any novel ideas to optimization"
+venue = "Computers & Operations Research 142:105747"
+doi = "10.1016/j.cor.2022.105747"
+
+[camachovillalon2023exposing]
+authors = "C. L. Camacho-Villalón, M. Dorigo and T. Stützle"
+year = 2023
+title = "Exposing the grey wolf, moth-flame, whale, firefly, bat, and antlion algorithms: Six misleading optimization techniques inspired by bestial metaphors"
+venue = "International Transactions in Operational Research 30(6):2945-2971"
+doi = "10.1111/itor.13176"
+
+[castelli2022salp]
+authors = "M. Castelli, L. Manzoni, L. Mariot, M. S. Nobile and A. Tangherloni"
+year = 2022
+title = "Salp Swarm Optimization: A critical review"
+venue = "Expert Systems with Applications 189:116029"
+doi = "10.1016/j.eswa.2021.116029"
+
+[crepinsek2012note]
+authors = "M. Črepinšek, S.-H. Liu and L. Mernik"
+year = 2012
+title = "A note on teaching–learning-based optimization algorithm"
+venue = "Information Sciences 212:79-93"
+doi = "10.1016/j.ins.2012.05.009"
+
+[deb2000efficient]
+authors = "K. Deb"
+year = 2000
+title = "An efficient constraint handling method for genetic algorithms"
+venue = "Computer Methods in Applied Mechanics and Engineering 186(2-4):311-338"
+doi = "10.1016/S0045-7825(99)00389-8"
+
+[faramarzi2020marine]
+authors = "A. Faramarzi, M. Heidarinejad, S. Mirjalili and A. H. Gandomi"
+year = 2020
+title = "Marine Predators Algorithm: A nature-inspired metaheuristic"
+venue = "Expert Systems with Applications 152:113377"
+doi = "10.1016/j.eswa.2020.113377"
+
+[gauci2012why]
+authors = "M. Gauci, T. J. Dodd and R. Groß"
+year = 2012
+title = "Why 'GSA: a gravitational search algorithm' is not genuinely based on the law of gravity"
+venue = "Natural Computing 11(4):719-720"
+doi = "10.1007/s11047-012-9322-0"
+
+[heidari2019harris]
+authors = "A. A. Heidari, S. Mirjalili, H. Faris, I. Aljarah, M. Mafarja and H. Chen"
+year = 2019
+title = "Harris hawks optimization: Algorithm and applications"
+venue = "Future Generation Computer Systems 97:849-872"
+doi = "10.1016/j.future.2019.02.028"
+
+[karaboga2007powerful]
+authors = "D. Karaboga and B. Basturk"
+year = 2007
+title = "A powerful and efficient algorithm for numerical function optimization: artificial bee colony (ABC) algorithm"
+venue = "Journal of Global Optimization 39(3):459-471"
+doi = "10.1007/s10898-007-9149-x"
+
+[kudela2022critical]
+authors = "J. Kůdela"
+year = 2022
+title = "A critical problem in benchmarking and analysis of evolutionary computation methods"
+venue = "Nature Machine Intelligence 4(12):1238-1245"
+doi = "10.1038/s42256-022-00579-0"
+
+[kudela2023evolutionary]
+authors = "J. Kůdela"
+year = 2023
+title = "The evolutionary computation methods no one should use"
+venue = "arXiv preprint 2301.01984"
+doi = "10.48550/arXiv.2301.01984"
+
+[mantegna1994fast]
+authors = "R. N. Mantegna"
+year = 1994
+title = "Fast, accurate algorithm for numerical simulation of Lévy stable stochastic processes"
+venue = "Physical Review E 49(5):4677-4683"
+doi = "10.1103/PhysRevE.49.4677"
+
+[mirjalili2014grey]
+authors = "S. Mirjalili, S. M. Mirjalili and A. Lewis"
+year = 2014
+title = "Grey Wolf Optimizer"
+venue = "Advances in Engineering Software 69:46-61"
+doi = "10.1016/j.advengsoft.2013.12.007"
+
+[mirjalili2015moth]
+authors = "S. Mirjalili"
+year = 2015
+title = "Moth-flame optimization algorithm: A novel nature-inspired heuristic paradigm"
+venue = "Knowledge-Based Systems 89:228-249"
+doi = "10.1016/j.knosys.2015.07.006"
+
+[mirjalili2016sca]
+authors = "S. Mirjalili"
+year = 2016
+title = "SCA: A Sine Cosine Algorithm for solving optimization problems"
+venue = "Knowledge-Based Systems 96:120-133"
+doi = "10.1016/j.knosys.2015.12.022"
+
+[mirjalili2016whale]
+authors = "S. Mirjalili and A. Lewis"
+year = 2016
+title = "The Whale Optimization Algorithm"
+venue = "Advances in Engineering Software 95:51-67"
+doi = "10.1016/j.advengsoft.2016.01.008"
+
+[mirjalili2017salp]
+authors = "S. Mirjalili, A. H. Gandomi, S. Z. Mirjalili, S. Saremi, H. Faris and S. M. Mirjalili"
+year = 2017
+title = "Salp Swarm Algorithm: A bio-inspired optimizer for engineering design problems"
+venue = "Advances in Engineering Software 114:163-191"
+doi = "10.1016/j.advengsoft.2017.07.002"
+
+[niu2019defect]
+authors = "P. Niu, S. Niu, N. Liu and L. Chang"
+year = 2019
+title = "The defect of the Grey Wolf optimization algorithm and its verification method"
+venue = "Knowledge-Based Systems 171:37-43"
+doi = "10.1016/j.knosys.2019.01.018"
+
+[rao2011teaching]
+authors = "R. V. Rao, V. J. Savsani and D. P. Vakharia"
+year = 2011
+title = "Teaching–learning-based optimization: A novel method for constrained mechanical design optimization problems"
+venue = "Computer-Aided Design 43(3):303-315"
+doi = "10.1016/j.cad.2010.12.015"
+
+[rao2016jaya]
+authors = "R. V. Rao"
+year = 2016
+title = "Jaya: A simple and new optimization algorithm for solving constrained and unconstrained optimization problems"
+venue = "International Journal of Industrial Engineering Computations 7(1):19-34"
+doi = "10.5267/j.ijiec.2015.8.004"
+
+[rashedi2009gsa]
+authors = "E. Rashedi, H. Nezamabadi-pour and S. Saryazdi"
+year = 2009
+title = "GSA: A Gravitational Search Algorithm"
+venue = "Information Sciences 179(13):2232-2248"
+doi = "10.1016/j.ins.2009.03.004"
+
+[sorensen2015metaheuristics]
+authors = "K. Sörensen"
+year = 2015
+title = "Metaheuristics—the metaphor exposed"
+venue = "International Transactions in Operational Research 22(1):3-18"
+doi = "10.1111/itor.12001"
+
+[yang2009cuckoo]
+authors = "X.-S. Yang and S. Deb"
+year = 2009
+title = "Cuckoo search via Lévy flights"
+venue = "World Congress on Nature and Biologically Inspired Computing (NaBIC 2009), 210-214"
+doi = "10.1109/NABIC.2009.5393690"
+
+[yang2009firefly]
+authors = "X.-S. Yang"
+year = 2009
+title = "Firefly algorithms for multimodal optimization"
+venue = "Stochastic Algorithms: Foundations and Applications (SAGA 2009), Lecture Notes in Computer Science 5792:169-178"
+doi = "10.1007/978-3-642-04944-6_14"
+
+[yang2014firefly]
+authors = "X.-S. Yang"
+year = 2014
+title = "Firefly algorithms"
+venue = "Nature-Inspired Optimization Algorithms, Elsevier, 111-127"
+doi = "10.1016/B978-0-12-416743-8.00008-7"

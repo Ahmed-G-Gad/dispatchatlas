@@ -1,0 +1,8 @@
+# Sources cited by the campaign engine.
+
+[deb2014evolutionary]
+authors = "K. Deb and H. Jain"
+year = 2014
+title = "An evolutionary many-objective optimization algorithm using reference-point-based nondominated sorting approach, Part I: Solving problems with box constraints"
+venue = "IEEE Transactions on Evolutionary Computation 18(4):577-601"
+doi = "10.1109/TEVC.2013.2281535"

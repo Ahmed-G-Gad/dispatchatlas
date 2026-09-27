@@ -1,0 +1,36 @@
+# Sources of the schedule builder, the priority rules, and list scheduling.
+
+[kolisch1996serial]
+authors = "R. Kolisch"
+year = 1996
+title = "Serial and parallel resource-constrained project scheduling methods revisited: Theory and computation"
+venue = "European Journal of Operational Research 90(2):320-333"
+doi = "10.1016/0377-2217(95)00357-6"
+
+[panwalkar1977survey]
+authors = "S. S. Panwalkar and W. Iskander"
+year = 1977
+title = "A survey of scheduling rules"
+venue = "Operations Research 25(1):45-61"
+doi = "10.1287/opre.25.1.45"
+
+[smith1956various]
+authors = "W. E. Smith"
+year = 1956
+title = "Various optimizers for single-stage production"
+venue = "Naval Research Logistics Quarterly 3(1-2):59-66"
+doi = "10.1002/nav.3800030106"
+
+[topcuoglu2002performance]
+authors = "H. Topcuoglu, S. Hariri and M.-Y. Wu"
+year = 2002
+title = "Performance-effective and low-complexity task scheduling for heterogeneous computing"
+venue = "IEEE Transactions on Parallel and Distributed Systems 13(3):260-274"
+doi = "10.1109/71.993206"
+
+[bean1994genetic]
+authors = "J. C. Bean"
+year = 1994
+title = "Genetic algorithms and random keys for sequencing and optimization"
+venue = "ORSA Journal on Computing 6(2):154-160"
+doi = "10.1287/ijoc.6.2.154"

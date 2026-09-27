@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a solver, benchmark, analysis, or other addition.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like DispatchAtlas to do, and for what use.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources
+      description: >-
+        For a method or benchmark, the publication that defines it, with its
+        DOI or a stable URL.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: >-
+        Other ways to reach the same goal, such as a plugin package that
+        registers a solver or a benchmark family.

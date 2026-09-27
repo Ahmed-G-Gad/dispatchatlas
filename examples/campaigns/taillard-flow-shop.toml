@@ -1,0 +1,51 @@
+# Constructive, local-search, and population methods on the first ten Taillard
+# permutation flow shops (20 jobs, 5 machines), rebuilt offline from their
+# published seeds. Two protocols give two fair comparisons: an equal number of
+# evaluated schedules, which replays exactly on any machine, and an equal
+# wall-clock time, which depends on the machine.
+#
+#   dispatchatlas campaign estimate examples/campaigns/taillard-flow-shop.toml
+#   dispatchatlas campaign run examples/campaigns/taillard-flow-shop.toml --output results
+
+schema_version = 1
+id = "taillard-20x5"
+seed = 1993
+replicates = 30
+
+[[instances]]
+suite = "taillard-flow-shop"
+instances = [
+  "ta001", "ta002", "ta003", "ta004", "ta005",
+  "ta006", "ta007", "ta008", "ta009", "ta010",
+]
+
+[[solvers]]
+id = "neh"
+
+[[solvers]]
+id = "iterated-greedy"
+
+[[solvers]]
+id = "tabu-search"
+
+[[solvers]]
+id = "simulated-annealing"
+
+[[solvers]]
+id = "genetic-algorithm"
+
+[[solvers]]
+id = "random-search"
+
+[[protocols]]
+name = "evaluations-20000"
+stop = { max_evaluations = 20000 }
+
+[[protocols]]
+name = "time-2s"
+stop = { time_limit = 2.0 }
+
+[execution]
+workers = "auto"
+timeout_factor = 2.0
+retries = 1

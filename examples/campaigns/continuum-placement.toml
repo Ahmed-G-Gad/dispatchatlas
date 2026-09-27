@@ -1,0 +1,42 @@
+# Placement of requests on an edge-fog-cloud continuum under two objectives:
+# four multi-objective evolutionary algorithms against two list heuristics.
+# The analysis bundle of this campaign holds the hypervolume, IGD, and IGD+
+# table and one Pareto-front figure per problem.
+#
+#   dispatchatlas campaign run examples/campaigns/continuum-placement.toml --output results
+#   dispatchatlas analyze results/continuum-placement --output results/continuum-analysis
+
+schema_version = 1
+id = "continuum-placement"
+seed = 7
+replicates = 10
+
+[[instances]]
+family = "continuum-offloading"
+parameters = { applications = 20, objectives = ["mean_response_time", "energy"] }
+seeds = [1, 2, 3, 4, 5]
+
+[[solvers]]
+id = "nsga-ii"
+
+[[solvers]]
+id = "sms-emoa"
+
+[[solvers]]
+id = "moea-d"
+
+[[solvers]]
+id = "spea2"
+
+[[solvers]]
+id = "heft"
+
+[[solvers]]
+id = "min-min"
+
+[[protocols]]
+name = "evaluations-5000"
+stop = { max_evaluations = 5000 }
+
+[execution]
+workers = "auto"

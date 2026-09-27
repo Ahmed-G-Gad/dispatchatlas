@@ -1,0 +1,78 @@
+# Sources of the multi-objective evolutionary algorithms.
+
+[beume2007smsemoa]
+authors = "N. Beume, B. Naujoks and M. Emmerich"
+year = 2007
+title = "SMS-EMOA: Multiobjective selection based on dominated hypervolume"
+venue = "European Journal of Operational Research 181(3):1653-1669"
+doi = "10.1016/j.ejor.2006.08.008"
+
+[cheng2016reference]
+authors = "R. Cheng, Y. Jin, M. Olhofer and B. Sendhoff"
+year = 2016
+title = "A reference vector guided evolutionary algorithm for many-objective optimization"
+venue = "IEEE Transactions on Evolutionary Computation 20(5):773-791"
+doi = "10.1109/TEVC.2016.2519378"
+
+[das1998normalboundary]
+authors = "I. Das and J. E. Dennis"
+year = 1998
+title = "Normal-boundary intersection: A new method for generating the Pareto surface in nonlinear multicriteria optimization problems"
+venue = "SIAM Journal on Optimization 8(3):631-657"
+doi = "10.1137/S1052623496307510"
+
+[deb2002fast]
+authors = "K. Deb, A. Pratap, S. Agarwal and T. Meyarivan"
+year = 2002
+title = "A fast and elitist multiobjective genetic algorithm: NSGA-II"
+venue = "IEEE Transactions on Evolutionary Computation 6(2):182-197"
+doi = "10.1109/4235.996017"
+
+[deb2014evolutionary]
+authors = "K. Deb and H. Jain"
+year = 2014
+title = "An evolutionary many-objective optimization algorithm using reference-point-based nondominated sorting approach, Part I: Solving problems with box constraints"
+venue = "IEEE Transactions on Evolutionary Computation 18(4):577-601"
+doi = "10.1109/TEVC.2013.2281535"
+
+[emmerich2005emo]
+authors = "M. Emmerich, N. Beume and B. Naujoks"
+year = 2005
+title = "An EMO algorithm using the hypervolume measure as selection criterion"
+venue = "Evolutionary Multi-Criterion Optimization (EMO 2005), Lecture Notes in Computer Science 3410:62-76"
+doi = "10.1007/978-3-540-31880-4_5"
+
+[panichella2019adaptive]
+authors = "A. Panichella"
+year = 2019
+title = "An adaptive evolutionary algorithm based on non-euclidean geometry for many-objective optimization"
+venue = "Proceedings of the Genetic and Evolutionary Computation Conference (GECCO '19), 595-603"
+doi = "10.1145/3321707.3321839"
+
+[panichella2022improved]
+authors = "A. Panichella"
+year = 2022
+title = "An improved Pareto front modeling algorithm for large-scale many-objective optimization"
+venue = "Proceedings of the Genetic and Evolutionary Computation Conference (GECCO '22), 565-573"
+doi = "10.1145/3512290.3528732"
+
+[zhang2007moead]
+authors = "Q. Zhang and H. Li"
+year = 2007
+title = "MOEA/D: A multiobjective evolutionary algorithm based on decomposition"
+venue = "IEEE Transactions on Evolutionary Computation 11(6):712-731"
+doi = "10.1109/TEVC.2007.892759"
+
+[zitzler2001spea2]
+authors = "E. Zitzler, M. Laumanns and L. Thiele"
+year = 2001
+title = "SPEA2: Improving the strength Pareto evolutionary algorithm"
+venue = "TIK-Report 103, Computer Engineering and Networks Laboratory (TIK), ETH Zurich"
+doi = "10.3929/ethz-a-004284029"
+
+[zitzler2004indicatorbased]
+authors = "E. Zitzler and S. Künzli"
+year = 2004
+title = "Indicator-based selection in multiobjective search"
+venue = "Parallel Problem Solving from Nature (PPSN VIII), Lecture Notes in Computer Science 3242:832-842"
+doi = "10.1007/978-3-540-30217-9_84"

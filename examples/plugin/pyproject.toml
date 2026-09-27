@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dispatchatlas-example-plugin"
+version = "0.1.0"
+description = "An example solver plugin for DispatchAtlas: insertion descent with restarts."
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["dispatchatlas>=0.1"]
+
+# DispatchAtlas calls register(registry) of every entry point in this group
+# when it builds its default solver registry.
+[project.entry-points."dispatchatlas.solvers"]
+example = "dispatchatlas_example_plugin:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dispatchatlas_example_plugin"]

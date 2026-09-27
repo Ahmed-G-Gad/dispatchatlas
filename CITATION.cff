@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: If you use DispatchAtlas in your research, please cite it using the metadata from this file.
+type: software
+title: DispatchAtlas
+abstract: >-
+  DispatchAtlas is a Python library for reproducible benchmarking of
+  scheduling algorithms. One data model covers machine scheduling,
+  resource-constrained project scheduling, and the placement of tasks across
+  an edge-fog-cloud continuum. Benchmark families generate problems from a
+  seed, and published suites are rebuilt exactly or read from their files.
+  Heuristics, metaheuristics, multi-objective, learning, and exact solvers
+  share one contract that enforces stop criteria and counts evaluations
+  exactly. Campaigns run every solver on every problem with paired seeds,
+  record each run, resume after interruptions, and replay runs to verify that
+  they reproduce, and the analysis reports non-parametric tests with effect
+  sizes and confidence intervals, quality indicators, tables, and figures.
+authors:
+  - given-names: Ahmed G.
+    family-names: Gad
+    email: me@ahmedgad.com
+    website: https://ahmedgad.com
+repository-code: https://github.com/ahmed-g-gad/dispatchatlas
+url: https://dispatchatlas.ahmedgad.com
+license: MIT
+keywords:
+  - scheduling
+  - combinatorial optimization
+  - benchmarking
+  - metaheuristics
+  - multi-objective optimization
+  - operations research
+  - edge computing
+  - reproducibility
+version: 0.1.0
+# date-released is added in the commit that publishes a release, set to the
+# date of that release.

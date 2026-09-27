@@ -1,0 +1,135 @@
+site_name: DispatchAtlas
+site_description: Reproducible benchmarking of scheduling algorithms, from classic shop problems to the edge-fog-cloud continuum.
+site_author: Ahmed G. Gad
+site_url: https://dispatchatlas.ahmedgad.com/
+repo_url: https://github.com/ahmed-g-gad/dispatchatlas
+repo_name: ahmed-g-gad/dispatchatlas
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Ahmed G. Gad. Released under the MIT License.
+
+strict: true
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+exclude_docs: |
+  /hooks/
+  /publications.toml
+
+hooks:
+  - docs/hooks/catalogues.py
+
+theme:
+  name: material
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            extensions:
+              - docs/hooks/griffe_roles.py:SphinxMarkup
+            filters: public
+            heading_level: 2
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_full_path: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - User guide:
+      - Data model: guide/model.md
+      - Benchmarks: guide/benchmarks.md
+      - Solvers: guide/solvers.md
+      - Campaigns: guide/campaigns.md
+      - Analysis: guide/analyzing.md
+  - Command line: cli.md
+  - Extending: extending.md
+  - Catalogues:
+      - Solvers: catalogue/solvers.md
+      - Benchmarks: catalogue/benchmarks.md
+      - Bibliography: catalogue/bibliography.md
+  - API reference:
+      - api/index.md
+      - Core: api/core.md
+      - Benchmarks: api/benchmarks.md
+      - Solver framework: api/solvers.md
+      - Heuristics and local search: api/solvers-heuristics.md
+      - Population and swarm methods: api/solvers-population.md
+      - Multi-objective methods: api/solvers-multiobjective.md
+      - Learning methods: api/solvers-learning.md
+      - Exact and hybrid methods: api/solvers-exact.md
+      - Campaigns: api/campaigns.md
+      - Analysis: api/analysis.md
+      - Statistics: api/analysis-stats.md
+      - Figures: api/analysis-figures.md
+      - References and command line: api/references.md
+  - Project:
+      - Publications: publications.md
+      - Citing: citing.md
+      - Contributing: contributing.md
+      - Changelog: changelog.md

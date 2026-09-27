@@ -1,0 +1,38 @@
+# Sources of the continuum model, the workflow generators, and the WfCommons reader.
+# The random task-graph generator of the workflow family is topcuoglu2002performance,
+# defined in solvers-rules.toml.
+
+[coleman2022wfcommons]
+authors = "T. Coleman, H. Casanova, L. Pottier, M. Kaushik, E. Deelman and R. Ferreira da Silva"
+year = 2022
+title = "WfCommons: A framework for enabling scientific workflow research and development"
+venue = "Future Generation Computer Systems 128:16-27"
+doi = "10.1016/j.future.2021.09.043"
+
+[fan2007power]
+authors = "X. Fan, W.-D. Weber and L. A. Barroso"
+year = 2007
+title = "Power provisioning for a warehouse-sized computer"
+venue = "Proceedings of the 34th Annual International Symposium on Computer Architecture (ISCA), 13-23"
+doi = "10.1145/1250662.1250665"
+
+[gupta2017ifogsim]
+authors = "H. Gupta, A. Vahid Dastjerdi, S. K. Ghosh and R. Buyya"
+year = 2017
+title = "iFogSim: A toolkit for modeling and simulation of resource management techniques in the Internet of Things, Edge and Fog computing environments"
+venue = "Software: Practice and Experience 47(9):1275-1296"
+doi = "10.1002/spe.2509"
+
+[kang2017neurosurgeon]
+authors = "Y. Kang, J. Hauswald, C. Gao, A. Rovinski, T. Mudge, J. Mars and L. Tang"
+year = 2017
+title = "Neurosurgeon: Collaborative intelligence between the cloud and mobile edge"
+venue = "Proceedings of the 22nd International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS), 615-629"
+doi = "10.1145/3037697.3037698"
+
+[mao2017survey]
+authors = "Y. Mao, C. You, J. Zhang, K. Huang and K. B. Letaief"
+year = 2017
+title = "A survey on mobile edge computing: The communication perspective"
+venue = "IEEE Communications Surveys & Tutorials 19(4):2322-2358"
+doi = "10.1109/COMST.2017.2745201"

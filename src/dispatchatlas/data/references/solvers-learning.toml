@@ -1,0 +1,71 @@
+# Sources of the learning solvers and the genetic-programming hyper-heuristic.
+
+[aydin2000dynamic]
+authors = "M. E. Aydin and E. Öztemel"
+year = 2000
+title = "Dynamic job-shop scheduling using reinforcement learning agents"
+venue = "Robotics and Autonomous Systems 33(2-3):169-178"
+doi = "10.1016/S0921-8890(00)00087-7"
+
+[hildebrandt2015using]
+authors = "T. Hildebrandt and J. Branke"
+year = 2015
+title = "On using surrogates with genetic programming"
+venue = "Evolutionary Computation 23(3):343-367"
+doi = "10.1162/EVCO_a_00133"
+
+[koza1992genetic]
+authors = "J. R. Koza"
+year = 1992
+title = "Genetic programming: On the programming of computers by means of natural selection"
+venue = "MIT Press, Cambridge, MA"
+url = "https://mitpress.mit.edu/9780262527910/genetic-programming/"
+
+[rummery1994online]
+authors = "G. A. Rummery and M. Niranjan"
+year = 1994
+title = "On-line Q-learning using connectionist systems"
+venue = "Technical report CUED/F-INFENG/TR 166, Cambridge University Engineering Department"
+url = "https://www.semanticscholar.org/paper/On-line-Q-learning-using-connectionist-systems-Rummery-Niranjan/7a09464f26e18a25a948baaa736270bfb84b5e12"
+
+[sutton2018reinforcement]
+authors = "R. S. Sutton and A. G. Barto"
+year = 2018
+title = "Reinforcement learning: An introduction"
+venue = "MIT Press, Cambridge, MA, second edition"
+url = "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+
+[watkins1992qlearning]
+authors = "C. J. C. H. Watkins and P. Dayan"
+year = 1992
+title = "Q-learning"
+venue = "Machine Learning 8(3-4):279-292"
+doi = "10.1007/BF00992698"
+
+[williams1992simple]
+authors = "R. J. Williams"
+year = 1992
+title = "Simple statistical gradient-following algorithms for connectionist reinforcement learning"
+venue = "Machine Learning 8(3-4):229-256"
+doi = "10.1007/BF00992696"
+
+[zaki2024cooperative]
+authors = "T. Zaki, Y. Zeiträg, R. Neves and J. R. Figueira"
+year = 2024
+title = "A cooperative coevolutionary genetic programming hyper-heuristic for multi-objective makespan and cost optimization in cloud workflow scheduling"
+venue = "Computers & Operations Research 172:106805"
+doi = "10.1016/j.cor.2024.106805"
+
+[zhang2011semiconductor]
+authors = "Z. Zhang, L. Zheng, F. Hou and N. Li"
+year = 2011
+title = "Semiconductor final test scheduling with Sarsa(λ, k) algorithm"
+venue = "European Journal of Operational Research 215(2):446-458"
+doi = "10.1016/j.ejor.2011.05.052"
+
+[zhang2021surrogateassisted]
+authors = "F. Zhang, Y. Mei, S. Nguyen, M. Zhang and K. C. Tan"
+year = 2021
+title = "Surrogate-assisted evolutionary multitask genetic programming for dynamic flexible job shop scheduling"
+venue = "IEEE Transactions on Evolutionary Computation 25(4):651-665"
+doi = "10.1109/TEVC.2021.3065707"

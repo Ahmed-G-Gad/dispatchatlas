@@ -1,0 +1,32 @@
+# The campaign of the quickstart: three solvers on three generated flow shops,
+# 1000 evaluated schedules per run, five replicates of each stochastic solver.
+#
+#   dispatchatlas campaign run examples/campaigns/quickstart.toml --output results
+#   dispatchatlas analyze results/quickstart --output results/quickstart-analysis
+#   dispatchatlas campaign replay results/quickstart
+
+schema_version = 1
+id = "quickstart"
+seed = 2024
+replicates = 5
+
+[[instances]]
+family = "flow-shop"
+parameters = { jobs = 8, machines = 4 }
+seeds = [1, 2, 3]
+
+[[solvers]]
+id = "neh"
+
+[[solvers]]
+id = "simulated-annealing"
+
+[[solvers]]
+id = "random-search"
+
+[[protocols]]
+name = "evaluations-1000"
+stop = { max_evaluations = 1000 }
+
+[execution]
+workers = "auto"

@@ -1,0 +1,138 @@
+# Sources of the classic benchmark families, Taillard's instances, the file formats, and the suites.
+
+[adams1988shifting]
+authors = "J. Adams, E. Balas and D. Zawack"
+year = 1988
+title = "The shifting bottleneck procedure for job shop scheduling"
+venue = "Management Science 34(3):391-401"
+doi = "10.1287/mnsc.34.3.391"
+
+[applegate1991computational]
+authors = "D. Applegate and W. Cook"
+year = 1991
+title = "A computational study of the job-shop scheduling problem"
+venue = "ORSA Journal on Computing 3(2):149-156"
+doi = "10.1287/ijoc.3.2.149"
+
+[beasley1990orlibrary]
+authors = "J. E. Beasley"
+year = 1990
+title = "OR-Library: Distributing test problems by electronic mail"
+venue = "Journal of the Operational Research Society 41(11):1069-1072"
+doi = "10.1057/jors.1990.166"
+
+[brandimarte1993routing]
+authors = "P. Brandimarte"
+year = 1993
+title = "Routing and scheduling in a flexible job shop by tabu search"
+venue = "Annals of Operations Research 41(3):157-183"
+doi = "10.1007/BF02023073"
+
+[carlier1978ordonnancements]
+authors = "J. Carlier"
+year = 1978
+title = "Ordonnancements à contraintes disjonctives"
+venue = "RAIRO Recherche Opérationnelle 12(4):333-350"
+doi = "10.1051/ro/1978120403331"
+
+[crauwels1998local]
+authors = "H. A. J. Crauwels, C. N. Potts and L. N. Van Wassenhove"
+year = 1998
+title = "Local search heuristics for the single machine total weighted tardiness scheduling problem"
+venue = "INFORMS Journal on Computing 10(3):341-350"
+doi = "10.1287/ijoc.10.3.341"
+
+[fisher1963probabilistic]
+authors = "H. Fisher and G. L. Thompson"
+year = 1963
+title = "Probabilistic learning combinations of local job-shop scheduling rules"
+venue = "In J. F. Muth and G. L. Thompson (eds.), Industrial Scheduling, Prentice-Hall, Englewood Cliffs, 225-251"
+
+[gonzalez1976open]
+authors = "T. Gonzalez and S. Sahni"
+year = 1976
+title = "Open shop scheduling to minimize finish time"
+venue = "Journal of the ACM 23(4):665-679"
+doi = "10.1145/321978.321985"
+
+[heller1960numerical]
+authors = "J. Heller"
+year = 1960
+title = "Some numerical experiments for an M × J flow shop and its decision-theoretical aspects"
+venue = "Operations Research 8(2):178-184"
+doi = "10.1287/opre.8.2.178"
+
+[kolisch1995characterization]
+authors = "R. Kolisch, A. Sprecher and A. Drexl"
+year = 1995
+title = "Characterization and generation of a general class of resource-constrained project scheduling problems"
+venue = "Management Science 41(10):1693-1703"
+doi = "10.1287/mnsc.41.10.1693"
+
+[kolisch1997psplib]
+authors = "R. Kolisch and A. Sprecher"
+year = 1997
+title = "PSPLIB - A project scheduling problem library"
+venue = "European Journal of Operational Research 96(1):205-216"
+doi = "10.1016/S0377-2217(96)00170-1"
+
+[lawrence1984resource]
+authors = "S. Lawrence"
+year = 1984
+title = "Resource constrained project scheduling: An experimental investigation of heuristic scheduling techniques (Supplement)"
+venue = "Graduate School of Industrial Administration, Carnegie-Mellon University, Pittsburgh"
+
+[mastrolilli2000effective]
+authors = "M. Mastrolilli and L. M. Gambardella"
+year = 2000
+title = "Effective neighbourhood functions for the flexible job shop problem"
+venue = "Journal of Scheduling 3(1):3-20"
+doi = "10.1002/(SICI)1099-1425(200001/02)3:1<3::AID-JOS32>3.0.CO;2-Y"
+
+[reeves1995genetic]
+authors = "C. R. Reeves"
+year = 1995
+title = "A genetic algorithm for flowshop sequencing"
+venue = "Computers & Operations Research 22(1):5-13"
+doi = "10.1016/0305-0548(93)E0014-K"
+
+[ruiz2010hybrid]
+authors = "R. Ruiz and J. A. Vázquez-Rodríguez"
+year = 2010
+title = "The hybrid flow shop scheduling problem"
+venue = "European Journal of Operational Research 205(1):1-18"
+doi = "10.1016/j.ejor.2009.09.024"
+
+[singer1998computational]
+authors = "M. Singer and M. Pinedo"
+year = 1998
+title = "A computational study of branch and bound techniques for minimizing the total weighted tardiness in job shops"
+venue = "IIE Transactions 30(2):109-118"
+doi = "10.1080/07408179808966443"
+
+[storer1992new]
+authors = "R. H. Storer, S. D. Wu and R. Vaccari"
+year = 1992
+title = "New search spaces for sequencing problems with application to job shop scheduling"
+venue = "Management Science 38(10):1495-1509"
+doi = "10.1287/mnsc.38.10.1495"
+
+[taillard1993benchmarks]
+authors = "E. Taillard"
+year = 1993
+title = "Benchmarks for basic scheduling problems"
+venue = "European Journal of Operational Research 64(2):278-285"
+doi = "10.1016/0377-2217(93)90182-M"
+
+[vallada2011genetic]
+authors = "E. Vallada and R. Ruiz"
+year = 2011
+title = "A genetic algorithm for the unrelated parallel machine scheduling problem with sequence dependent setup times"
+venue = "European Journal of Operational Research 211(3):612-622"
+doi = "10.1016/j.ejor.2011.01.011"
+
+[yamada1992genetic]
+authors = "T. Yamada and R. Nakano"
+year = 1992
+title = "A genetic algorithm applicable to large-scale job-shop problems"
+venue = "In R. Männer and B. Manderick (eds.), Parallel Problem Solving from Nature 2, North-Holland, Amsterdam, 281-290"

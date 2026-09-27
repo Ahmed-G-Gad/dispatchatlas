@@ -1,0 +1,162 @@
+# Sources of the population metaheuristics and the continuous optimisers.
+
+[davis1985applying]
+authors = "L. Davis"
+year = 1985
+title = "Applying adaptive algorithms to epistatic domains"
+venue = "Proceedings of the 9th International Joint Conference on Artificial Intelligence (IJCAI-85), 162-164"
+url = "https://www.ijcai.org/Proceedings/85-1/Papers/029.pdf"
+
+[dorigo1996ant]
+authors = "M. Dorigo, V. Maniezzo and A. Colorni"
+year = 1996
+title = "Ant system: Optimization by a colony of cooperating agents"
+venue = "IEEE Transactions on Systems, Man, and Cybernetics, Part B (Cybernetics) 26(1):29-41"
+doi = "10.1109/3477.484436"
+
+[glover1998template]
+authors = "F. Glover"
+year = 1998
+title = "A template for scatter search and path relinking"
+venue = "Artificial Evolution (AE 1997), Lecture Notes in Computer Science 1363:1-51"
+doi = "10.1007/BFb0026589"
+
+[goncalves2011biased]
+authors = "J. F. Gonçalves and M. G. C. Resende"
+year = 2011
+title = "Biased random-key genetic algorithms for combinatorial optimization"
+venue = "Journal of Heuristics 17(5):487-525"
+doi = "10.1007/s10732-010-9143-1"
+
+[hansen2001completely]
+authors = "N. Hansen and A. Ostermeier"
+year = 2001
+title = "Completely derandomized self-adaptation in evolution strategies"
+venue = "Evolutionary Computation 9(2):159-195"
+doi = "10.1162/106365601750190398"
+
+[hansen2003reducing]
+authors = "N. Hansen, S. D. Müller and P. Koumoutsakos"
+year = 2003
+title = "Reducing the time complexity of the derandomized evolution strategy with covariance matrix adaptation (CMA-ES)"
+venue = "Evolutionary Computation 11(1):1-18"
+doi = "10.1162/106365603321828970"
+
+[hansen2016cma]
+authors = "N. Hansen"
+year = 2016
+title = "The CMA evolution strategy: A tutorial"
+venue = "arXiv preprint 1604.00772"
+doi = "10.48550/arXiv.1604.00772"
+
+[hartmann1998competitive]
+authors = "S. Hartmann"
+year = 1998
+title = "A competitive genetic algorithm for resource-constrained project scheduling"
+venue = "Naval Research Logistics 45(7):733-750"
+doi = "10.1002/(SICI)1520-6750(199810)45:7<733::AID-NAV5>3.0.CO;2-C"
+
+[holland1992adaptation]
+authors = "J. H. Holland"
+year = 1992
+title = "Adaptation in natural and artificial systems: An introductory analysis with applications to biology, control, and artificial intelligence"
+venue = "MIT Press, Cambridge, MA; first published by the University of Michigan Press, 1975"
+doi = "10.7551/mitpress/1090.001.0001"
+
+[kennedy1995particle]
+authors = "J. Kennedy and R. Eberhart"
+year = 1995
+title = "Particle swarm optimization"
+venue = "Proceedings of ICNN'95, International Conference on Neural Networks 4:1942-1948"
+doi = "10.1109/ICNN.1995.488968"
+
+[larranaga2002estimation]
+authors = "P. Larrañaga and J. A. Lozano (eds.)"
+year = 2002
+title = "Estimation of distribution algorithms: A new tool for evolutionary computation"
+venue = "Genetic Algorithms and Evolutionary Computation 2, Kluwer Academic Publishers, Boston, MA"
+doi = "10.1007/978-1-4615-1539-5"
+
+[liang2006comprehensive]
+authors = "J. J. Liang, A. K. Qin, P. N. Suganthan and S. Baskar"
+year = 2006
+title = "Comprehensive learning particle swarm optimizer for global optimization of multimodal functions"
+venue = "IEEE Transactions on Evolutionary Computation 10(3):281-295"
+doi = "10.1109/TEVC.2005.857610"
+
+[marti2006principles]
+authors = "R. Martí, M. Laguna and F. Glover"
+year = 2006
+title = "Principles of scatter search"
+venue = "European Journal of Operational Research 169(2):359-372"
+doi = "10.1016/j.ejor.2004.08.004"
+
+[merkle2002ant]
+authors = "D. Merkle, M. Middendorf and H. Schmeck"
+year = 2002
+title = "Ant colony optimization for resource-constrained project scheduling"
+venue = "IEEE Transactions on Evolutionary Computation 6(4):333-346"
+doi = "10.1109/TEVC.2002.802450"
+
+[moscato1989evolution]
+authors = "P. Moscato"
+year = 1989
+title = "On evolution, search, optimization, genetic algorithms and martial arts: Towards memetic algorithms"
+venue = "Caltech Concurrent Computation Program, C3P Report 826, California Institute of Technology, Pasadena, CA"
+url = "https://www.semanticscholar.org/paper/8b9a748ae77f9235396e04301b82143feb1167fe"
+
+[muhlenbein1996recombination]
+authors = "H. Mühlenbein and G. Paaß"
+year = 1996
+title = "From recombination of genes to the estimation of distributions I. Binary parameters"
+venue = "Parallel Problem Solving from Nature (PPSN IV), Lecture Notes in Computer Science 1141:178-187"
+doi = "10.1007/3-540-61723-X_982"
+
+[shi1998modified]
+authors = "Y. Shi and R. Eberhart"
+year = 1998
+title = "A modified particle swarm optimizer"
+venue = "1998 IEEE International Conference on Evolutionary Computation Proceedings (IEEE World Congress on Computational Intelligence), 69-73"
+doi = "10.1109/ICEC.1998.699146"
+
+[shi1999empirical]
+authors = "Y. Shi and R. C. Eberhart"
+year = 1999
+title = "Empirical study of particle swarm optimization"
+venue = "Proceedings of the 1999 Congress on Evolutionary Computation (CEC99) 3:1945-1950"
+doi = "10.1109/CEC.1999.785511"
+
+[storn1997differential]
+authors = "R. Storn and K. Price"
+year = 1997
+title = "Differential evolution – A simple and efficient heuristic for global optimization over continuous spaces"
+venue = "Journal of Global Optimization 11(4):341-359"
+doi = "10.1023/A:1008202821328"
+
+[stutzle2000max]
+authors = "T. Stützle and H. H. Hoos"
+year = 2000
+title = "MAX-MIN Ant System"
+venue = "Future Generation Computer Systems 16(8):889-914"
+doi = "10.1016/S0167-739X(00)00043-1"
+
+[tanabe2013success]
+authors = "R. Tanabe and A. Fukunaga"
+year = 2013
+title = "Success-history based parameter adaptation for differential evolution"
+venue = "2013 IEEE Congress on Evolutionary Computation (CEC), 71-78"
+doi = "10.1109/CEC.2013.6557555"
+
+[tanabe2014improving]
+authors = "R. Tanabe and A. S. Fukunaga"
+year = 2014
+title = "Improving the search performance of SHADE using linear population size reduction"
+venue = "2014 IEEE Congress on Evolutionary Computation (CEC), 1658-1665"
+doi = "10.1109/CEC.2014.6900380"
+
+[zhang2009jade]
+authors = "J. Zhang and A. C. Sanderson"
+year = 2009
+title = "JADE: Adaptive differential evolution with optional external archive"
+venue = "IEEE Transactions on Evolutionary Computation 13(5):945-958"
+doi = "10.1109/TEVC.2009.2014613"

@@ -1,0 +1,211 @@
+# Sources of the statistical analysis: tests, corrections, effect sizes,
+# intervals, Bayesian tests, power, deviations, and quality indicators.
+
+[benavoli2014bayesian]
+authors = "A. Benavoli, G. Corani, F. Mangili, M. Zaffalon and F. Ruggeri"
+year = 2014
+title = "A Bayesian Wilcoxon signed-rank test based on the Dirichlet process"
+venue = "Proceedings of the 31st International Conference on Machine Learning, PMLR 32(2):1026-1034"
+url = "https://proceedings.mlr.press/v32/benavoli14.html"
+
+[benavoli2017time]
+authors = "A. Benavoli, G. Corani, J. Demšar and M. Zaffalon"
+year = 2017
+title = "Time for a change: a tutorial for comparing multiple classifiers through Bayesian analysis"
+venue = "Journal of Machine Learning Research 18(77):1-36"
+url = "https://jmlr.org/papers/v18/16-305.html"
+
+[campelo2019sample]
+authors = "F. Campelo and F. Takahashi"
+year = 2019
+title = "Sample size estimation for power and accuracy in the experimental comparison of algorithms"
+venue = "Journal of Heuristics 25(2):305-338"
+doi = "10.1007/s10732-018-9396-7"
+
+[carrasco2020recent]
+authors = "J. Carrasco, S. García, M. M. Rueda, S. Das and F. Herrera"
+year = 2020
+title = "Recent trends in the use of statistical tests for comparing swarm and evolutionary computing algorithms: Practical guidelines and a critical review"
+venue = "Swarm and Evolutionary Computation 54:100665"
+doi = "10.1016/j.swevo.2020.100665"
+
+[cliff1993dominance]
+authors = "N. Cliff"
+year = 1993
+title = "Dominance statistics: Ordinal analyses to answer ordinal questions"
+venue = "Psychological Bulletin 114(3):494-509"
+doi = "10.1037/0033-2909.114.3.494"
+
+[coello2004study]
+authors = "C. A. Coello Coello and M. Reyes Sierra"
+year = 2004
+title = "A study of the parallelization of a coevolutionary multi-objective evolutionary algorithm"
+venue = "MICAI 2004: Advances in Artificial Intelligence, Lecture Notes in Computer Science 2972:688-697"
+doi = "10.1007/978-3-540-24694-7_71"
+
+[cohen1988statistical]
+authors = "J. Cohen"
+year = 1988
+title = "Statistical Power Analysis for the Behavioral Sciences"
+venue = "2nd edition, Lawrence Erlbaum Associates, Hillsdale, NJ; reissued by Routledge in 2013"
+doi = "10.4324/9780203771587"
+
+[demsar2006statistical]
+authors = "J. Demšar"
+year = 2006
+title = "Statistical comparisons of classifiers over multiple data sets"
+venue = "Journal of Machine Learning Research 7:1-30"
+url = "https://jmlr.org/papers/v7/demsar06a.html"
+
+[derrac2011practical]
+authors = "J. Derrac, S. García, D. Molina and F. Herrera"
+year = 2011
+title = "A practical tutorial on the use of nonparametric statistical tests as a methodology for comparing evolutionary and swarm intelligence algorithms"
+venue = "Swarm and Evolutionary Computation 1(1):3-18"
+doi = "10.1016/j.swevo.2011.02.002"
+
+[dixon1946statistical]
+authors = "W. J. Dixon and A. M. Mood"
+year = 1946
+title = "The statistical sign test"
+venue = "Journal of the American Statistical Association 41(236):557-566"
+doi = "10.1080/01621459.1946.10501898"
+
+[dunn1961multiple]
+authors = "O. J. Dunn"
+year = 1961
+title = "Multiple comparisons among means"
+venue = "Journal of the American Statistical Association 56(293):52-64"
+doi = "10.1080/01621459.1961.10482090"
+
+[efron1987better]
+authors = "B. Efron"
+year = 1987
+title = "Better bootstrap confidence intervals"
+venue = "Journal of the American Statistical Association 82(397):171-185"
+doi = "10.1080/01621459.1987.10478410"
+
+[finner1993monotonicity]
+authors = "H. Finner"
+year = 1993
+title = "On a monotonicity problem in step-down multiple test procedures"
+venue = "Journal of the American Statistical Association 88(423):920-923"
+doi = "10.1080/01621459.1993.10476358"
+
+[friedman1937use]
+authors = "M. Friedman"
+year = 1937
+title = "The use of ranks to avoid the assumption of normality implicit in the analysis of variance"
+venue = "Journal of the American Statistical Association 32(200):675-701"
+doi = "10.1080/01621459.1937.10503522"
+
+[garcia2008extension]
+authors = "S. García and F. Herrera"
+year = 2008
+title = "An extension on \"Statistical comparisons of classifiers over multiple data sets\" for all pairwise comparisons"
+venue = "Journal of Machine Learning Research 9:2677-2694"
+url = "https://jmlr.org/papers/v9/garcia08a.html"
+
+[hochberg1988sharper]
+authors = "Y. Hochberg"
+year = 1988
+title = "A sharper Bonferroni procedure for multiple tests of significance"
+venue = "Biometrika 75(4):800-802"
+doi = "10.1093/biomet/75.4.800"
+
+[holm1979simple]
+authors = "S. Holm"
+year = 1979
+title = "A simple sequentially rejective multiple test procedure"
+venue = "Scandinavian Journal of Statistics 6(2):65-70"
+url = "https://www.jstor.org/stable/4615733"
+
+[hyndman1996sample]
+authors = "R. J. Hyndman and Y. Fan"
+year = 1996
+title = "Sample quantiles in statistical packages"
+venue = "The American Statistician 50(4):361-365"
+doi = "10.1080/00031305.1996.10473566"
+
+[iman1980approximations]
+authors = "R. L. Iman and J. M. Davenport"
+year = 1980
+title = "Approximations of the critical region of the Friedman statistic"
+venue = "Communications in Statistics - Theory and Methods 9(6):571-595"
+doi = "10.1080/03610928008827904"
+
+[ishibuchi2015modified]
+authors = "H. Ishibuchi, H. Masuda, Y. Tanigaki and Y. Nojima"
+year = 2015
+title = "Modified distance calculation in generational distance and inverted generational distance"
+venue = "Evolutionary Multi-Criterion Optimization (EMO 2015), Lecture Notes in Computer Science 9019:110-125"
+doi = "10.1007/978-3-319-15892-1_8"
+
+[ishibuchi2018specify]
+authors = "H. Ishibuchi, R. Imada, Y. Setoguchi and Y. Nojima"
+year = 2018
+title = "How to specify a reference point in hypervolume calculation for fair performance comparison"
+venue = "Evolutionary Computation 26(3):411-440"
+doi = "10.1162/evco_a_00226"
+
+[kendall1939problem]
+authors = "M. G. Kendall and B. Babington Smith"
+year = 1939
+title = "The problem of m rankings"
+venue = "The Annals of Mathematical Statistics 10(3):275-287"
+doi = "10.1214/aoms/1177732186"
+
+[mann1947test]
+authors = "H. B. Mann and D. R. Whitney"
+year = 1947
+title = "On a test of whether one of two random variables is stochastically larger than the other"
+venue = "The Annals of Mathematical Statistics 18(1):50-60"
+doi = "10.1214/aoms/1177730491"
+
+[romano2006appropriate]
+authors = "J. Romano, J. D. Kromrey, J. Coraggio and J. Skowronek"
+year = 2006
+title = "Appropriate statistics for ordinal level data: Should we really be using t-test and Cohen's d for evaluating group differences on the NSSE and other surveys?"
+venue = "Annual meeting of the Florida Association of Institutional Research"
+
+[shaffer1986modified]
+authors = "J. P. Shaffer"
+year = 1986
+title = "Modified sequentially rejective multiple test procedures"
+venue = "Journal of the American Statistical Association 81(395):826-831"
+doi = "10.1080/01621459.1986.10478341"
+
+[vallada2015new]
+authors = "E. Vallada, R. Ruiz and J. M. Framinan"
+year = 2015
+title = "New hard benchmark for flowshop scheduling problems minimising makespan"
+venue = "European Journal of Operational Research 240(3):666-677"
+doi = "10.1016/j.ejor.2014.07.033"
+
+[vargha2000critique]
+authors = "A. Vargha and H. D. Delaney"
+year = 2000
+title = "A critique and improvement of the CL common language effect size statistics of McGraw and Wong"
+venue = "Journal of Educational and Behavioral Statistics 25(2):101-132"
+doi = "10.3102/10769986025002101"
+
+[while2006faster]
+authors = "L. While, P. Hingston, L. Barone and S. Huband"
+year = 2006
+title = "A faster algorithm for calculating hypervolume"
+venue = "IEEE Transactions on Evolutionary Computation 10(1):29-38"
+doi = "10.1109/TEVC.2005.851275"
+
+[wilcoxon1945individual]
+authors = "F. Wilcoxon"
+year = 1945
+title = "Individual comparisons by ranking methods"
+venue = "Biometrics Bulletin 1(6):80-83"
+doi = "10.2307/3001968"
+
+[zitzler1999multiobjective]
+authors = "E. Zitzler and L. Thiele"
+year = 1999
+title = "Multiobjective evolutionary algorithms: a comparative case study and the strength Pareto approach"
+venue = "IEEE Transactions on Evolutionary Computation 3(4):257-271"
+doi = "10.1109/4235.797969"

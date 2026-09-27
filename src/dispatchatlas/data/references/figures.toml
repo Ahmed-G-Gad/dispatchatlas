@@ -1,0 +1,44 @@
+# Sources of the figures: benchmarking profiles, anytime runtime distributions,
+# attainment surfaces, and the colour palette.
+
+[dolan2002benchmarking]
+authors = "E. D. Dolan and J. J. Moré"
+year = 2002
+title = "Benchmarking optimization software with performance profiles"
+venue = "Mathematical Programming 91(2):201-213"
+doi = "10.1007/s101070100263"
+
+[fonseca1996performance]
+authors = "C. M. Fonseca and P. J. Fleming"
+year = 1996
+title = "On the performance assessment and comparison of stochastic multiobjective optimizers"
+venue = "Parallel Problem Solving from Nature - PPSN IV, Lecture Notes in Computer Science 1141:584-593"
+doi = "10.1007/3-540-61723-X_1022"
+
+[gould2016note]
+authors = "N. Gould and J. Scott"
+year = 2016
+title = "A note on performance profiles for benchmarking software"
+venue = "ACM Transactions on Mathematical Software 43(2):15"
+doi = "10.1145/2950048"
+
+[hansen2022anytime]
+authors = "N. Hansen, A. Auger, D. Brockhoff and T. Tušar"
+year = 2022
+title = "Anytime performance assessment in blackbox optimization benchmarking"
+venue = "IEEE Transactions on Evolutionary Computation 26(6):1293-1305"
+doi = "10.1109/TEVC.2022.3210897"
+
+[more2009benchmarking]
+authors = "J. J. Moré and S. M. Wild"
+year = 2009
+title = "Benchmarking derivative-free optimization algorithms"
+venue = "SIAM Journal on Optimization 20(1):172-191"
+doi = "10.1137/080724083"
+
+[wong2011points]
+authors = "B. Wong"
+year = 2011
+title = "Points of view: Color blindness"
+venue = "Nature Methods 8(6):441"
+doi = "10.1038/nmeth.1618"

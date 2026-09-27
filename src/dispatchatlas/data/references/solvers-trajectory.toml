@@ -1,0 +1,204 @@
+# Sources of the constructive heuristics and the trajectory metaheuristics.
+
+[auer2002finite]
+authors = "P. Auer, N. Cesa-Bianchi and P. Fischer"
+year = 2002
+title = "Finite-time analysis of the multiarmed bandit problem"
+venue = "Machine Learning 47(2-3):235-256"
+doi = "10.1023/A:1013689704352"
+
+[braun2001comparison]
+authors = "T. D. Braun, H. J. Siegel, N. Beck, L. L. Bölöni, M. Maheswaran, A. I. Reuther, J. P. Robertson, M. D. Theys, B. Yao, D. Hensgen and R. F. Freund"
+year = 2001
+title = "A comparison of eleven static heuristics for mapping a class of independent tasks onto heterogeneous distributed computing systems"
+venue = "Journal of Parallel and Distributed Computing 61(6):810-837"
+doi = "10.1006/jpdc.2000.1714"
+
+[burke2013hyper]
+authors = "E. K. Burke, M. Gendreau, M. Hyde, G. Kendall, G. Ochoa, E. Özcan and R. Qu"
+year = 2013
+title = "Hyper-heuristics: a survey of the state of the art"
+venue = "Journal of the Operational Research Society 64(12):1695-1724"
+doi = "10.1057/jors.2013.71"
+
+[burke2017late]
+authors = "E. K. Burke and Y. Bykov"
+year = 2017
+title = "The late acceptance hill-climbing heuristic"
+venue = "European Journal of Operational Research 258(1):70-78"
+doi = "10.1016/j.ejor.2016.07.012"
+
+[dereyck1999multi]
+authors = "B. De Reyck and W. Herroelen"
+year = 1999
+title = "The multi-mode resource-constrained project scheduling problem with generalized precedence relations"
+venue = "European Journal of Operational Research 119(2):538-556"
+doi = "10.1016/S0377-2217(99)00151-4"
+
+[dueck1990threshold]
+authors = "G. Dueck and T. Scheuer"
+year = 1990
+title = "Threshold accepting: A general purpose optimization algorithm appearing superior to simulated annealing"
+venue = "Journal of Computational Physics 90(1):161-175"
+doi = "10.1016/0021-9991(90)90201-B"
+
+[dueck1993new]
+authors = "G. Dueck"
+year = 1993
+title = "New optimization heuristics: The great deluge algorithm and the record-to-record travel"
+venue = "Journal of Computational Physics 104(1):86-92"
+doi = "10.1006/jcph.1993.1010"
+
+[feo1995greedy]
+authors = "T. A. Feo and M. G. C. Resende"
+year = 1995
+title = "Greedy randomized adaptive search procedures"
+venue = "Journal of Global Optimization 6(2):109-133"
+doi = "10.1007/BF01096763"
+
+[glover1986future]
+authors = "F. Glover"
+year = 1986
+title = "Future paths for integer programming and links to artificial intelligence"
+venue = "Computers & Operations Research 13(5):533-549"
+doi = "10.1016/0305-0548(86)90048-1"
+
+[glover1989tabu]
+authors = "F. Glover"
+year = 1989
+title = "Tabu search—Part I"
+venue = "ORSA Journal on Computing 1(3):190-206"
+doi = "10.1287/ijoc.1.3.190"
+
+[hoos2004stochastic]
+authors = "H. H. Hoos and T. Stützle"
+year = 2004
+title = "Stochastic local search: Foundations and applications"
+venue = "Morgan Kaufmann, ISBN 1-55860-872-9"
+url = "https://www.cs.ubc.ca/~hoos/SLS-Book/"
+
+[ibarra1977heuristic]
+authors = "O. H. Ibarra and C. E. Kim"
+year = 1977
+title = "Heuristic algorithms for scheduling independent tasks on nonidentical processors"
+venue = "Journal of the ACM 24(2):280-289"
+doi = "10.1145/322003.322011"
+
+[johnson1989optimization]
+authors = "D. S. Johnson, C. R. Aragon, L. A. McGeoch and C. Schevon"
+year = 1989
+title = "Optimization by simulated annealing: An experimental evaluation; part I, graph partitioning"
+venue = "Operations Research 37(6):865-892"
+doi = "10.1287/opre.37.6.865"
+
+[joslin1999squeaky]
+authors = "D. E. Joslin and D. P. Clements"
+year = 1999
+title = "Squeaky wheel optimization"
+venue = "Journal of Artificial Intelligence Research 10:353-373"
+doi = "10.1613/jair.561"
+
+[kirkpatrick1983optimization]
+authors = "S. Kirkpatrick, C. D. Gelatt and M. P. Vecchi"
+year = 1983
+title = "Optimization by simulated annealing"
+venue = "Science 220(4598):671-680"
+doi = "10.1126/science.220.4598.671"
+
+[kocsis2006bandit]
+authors = "L. Kocsis and C. Szepesvári"
+year = 2006
+title = "Bandit based Monte-Carlo planning"
+venue = "Machine Learning: ECML 2006, J. Fürnkranz, T. Scheffer and M. Spiliopoulou (eds.), Lecture Notes in Computer Science, Springer, 282-293"
+doi = "10.1007/11871842_29"
+
+[lourenco2003iterated]
+authors = "H. R. Lourenço, O. C. Martin and T. Stützle"
+year = 2003
+title = "Iterated local search"
+venue = "Handbook of Metaheuristics, F. Glover and G. A. Kochenberger (eds.), Kluwer Academic Publishers, 320-353"
+doi = "10.1007/0-306-48056-5_11"
+
+[maheswaran1999dynamic]
+authors = "M. Maheswaran, S. Ali, H. J. Siegel, D. Hensgen and R. F. Freund"
+year = 1999
+title = "Dynamic mapping of a class of independent tasks onto heterogeneous computing systems"
+venue = "Journal of Parallel and Distributed Computing 59(2):107-131"
+doi = "10.1006/jpdc.1999.1581"
+
+[mladenovic1997variable]
+authors = "N. Mladenović and P. Hansen"
+year = 1997
+title = "Variable neighborhood search"
+venue = "Computers & Operations Research 24(11):1097-1100"
+doi = "10.1016/S0305-0548(97)00031-2"
+
+[nareyek2003choosing]
+authors = "A. Nareyek"
+year = 2003
+title = "Choosing search heuristics by non-stationary reinforcement learning"
+venue = "Metaheuristics: Computer Decision-Making, Applied Optimization, Springer, 523-544"
+doi = "10.1007/978-1-4757-4137-7_25"
+
+[nawaz1983heuristic]
+authors = "M. Nawaz, E. E. Enscore and I. Ham"
+year = 1983
+title = "A heuristic algorithm for the m-machine, n-job flow-shop sequencing problem"
+venue = "Omega 11(1):91-95"
+doi = "10.1016/0305-0483(83)90088-9"
+
+[ow1988filtered]
+authors = "P. S. Ow and T. E. Morton"
+year = 1988
+title = "Filtered beam search in scheduling"
+venue = "International Journal of Production Research 26(1):35-62"
+doi = "10.1080/00207548808947840"
+
+[ozcan2009examination]
+authors = "E. Özcan, Y. Bykov, M. Birben and E. K. Burke"
+year = 2009
+title = "Examination timetabling using late acceptance hyper-heuristics"
+venue = "2009 IEEE Congress on Evolutionary Computation, 997-1004"
+doi = "10.1109/CEC.2009.4983054"
+
+[pisinger2010large]
+authors = "D. Pisinger and S. Ropke"
+year = 2010
+title = "Large neighborhood search"
+venue = "Handbook of Metaheuristics, M. Gendreau and J.-Y. Potvin (eds.), International Series in Operations Research & Management Science, Springer, 399-419"
+doi = "10.1007/978-1-4419-1665-5_13"
+
+[ropke2006adaptive]
+authors = "S. Ropke and D. Pisinger"
+year = 2006
+title = "An adaptive large neighborhood search heuristic for the pickup and delivery problem with time windows"
+venue = "Transportation Science 40(4):455-472"
+doi = "10.1287/trsc.1050.0135"
+
+[ruiz2007simple]
+authors = "R. Ruiz and T. Stützle"
+year = 2007
+title = "A simple and effective iterated greedy algorithm for the permutation flowshop scheduling problem"
+venue = "European Journal of Operational Research 177(3):2033-2049"
+doi = "10.1016/j.ejor.2005.12.009"
+
+[sabuncuoglu1999job]
+authors = "I. Sabuncuoglu and M. Bayiz"
+year = 1999
+title = "Job shop scheduling with beam search"
+venue = "European Journal of Operational Research 118(2):390-412"
+doi = "10.1016/S0377-2217(98)00319-1"
+
+[shaw1998using]
+authors = "P. Shaw"
+year = 1998
+title = "Using constraint programming and local search methods to solve vehicle routing problems"
+venue = "Principles and Practice of Constraint Programming (CP98), Lecture Notes in Computer Science 1520:417-431"
+doi = "10.1007/3-540-49481-2_30"
+
+[voudouris1999guided]
+authors = "C. Voudouris and E. Tsang"
+year = 1999
+title = "Guided local search and its application to the traveling salesman problem"
+venue = "European Journal of Operational Research 113(2):469-499"
+doi = "10.1016/S0377-2217(98)00099-X"

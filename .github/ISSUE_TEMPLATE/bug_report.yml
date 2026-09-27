@@ -1,0 +1,35 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: >-
+        The smallest code, command, problem document, or campaign file that
+        shows the problem, with the seed and stop criteria you used.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The error message or traceback; run commands with --debug for a traceback.
+      render: text
+  - type: textarea
+    id: version
+    attributes:
+      label: Versions
+      description: The output of `dispatchatlas version`.
+      render: text
+    validations:
+      required: true

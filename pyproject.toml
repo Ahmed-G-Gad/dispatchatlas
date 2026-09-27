@@ -1,0 +1,176 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dispatchatlas"
+version = "0.1.0"
+description = "Reproducible benchmarking of scheduling algorithms, from classic shop problems to the edge-fog-cloud continuum."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ahmed G. Gad", email = "me@ahmedgad.com" }]
+keywords = [
+  "scheduling",
+  "optimization",
+  "benchmarking",
+  "metaheuristics",
+  "operations-research",
+  "edge-computing",
+  "reproducibility",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Typing :: Typed",
+]
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+exact = ["ortools>=9.10", "pulp>=2.8,<4"]
+highs = ["highspy>=1.12,<1.14"]
+scip = ["pyscipopt>=5"]
+gurobi = ["gurobipy>=11"]
+all = ["dispatchatlas[exact,highs,scip]"]
+
+[project.scripts]
+dispatchatlas = "dispatchatlas.cli:main"
+
+[project.urls]
+Homepage = "https://dispatchatlas.ahmedgad.com"
+Documentation = "https://dispatchatlas.ahmedgad.com"
+Repository = "https://github.com/ahmed-g-gad/dispatchatlas"
+Issues = "https://github.com/ahmed-g-gad/dispatchatlas/issues"
+Changelog = "https://github.com/ahmed-g-gad/dispatchatlas/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+  "coverage[toml]>=7.6",
+  "mypy>=1.13",
+  "pre-commit>=4.0",
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+docs = [
+  "mkdocs-material>=9.7.7",
+  "mkdocstrings[python]>=1.0.6",
+  "mkdocstrings-python>=2.0.9",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dispatchatlas"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src",
+  "tests",
+  "examples",
+  "docs",
+  "mkdocs.yml",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "CITATION.cff",
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
+  "SECURITY.md",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = [
+  "A",    # builtin shadowing
+  "ARG",  # unused arguments
+  "B",    # bugbear
+  "C4",   # comprehensions
+  "D",    # docstrings
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "I",    # import order
+  "N",    # naming
+  "PERF", # performance
+  "PL",   # pylint
+  "PT",   # pytest style
+  "PTH",  # pathlib
+  "RET",  # returns
+  "RUF",  # ruff-specific
+  "SIM",  # simplifications
+  "T20",  # print statements
+  "UP",   # pyupgrade
+  "W",    # pycodestyle warnings
+]
+ignore = [
+  "D105",    # magic methods are documented by their class
+  "D107",    # __init__ is documented by its class
+  "PLR0911", # a solver may return from several branches
+  "PLR0912", # algorithms keep their published structure
+  "PLR0913", # solver constructors take many parameters by design
+  "PLR0915", # algorithms keep their published structure
+  "PLR2004", # numeric constants come from the cited sources
+  "PLR0917", # solver helpers mirror published signatures
+  "PERF401", # explicit loops read better than extend() in algorithms
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "PLR2004", "ARG"]
+"examples/**" = ["T20", "D"]
+"src/dispatchatlas/cli/**" = ["T20"]
+"docs/**" = ["ARG", "D", "T20"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests", "examples"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "examples.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = ["ortools.*", "pulp.*", "gurobipy.*", "highspy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "--strict-config --strict-markers -ra"
+testpaths = ["tests"]
+markers = [
+  "slow: long-running test; deselect with -m 'not slow'",
+  "exact: needs the optional exact-solver backends",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["dispatchatlas"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@overload",
+]

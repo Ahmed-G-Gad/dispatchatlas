@@ -1,0 +1,12 @@
+# Normalise text files to LF in the repository and in checkouts, so that files
+# written by the library (JSON, SVG, TikZ) and their digests are identical on
+# every platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.whl binary
