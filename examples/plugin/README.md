@@ -4,9 +4,10 @@ An installable package that adds one solver to DispatchAtlas: `insertion-descent
 random insertion moves that restarts when it stops improving. `pyproject.toml` declares the entry
 point that DispatchAtlas reads, and `src/dispatchatlas_example_plugin/__init__.py` holds the solver.
 
+From the root of a clone of the repository:
+
 ```bash
-pip install ./examples/plugin
-dispatchatlas solvers show insertion-descent
+uv run --with . --with ./examples/plugin dispatchatlas solvers show insertion-descent
 ```
 
 The [extending guide](https://dispatchatlas.ahmedgad.com/extending/) explains each part, and

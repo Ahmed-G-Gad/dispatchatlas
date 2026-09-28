@@ -8,11 +8,12 @@ one entry point in its ``pyproject.toml``::
     [project.entry-points."dispatchatlas.solvers"]
     example = "dispatchatlas_example_plugin:register"
 
-Install it next to DispatchAtlas and use it by id::
+Install it next to DispatchAtlas and use it by id. From the root of a clone
+of the repository::
 
-    pip install ./examples/plugin
-    dispatchatlas solvers show insertion-descent
-    dispatchatlas solve problem.json --solver insertion-descent --max-evaluations 5000
+    uv run --with . --with ./examples/plugin dispatchatlas solvers show insertion-descent
+    uv run --with . --with ./examples/plugin dispatchatlas solve problem.json \
+        --solver insertion-descent --max-evaluations 5000
 
 The solver follows the contract of the built-in ones. Its parameters are
 dataclass fields checked in ``__post_init__``, its metadata is a class-level

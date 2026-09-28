@@ -21,18 +21,16 @@ Documentation: <https://dispatchatlas.ahmedgad.com>
 ## Installation
 
 DispatchAtlas needs Python 3.12 or newer. Its only required dependency is
-NumPy.
+NumPy. It installs from this repository with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install dispatchatlas
-pip install "dispatchatlas[exact]"   # with the exact solvers' backends
-```
+# add it to a uv project, alone or with the exact solvers' backends
+uv add "dispatchatlas @ git+https://github.com/ahmed-g-gad/dispatchatlas"
+uv add "dispatchatlas[exact] @ git+https://github.com/ahmed-g-gad/dispatchatlas"
 
-With [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv add dispatchatlas                 # add it to a uv project
-uv tool install dispatchatlas        # install only the command line
+# install only the command line, or run it without installing it
+uv tool install git+https://github.com/ahmed-g-gad/dispatchatlas
+uvx --from git+https://github.com/ahmed-g-gad/dispatchatlas dispatchatlas --help
 ```
 
 Optional extras add solver backends:

@@ -92,12 +92,12 @@ def _show(arguments: argparse.Namespace) -> int:
     if report["optional"]:
         print()
         emit_table(
-            ("OPTIONAL", "VERSION", "INSTALL WITH"),
+            ("OPTIONAL", "VERSION", "EXTRA"),
             [
                 (
                     item["package"],
                     item["version"] or "not installed",
-                    f'pip install "{PROG}[{item["extra"]}]"',
+                    item["extra"],
                 )
                 for item in report["optional"]
             ],

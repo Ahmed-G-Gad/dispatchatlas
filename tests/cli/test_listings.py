@@ -51,7 +51,7 @@ def test_solvers_show_gives_parameters_features_and_citations(cli: Cli) -> None:
 def test_solvers_show_names_the_extra_a_solver_needs(cli: Cli) -> None:
     result = cli("solvers", "show", "cp-sat")
     assert result.code == 0
-    assert 'pip install "dispatchatlas[exact]"' in result.out
+    assert "the exact extra" in result.out
 
 
 # --------------------------------------------------------------- benchmarks

@@ -87,13 +87,16 @@ group. Each entry point names a function that takes the registry:
 
 Once the package is installed, `default_registry()` calls every such
 function, so the solver appears in `dispatchatlas solvers list` and can be
-named in campaign files:
+named in campaign files. From a clone of the repository, `uv run` installs the
+example plugin beside the library for one command:
 
 ```bash
-pip install ./examples/plugin
-dispatchatlas solvers show insertion-descent
-dispatchatlas version                       # lists the installed plugins
+uv run --with . --with ./examples/plugin dispatchatlas solvers show insertion-descent
+uv run --with . --with ./examples/plugin dispatchatlas version   # lists the installed plugins
 ```
+
+In a project of your own, `uv add ./path/to/your-plugin` installs a plugin
+next to DispatchAtlas.
 
 A plugin that fails to load is skipped with a warning and registers none of
 its solvers, so one broken package cannot disable the others.

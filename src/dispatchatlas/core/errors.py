@@ -58,8 +58,8 @@ class UnsupportedProblemError(SolverError):
 class MissingDependencyError(DispatchAtlasError, ImportError):
     """An optional third-party package required by a feature is not installed.
 
-    The message names the package and the extra that provides it, for example
-    ``pip install "dispatchatlas[exact]"``.
+    The message names the package and the extra of DispatchAtlas that
+    provides it, for example ``exact`` for OR-Tools.
     """
 
     def __init__(self, package: str, extra: str, feature: str) -> None:
@@ -67,5 +67,5 @@ class MissingDependencyError(DispatchAtlasError, ImportError):
         self.extra = extra
         super().__init__(
             f"{feature} requires the optional package '{package}'. "
-            f'Install it with: pip install "dispatchatlas[{extra}]"'
+            f"Install the '{extra}' extra of dispatchatlas, which provides it."
         )

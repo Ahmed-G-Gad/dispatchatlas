@@ -62,7 +62,7 @@ def test_missing_dependencies_name_the_extra_to_install() -> None:
     assert (error.package, error.extra) == ("ortools", "exact")
     assert str(error) == (
         "The CP-SAT solver requires the optional package 'ortools'. "
-        'Install it with: pip install "dispatchatlas[exact]"'
+        "Install the 'exact' extra of dispatchatlas, which provides it."
     )
 
 

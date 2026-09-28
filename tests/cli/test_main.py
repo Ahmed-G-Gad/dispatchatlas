@@ -92,7 +92,9 @@ def test_version_command_reports_python_and_backends(cli: Cli) -> None:
     text = cli("version")
     assert text.code == 0
     assert f"dispatchatlas      {__version__}" in text.out
-    assert 'pip install "dispatchatlas[exact]"' in text.out
+    rows = [line.split() for line in text.out.splitlines() if line.strip()]
+    assert ["OPTIONAL", "VERSION", "EXTRA"] in rows
+    assert any(row[0] == "ortools" and row[-1] == "exact" for row in rows)
 
 
 @pytest.mark.parametrize(

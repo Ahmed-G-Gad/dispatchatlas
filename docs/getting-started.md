@@ -6,21 +6,20 @@ the command line, and runs, analyses, and replays a first campaign.
 ## Installation
 
 DispatchAtlas needs Python 3.12 or newer. Its only required dependency is
-NumPy.
+NumPy. It installs from its repository with [uv](https://docs.astral.sh/uv/).
 
-=== "pip"
+=== "In a project"
 
     ```bash
-    pip install dispatchatlas
-    pip install "dispatchatlas[exact]"   # with the exact solvers' backends
+    uv add "dispatchatlas @ git+https://github.com/ahmed-g-gad/dispatchatlas"
+    uv add "dispatchatlas[exact] @ git+https://github.com/ahmed-g-gad/dispatchatlas"   # with the exact solvers' backends
     ```
 
-=== "uv"
+=== "The command line"
 
     ```bash
-    uv add dispatchatlas                 # in a uv project
-    uv add "dispatchatlas[exact]"
-    uv tool install dispatchatlas        # the command line on its own
+    uv tool install git+https://github.com/ahmed-g-gad/dispatchatlas
+    uvx --from git+https://github.com/ahmed-g-gad/dispatchatlas dispatchatlas --help   # without installing it
     ```
 
 === "From source"

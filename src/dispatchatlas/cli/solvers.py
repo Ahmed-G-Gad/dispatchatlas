@@ -101,7 +101,7 @@ def _show(arguments: argparse.Namespace) -> int:
         else "no: it stops on its own"
     )
     family = document["family_description"] or "a family defined by a plugin"
-    requires = ", ".join(f'pip install "{PROG}[{extra}]"' for extra in info.requires)
+    requires = ", ".join(f"the {extra} extra" for extra in info.requires)
     emit_fields(
         [
             ("id", info.id),
