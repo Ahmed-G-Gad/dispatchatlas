@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ahmed-g-gad/dispatchatlas/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed-g-gad/dispatchatlas/actions/workflows/ci.yml)
 [![Documentation](https://github.com/ahmed-g-gad/dispatchatlas/actions/workflows/docs.yml/badge.svg)](https://dispatchatlas.ahmedgad.com)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ahmed-g-gad/dispatchatlas/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ahmed-g-gad/dispatchatlas/blob/main/LICENSE.txt)
 
 DispatchAtlas is a Python library for reproducible benchmarking of scheduling
 algorithms. One data model covers machine scheduling, resource-constrained
@@ -167,4 +167,4 @@ for the community standards. Report security issues as described in
 
 ## License
 
-DispatchAtlas is released under the [MIT License](https://github.com/ahmed-g-gad/dispatchatlas/blob/main/LICENSE).
+DispatchAtlas is released under the [MIT License](https://github.com/ahmed-g-gad/dispatchatlas/blob/main/LICENSE.txt).

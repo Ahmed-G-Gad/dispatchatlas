@@ -23,7 +23,9 @@ separate package can register it through an entry point, as the
 
 The project uses [uv](https://docs.astral.sh/uv/) to manage its environment.
 The lock file `uv.lock` pins every dependency, so all contributors and the
-continuous integration run the same versions.
+continuous integration run the same versions. The continuous integration runs
+uv 0.12.19. Change the lock file with the same version, `uvx uv@0.12.19 lock`,
+so that it changes only where your change requires.
 
 ```bash
 git clone https://github.com/ahmed-g-gad/dispatchatlas.git

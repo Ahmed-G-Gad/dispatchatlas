@@ -9,7 +9,7 @@ description = "Reproducible benchmarking of scheduling algorithms, from classic 
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE.txt"]
 authors = [{ name = "Ahmed G. Gad", email = "me@ahmedgad.com" }]
 keywords = [
   "scheduling",
@@ -82,7 +82,7 @@ include = [
   "docs",
   "mkdocs.yml",
   "README.md",
-  "LICENSE",
+  "LICENSE.txt",
   "CHANGELOG.md",
   "CITATION.cff",
   "CONTRIBUTING.md",
