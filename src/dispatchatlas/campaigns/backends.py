@@ -16,14 +16,18 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
   worker's previous attempt was on another one; runs are planned problem by
   problem, which makes that rare. The supervisor enforces two limits (see
   :mod:`~dispatchatlas.campaigns.timeout`). From the hand-over of a run its
-  worker has the start-up limit to report that the solve begins; from that
-  report the run has its hard limit. The supervisor kills a worker that
-  passes either, with every process the worker started, records a
-  recoverable start-up failure or a terminal timeout, and hands the next run
-  to a fresh worker. While a run with a hard limit executes, its worker
+  worker has the start-up limit to report that the solve begins; from the
+  instant that report states, the run has its hard limit. The supervisor
+  kills a worker that passes either, with every process the worker started,
+  records a recoverable start-up failure or a terminal timeout, and hands
+  the next run to a fresh worker. A hand-over never waits for a worker: a
+  worker that is starting gets its run when it reports that it is ready, so
+  the supervisor keeps reading reports and enforcing the limits of the other
+  runs meanwhile. While a run with a hard limit executes, its worker
   forwards the incumbents its search reports, at most one every
   :data:`PROGRESS_INTERVAL` seconds, and a timeout failure holds the last
-  one. A worker that dies, from a crash in native code or the
+  one and the last one found within the run's time limit. A worker that
+  dies, from a crash in native code or the
   out-of-memory killer, costs only the attempt it was running, which is
   recorded as a recoverable failure. Every worker starts with the thread
   pools of numerical libraries limited: the variables of
@@ -36,12 +40,14 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
 
 Every result states how many runs were executing when its attempt was handed
 over (``concurrent``), the processor its worker is pinned to (``cpu``), and
-how long the attempt waited for its solve to begin (``waited_seconds``).
+how long the attempt waited for its solve to begin (``waited_seconds``), from
+its hand-over, before a fresh worker exists, to the instant its worker states.
 """
 
 from __future__ import annotations
 
 import contextlib
+import math
 import multiprocessing
 import os
 import pickle
@@ -150,8 +156,8 @@ class ProcessBackend:
             raise ConfigError("a process backend needs at least one worker")
         if threads < 1:
             raise ConfigError("a worker needs at least one thread")
-        if not startup_limit > 0.0:
-            raise ConfigError("a worker needs a positive start-up limit")
+        if not (math.isfinite(startup_limit) and startup_limit > 0.0):
+            raise ConfigError("a worker needs a positive, finite start-up limit")
         if cpus is not None and len(cpus) < workers:
             raise ConfigError(
                 f"{workers} workers cannot be pinned to {len(cpus)} processor(s); every "
@@ -190,8 +196,6 @@ class ProcessBackend:
         try:
             if self.cpus is not None:
                 _start_helpers()
-            for slot in slots:
-                slot.start()
             while True:
                 yield from _hand_over(slots, queue, documents)
                 busy = [slot for slot in slots if slot.task is not None]
@@ -360,24 +364,49 @@ def _serve(message: tuple[Any, ...], name: str, held: list[Any], connection: Con
         hard_limit=job.hard_limit,
         record_schedule=job.record_schedule,
     )
+    begun = time.perf_counter()
     with contextlib.ExitStack() as stack:
         if task.hard_limit is not None:
-            reporter = stack.enter_context(_Reporter(connection, task.run_id, task.attempt))
+            reporter = stack.enter_context(
+                _Reporter(connection, task.run_id, task.attempt, begun, task.stop.time_limit)
+            )
             stack.enter_context(listening(reporter.note))
-        connection.send(("started", (task.run_id, task.attempt)))
+        connection.send(("started", (task.run_id, task.attempt, begun, utc_now())))
         return attempt(task, name)
 
 
 class _Reporter:
     """Forwards the incumbents of one solve to the supervisor, at a bounded rate.
 
-    The search calls :meth:`note` with each new incumbent, which only keeps
-    it. A thread sends the latest one kept, then waits ``interval`` seconds
-    before it sends again, so a solver that improves often costs the pipe no
-    more than one message per interval, and the last incumbent of a solver
-    that then stalls still leaves the worker. The objective values are
-    computed in that thread. It sends only inside the ``with`` block, in
-    which the serving thread sends nothing.
+    The search calls :meth:`note` with each new incumbent. When at least
+    ``interval`` seconds have passed since the last report, :meth:`note`
+    sends the incumbent itself, from the thread of the search, so the report
+    has left the worker before the solver goes on, whatever the solver does
+    next. Otherwise :meth:`note` only keeps the incumbent, and a thread sends
+    the latest one kept once the interval has passed. A solver that improves
+    often therefore costs the pipe one message per interval, and its search
+    one computation of the objective values per interval.
+
+    The reporter also keeps apart the last incumbent found within
+    ``time_limit`` seconds of ``begun``, the start of the solve, and reports
+    it as such: a solver that searches past its time limit keeps improving,
+    and only that one is what it held when the limit passed.
+
+    An incumbent found less than ``interval`` seconds after a report waits
+    for the thread. It never leaves the worker if the worker is killed
+    before the interval has passed, or if the solver, right after finding
+    it, enters a call that keeps the interpreter lock until the kill.
+
+    Reports are sent only inside the ``with`` block, in which the serving
+    thread sends nothing, and never by two threads at once.
+
+    Args:
+        connection: The worker's end of the pipe.
+        run_id: Run id of the task.
+        attempt_number: Attempt number of the task.
+        begun: When the solve began, on the clock of ``time.perf_counter``.
+        time_limit: The time limit of the task's protocol, if it has one.
+        interval: Fewest seconds between two reports.
     """
 
     def __init__(
@@ -385,12 +414,22 @@ class _Reporter:
         connection: Connection,
         run_id: str,
         attempt_number: int,
+        begun: float,
+        time_limit: float | None = None,
         interval: float = PROGRESS_INTERVAL,
     ) -> None:
         self._connection = connection
         self._key = (run_id, attempt_number)
+        self._limit = math.inf if time_limit is None else begun + time_limit
         self._interval = interval
+        # The newest incumbent and the newest one within the time limit, as
+        # the search left them, and the ones of each kind that were sent.
         self._latest: Improvement | None = None
+        self._timely: Improvement | None = None
+        self._sent_latest: Improvement | None = None
+        self._sent_timely: Improvement | None = None
+        self._due = 0.0  # when the next report may leave
+        self._sending = threading.Lock()
         self._news = threading.Event()
         self._closed = threading.Event()
         self._thread = threading.Thread(
@@ -398,9 +437,19 @@ class _Reporter:
         )
 
     def note(self, improvement: Improvement) -> None:
-        """Keep ``improvement`` as the next incumbent to forward."""
+        """Keep ``improvement``, and send it at once when a report is due."""
+        if self._closed.is_set():
+            return
+        now = time.perf_counter()
+        if now <= self._limit:
+            self._timely = improvement
         self._latest = improvement
-        if not self._news.is_set():
+        if now >= self._due and self._sending.acquire(blocking=False):
+            try:
+                self._flush()
+            finally:
+                self._sending.release()
+        elif not self._news.is_set():
             self._news.set()
 
     def __enter__(self) -> _Reporter:
@@ -413,23 +462,38 @@ class _Reporter:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        self._closed.set()
+        with self._sending:
+            self._closed.set()
         self._news.set()
         self._thread.join()
 
     def _forward(self) -> None:
         while True:
             self._news.wait()
-            if self._closed.is_set():
+            if self._closed.wait(max(0.0, self._due - time.perf_counter())):
                 return
             self._news.clear()
-            improvement = self._latest
-            if improvement is not None:
-                # A report that cannot be built or sent is dropped: the run goes on.
-                with contextlib.suppress(Exception):
-                    self._connection.send(("progress", (*self._key, _report(improvement))))
-            if self._closed.wait(self._interval):
-                return
+            with self._sending:
+                self._flush()
+
+    def _flush(self) -> None:
+        """Send the incumbents kept and not yet sent; the caller holds the sending lock."""
+        if self._closed.is_set():
+            return
+        timely, latest = self._timely, self._latest
+        reports: list[tuple[Improvement, bool]] = []
+        if timely is not None and timely is not self._sent_timely:
+            reports.append((timely, True))
+        if latest is not None and latest is not self._sent_latest and latest is not timely:
+            reports.append((latest, False))
+        if not reports:
+            return
+        self._sent_timely, self._sent_latest = timely, latest
+        self._due = time.perf_counter() + self._interval
+        # A report that cannot be built or sent is dropped: the run goes on.
+        with contextlib.suppress(Exception):
+            documents = [(_report(improvement), within) for improvement, within in reports]
+            self._connection.send(("progress", (*self._key, documents)))
 
 
 def _report(improvement: Improvement) -> dict[str, Any]:
@@ -560,6 +624,8 @@ class _Slot:
         self._job: int | None = None  # the worker's job object, on Windows
         self._held: str | None = None  # digest of the problem the worker keeps
         self._ready = False
+        # The message of a task handed to a worker that is not ready yet.
+        self._pending: tuple[str, int, str, dict[str, Any] | None, bytes] | None = None
         # Of the task the slot runs, or ran last: when the clock of its current
         # limit started, whether its solve has begun, and what it has reported.
         self._started = ""
@@ -567,6 +633,7 @@ class _Slot:
         self._solving = False
         self._waited: float | None = None
         self._incumbent: Incumbent | None = None
+        self._limit_incumbent: Incumbent | None = None
         self.task: Task | None = None
         self.deadline: float | None = None
 
@@ -611,9 +678,18 @@ class _Slot:
     def hand(self, task: Task, documents: _Documents) -> Failure | None:
         """Send a task to the worker, or return the failure of a task that cannot be sent.
 
+        The hand-over never waits for the worker. A worker that has reported
+        that it is ready is waiting for a task, and takes this one at once.
         A slot whose worker was killed or died starts a fresh one here, so no
-        worker is started for a queue that has run dry. The hand-over arms
-        the start-up limit; the hard limit waits for the start of the solve.
+        worker is started for a queue that has run dry, and that worker gets
+        the task when it reports that it is ready (:meth:`collect`): a
+        message larger than the pipe's buffer would otherwise hold the
+        supervisor until the new interpreter reads it. The hand-over arms
+        the start-up limit, before the fresh worker exists; the hard limit
+        waits for the start of the solve.
+
+        Raises:
+            ConfigError: If a fresh worker cannot be created on its processor.
         """
         started, clock = utc_now(), time.perf_counter()
         job = _Job(
@@ -642,21 +718,31 @@ class _Slot:
             )
         if self._process is None:
             self.start()
-        document = None if self._held == task.digest else documents.get(task)
-        try:
-            self.connection.send((task.run_id, task.attempt, task.digest, document, blob))
-        except OSError:
-            # The worker died while idle: replace it and send the whole task again.
-            self.close(graceful=False)
-            self.start()
-            document = documents.get(task)
-            self.connection.send((task.run_id, task.attempt, task.digest, document, blob))
-        self._held = task.digest
         self.task = task
-        self._solving, self._waited, self._incumbent = False, None, None
-        self._started, self._clock = utc_now(), time.perf_counter()
-        self.deadline = self._clock + self._startup_limit
+        self._solving, self._waited = False, None
+        self._incumbent, self._limit_incumbent = None, None
+        self._started, self._clock = started, clock
+        self.deadline = clock + self._startup_limit
+        if self._ready:
+            document = None if self._held == task.digest else documents.get(task)
+            self._pending = (task.run_id, task.attempt, task.digest, document, blob)
+            try:
+                self._dispatch()
+            except OSError:
+                # The worker died while idle: a fresh one takes the whole task.
+                self.close(graceful=False)
+                self.start()
+            else:
+                return None
+        self._pending = (task.run_id, task.attempt, task.digest, documents.get(task), blob)
         return None
+
+    def _dispatch(self) -> None:
+        """Send the task that waits for the worker, which is ready to read it."""
+        message, self._pending = self._pending, None
+        if message is not None:
+            self.connection.send(message)
+            self._held = message[2]
 
     def signalled(self, ready: set[Any]) -> bool:
         """Return whether ``wait`` reported this worker's pipe or process."""
@@ -672,7 +758,8 @@ class _Slot:
     def collect(self) -> object:
         """Read what the worker sent.
 
-        A report that the solve begins arms the hard limit of the running
+        A report that the worker is ready sends it the task that waits for
+        it. A report that the solve begins arms the hard limit of the running
         task, and a report of an incumbent is kept for its failure record.
 
         Returns:
@@ -695,6 +782,7 @@ class _Slot:
                             f"{self.name} was created on processor {self.cpu} but reports "
                             f"that it may run on processor(s) {describe_cpus(payload)}"
                         )
+                    self._dispatch()
                     continue
                 if kind == "started":
                     self._begin(payload)
@@ -726,24 +814,51 @@ class _Slot:
         self.close(graceful=False)
         return failure
 
-    def _begin(self, key: object) -> None:
-        """Start the hard limit of the running task: its worker reports that the solve begins."""
+    def _begin(self, report: object) -> None:
+        """Start the hard limit of the running task: its worker reports that the solve begins.
+
+        The limit and the wait count from the instant the worker states, not
+        from the reading of its report, which the supervisor may come to
+        late. The worker reads ``time.perf_counter``, whose clock is one for
+        every process of a system on Windows, Linux, and macOS. An instant
+        that does not lie between the hand-over and the reading is not from
+        that clock, and the reading time takes its place.
+        """
         task = self.task
-        if task is None or self._solving or key != (task.run_id, task.attempt):
+        if task is None or self._solving or not isinstance(report, tuple) or len(report) != 4:
             return
-        now = time.perf_counter()
+        if report[:2] != (task.run_id, task.attempt):
+            return
+        now, stamp = time.perf_counter(), utc_now()
+        instant, stated = report[2], report[3]
+        if isinstance(instant, float) and self._clock <= instant <= now and isinstance(stated, str):
+            now, stamp = instant, stated
         self._solving, self._waited = True, now - self._clock
-        self._started, self._clock = utc_now(), now
+        self._started, self._clock = stamp, now
         self.deadline = None if task.hard_limit is None else now + task.hard_limit
 
     def _keep(self, report: object) -> None:
-        """Keep the incumbent the running task reports; ignore any other report."""
+        """Keep the incumbents the running task reports; ignore any other report.
+
+        The newest one is the task's last incumbent. One that the worker
+        marks as found within the time limit, and whose search had not run
+        longer than the limit either, is also its incumbent at the limit.
+        """
         task = self.task
         if task is None or not isinstance(report, tuple) or len(report) != 3:
             return
-        if report[:2] == (task.run_id, task.attempt):
-            with contextlib.suppress(SerializationError):
-                self._incumbent = Incumbent.from_dict(report[2])
+        if report[:2] != (task.run_id, task.attempt) or not isinstance(report[2], list):
+            return
+        limit = task.stop.time_limit
+        for item in report[2]:
+            try:
+                document, within = item
+                incumbent = Incumbent.from_dict(document)
+            except (TypeError, ValueError, SerializationError):
+                continue
+            self._incumbent = incumbent
+            if within is True and limit is not None and incumbent.elapsed <= limit:
+                self._limit_incumbent = incumbent
 
     def expired(self) -> bool:
         """Return whether the running task has passed its start-up limit or its hard limit."""
@@ -753,8 +868,9 @@ class _Slot:
         """Kill the worker whose task passed its limit, and describe the failure.
 
         Past the hard limit the failure is a timeout that holds the last
-        incumbent the task reported. Past the start-up limit, with the solve
-        not begun, it is a start-up failure.
+        incumbent the task reported and the last one it found within its
+        time limit. Past the start-up limit, with the solve not begun, it is
+        a start-up failure.
         """
         task = self.release()
         kill(self.process, self._job)
@@ -769,6 +885,7 @@ class _Slot:
                 self._measurement(task),
                 solve_started=True,
                 last_incumbent=self._incumbent,
+                limit_incumbent=self._limit_incumbent,
             )
         else:
             failure = engine_failure(
@@ -787,7 +904,7 @@ class _Slot:
         """Forget the running task and return it."""
         task = self.task
         assert task is not None, "no task is running"
-        self.task, self.deadline = None, None
+        self.task, self.deadline, self._pending = None, None, None
         return task
 
     def exit_description(self) -> str:

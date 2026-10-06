@@ -164,6 +164,8 @@ class Failure:
         solve_started: Whether the solve had begun when the attempt ended.
         last_incumbent: The last candidate the search of a run killed at its
             hard limit had reported, if any.
+        limit_incumbent: The last candidate that search had reported within
+            the time limit of the run, if any.
     """
 
     run_id: str
@@ -173,6 +175,7 @@ class Failure:
     measurement: Measurement
     solve_started: bool | None = None
     last_incumbent: Incumbent | None = None
+    limit_incumbent: Incumbent | None = None
 
 
 type Result = Completion | Failure
@@ -332,6 +335,7 @@ def engine_failure(
     *,
     solve_started: bool | None = None,
     last_incumbent: Incumbent | None = None,
+    limit_incumbent: Incumbent | None = None,
 ) -> Failure:
     """Return the failure of an attempt that the engine, not the solver, ended.
 
@@ -347,6 +351,7 @@ def engine_failure(
         measurement,
         solve_started=solve_started,
         last_incumbent=last_incumbent,
+        limit_incumbent=limit_incumbent,
     )
 
 

@@ -637,7 +637,7 @@ class RunError:
 
 @dataclass(frozen=True)
 class Incumbent:
-    """The best candidate a search had reported when its run was killed.
+    """A candidate that the search of a killed run had reported as its best so far.
 
     The values are the ones the solver's search computed. No schedule comes
     with them, so they are not checked as the result of a completed run is.
@@ -719,7 +719,13 @@ class FailureRecord:
             candidate its search had reported. ``None`` when it had reported
             none, because the solver does not run inside
             :class:`~dispatchatlas.solvers.search.Search` or had evaluated
-            nothing, and for every other failure.
+            nothing, and for every other failure. A solver that searches past
+            its time limit may have found it after the limit.
+        limit_incumbent: For a run killed at its hard limit, the candidate
+            its search held when the time limit of its protocol passed: the
+            last one it reported within that many seconds of the start of the
+            solve. Equal to ``last_incumbent`` when the search did not improve
+            after the limit, and ``None`` when it had reported none by then.
     """
 
     run_id: str
@@ -735,10 +741,11 @@ class FailureRecord:
     provenance: Provenance
     solve_started: bool | None = None
     last_incumbent: Incumbent | None = None
+    limit_incumbent: Incumbent | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the record as a JSON-ready document."""
-        incumbent = self.last_incumbent
+        incumbent, held = self.last_incumbent, self.limit_incumbent
         return {
             "schema": FAILURE_SCHEMA,
             "run_id": self.run_id,
@@ -754,14 +761,15 @@ class FailureRecord:
             "provenance": self.provenance.to_dict(),
             "solve_started": self.solve_started,
             "last_incumbent": None if incumbent is None else incumbent.to_dict(),
+            "limit_incumbent": None if held is None else held.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, document: object) -> FailureRecord:
         """Build a record from :meth:`to_dict` output.
 
-        The fields ``solve_started`` and ``last_incumbent`` may be absent,
-        and are then ``None``.
+        The fields ``solve_started``, ``last_incumbent``, and
+        ``limit_incumbent`` may be absent, and are then ``None``.
 
         Raises:
             SerializationError: If the document is not a failure record of
@@ -771,6 +779,7 @@ class FailureRecord:
         _require_schema(fields, FAILURE_SCHEMA)
         category = fields.text("category")
         incumbent = fields.absent_or_raw("last_incumbent")
+        held = fields.absent_or_raw("limit_incumbent")
         return cls(
             run_id=fields.text("run_id"),
             campaign=fields.text("campaign"),
@@ -785,6 +794,7 @@ class FailureRecord:
             provenance=Provenance.from_dict(fields.raw("provenance")),
             solve_started=fields.absent_or_boolean("solve_started"),
             last_incumbent=None if incumbent is None else Incumbent.from_dict(incumbent),
+            limit_incumbent=None if held is None else Incumbent.from_dict(held),
         )
 
 

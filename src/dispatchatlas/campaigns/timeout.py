@@ -4,18 +4,21 @@ Stop criteria are cooperative: a solver checks them itself, and one that
 does not, or that is stuck inside a native extension, keeps running. The
 process backend therefore gives every run whose protocol sets ``time_limit``
 a hard limit of ``timeout_factor * time_limit + grace`` seconds, counted from
-the moment its worker reports that the solve begins. When the limit passes,
-the supervising process kills the worker and records a terminal timeout
-failure, which holds the last incumbent the run's search had reported: the
-same instance, seed, and budget would overrun again. A fresh worker takes the
-next run. Killing a process is the one interruption that reaches code inside
-a native extension.
+the instant its worker states as the start of the solve. When the limit
+passes, the supervising process kills the worker and records a terminal
+timeout failure: the same instance, seed, and budget would overrun again. The
+failure holds the last incumbent the run's search had reported, and, apart
+from it, the last one the search had found within the time limit. A fresh
+worker takes the next run. Killing a process is the one interruption that
+reaches code inside a native extension.
 
 Until its solve begins, a run is under the start-up limit instead:
 ``startup_limit`` seconds from its hand-over, in which the worker starts its
 interpreter and loads plugins, if it started for this run, and rebuilds the
-solver and the problem. A worker that does not begin in time is killed too,
-and the attempt is a recoverable start-up failure, not a timeout.
+solver and the problem. The supervising process waits for none of that: a
+fresh worker gets its run when it reports that it is ready. A worker that
+does not begin in time is killed too, and the attempt is a recoverable
+start-up failure, not a timeout.
 
 A kill reaches the processes a solver started. On POSIX systems each worker
 leads its own process group (:func:`detach`), and the kill reaches the whole
@@ -26,9 +29,9 @@ worker cannot join it, a warning says so and the kill reaches the worker
 alone.
 
 A worker does not outlive its supervising process either
-(:func:`end_with_parent`): it watches that process and ends itself, with its
-process group, when the process is gone. On Windows the job object also ends
-with the supervising process, which holds its only handle.
+(:func:`end_with_parent`): it watches that process and ends itself, with the
+process group it leads, when the process is gone. On Windows the job object
+also ends with the supervising process, which holds its only handle.
 """
 
 from __future__ import annotations
@@ -104,11 +107,14 @@ def end_with_parent() -> None:
     A worker whose supervisor was killed would otherwise compute until its
     run returns and it meets the closed pipe, beside the workers of a resumed
     session. A daemon thread waits for the process that started this one
-    through ``multiprocessing`` and then ends this process at once, with its
-    process group on POSIX systems, so that processes a solver started end
-    too. The thread needs the interpreter to act: a worker inside a native
-    extension that keeps the interpreter lock ends when the extension
-    returns. Does nothing in a process that ``multiprocessing`` did not start.
+    through ``multiprocessing`` and then ends this process at once. On POSIX
+    systems it ends the process group with it, so that processes a solver
+    started end too, but only a group this process leads: where
+    :func:`detach` could not start one, the group is the supervising
+    process's, and holds whatever launched the campaign. The thread needs
+    the interpreter to act: a worker inside a native extension that keeps
+    the interpreter lock ends when the extension returns. Does nothing in a
+    process that ``multiprocessing`` did not start.
     """
     parent = multiprocessing.parent_process()
     if parent is None:
@@ -116,12 +122,17 @@ def end_with_parent() -> None:
 
     def watch() -> None:
         parent.join()
-        if sys.platform != "win32":
-            with contextlib.suppress(OSError):
-                os.killpg(os.getpgrp(), signal.SIGKILL)
-        os._exit(1)
+        _end_self()
 
     threading.Thread(target=watch, name="dispatchatlas-supervisor-watch", daemon=True).start()
+
+
+def _end_self() -> None:
+    """End the calling process at once, with its process group if it leads one."""
+    if sys.platform != "win32" and os.getpgrp() == os.getpid():
+        with contextlib.suppress(OSError):
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+    os._exit(1)
 
 
 def contain(process: BaseProcess) -> int | None:

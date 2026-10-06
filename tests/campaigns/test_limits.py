@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +26,15 @@ from dispatchatlas.campaigns import (
     run,
 )
 from dispatchatlas.campaigns import timeout as limits
-from dispatchatlas.campaigns.backends import PROGRESS_INTERVAL, ProcessBackend, _Reporter
+from dispatchatlas.campaigns.backends import (
+    PROGRESS_INTERVAL,
+    ProcessBackend,
+    _Reporter,
+    _Slot,
+    backend_for,
+)
 from dispatchatlas.campaigns.config import STARTUP_SECONDS
-from dispatchatlas.campaigns.execution import Measurement, engine_failure
+from dispatchatlas.campaigns.execution import Measurement, Task, engine_failure
 from dispatchatlas.campaigns.records import (
     Category,
     ErrorKind,
@@ -39,6 +48,7 @@ from dispatchatlas.campaigns.records import (
     SolverEntry,
 )
 from dispatchatlas.core import ConfigError, SerializationError, SolverInfo, StopCriteria
+from dispatchatlas.solvers.rules import InputOrder
 from dispatchatlas.solvers.search import Improvement, Search, listening
 from tests.campaigns.solvers import registry, tiny_campaign
 from tests.helpers import random_problem
@@ -55,8 +65,18 @@ INCUMBENT = Incumbent(
     feasible=True,
     evaluations=7,
     iteration=2,
-    elapsed=0.25,
+    elapsed=1.25,
 )
+AT_LIMIT_CHANGES: dict[str, Any] = {
+    "value": 14.0,
+    "objectives": {"makespan": 14.0, "total_tardiness": 5.0},
+    "evaluations": 3,
+    "iteration": 1,
+    "elapsed": 0.75,
+}
+AT_LIMIT = replace(INCUMBENT, **AT_LIMIT_CHANGES)
+LARGE = (FamilySource("flow-shop", (1,), {"jobs": 400, "machines": 10}),)
+DELAY = "DISPATCHATLAS_TEST_START_DELAY"
 
 
 def _failure(**changes: Any) -> FailureRecord:
@@ -76,12 +96,13 @@ def _failure(**changes: Any) -> FailureRecord:
         ),
         "solve_started": True,
         "last_incumbent": INCUMBENT,
+        "limit_incumbent": AT_LIMIT,
     }
     fields.update(changes)
     return FailureRecord(**fields)
 
 
-def test_a_failure_record_round_trips_with_its_incumbent() -> None:
+def test_a_failure_record_round_trips_with_its_incumbents() -> None:
     failure = _failure()
     document = failure.to_dict()
     assert document["schema"] == "dispatchatlas.failure/1"
@@ -93,24 +114,32 @@ def test_a_failure_record_round_trips_with_its_incumbent() -> None:
         "feasible": True,
         "evaluations": 7,
         "iteration": 2,
-        "elapsed": 0.25,
+        "elapsed": 1.25,
     }
+    assert document["limit_incumbent"] == {**document["last_incumbent"], **AT_LIMIT_CHANGES}
     assert document["provenance"]["waited_seconds"] == 1.5
     assert FailureRecord.from_dict(document) == failure
-    plain = _failure(solve_started=False, last_incumbent=None)
+    plain = _failure(solve_started=False, last_incumbent=None, limit_incumbent=None)
     assert FailureRecord.from_dict(plain.to_dict()) == plain
+    late = _failure(limit_incumbent=None)
+    assert FailureRecord.from_dict(late.to_dict()) == late
 
 
 def test_failure_records_without_the_new_fields_still_load() -> None:
     document = _failure().to_dict()
     del document["solve_started"]
     del document["last_incumbent"]
+    del document["limit_incumbent"]
     for key in ("waited_seconds", "cpu", "concurrent"):
         del document["provenance"][key]
     loaded = FailureRecord.from_dict(document)
     assert loaded.solve_started is None
     assert loaded.last_incumbent is None
+    assert loaded.limit_incumbent is None
     assert loaded.provenance.waited_seconds is None
+    earlier = _failure().to_dict()
+    del earlier["limit_incumbent"]
+    assert FailureRecord.from_dict(earlier) == _failure(limit_incumbent=None)
     assert loaded.error.kind is ErrorKind.TIMEOUT
     assert loaded.provenance.wall_seconds == 6.0
 
@@ -128,6 +157,10 @@ def test_failure_records_without_the_new_fields_still_load() -> None:
 def test_a_malformed_incumbent_is_rejected(change: dict[str, object], message: str) -> None:
     document = _failure().to_dict()
     document["last_incumbent"] = {**document["last_incumbent"], **change}
+    with pytest.raises(SerializationError, match=message):
+        FailureRecord.from_dict(document)
+    document = _failure().to_dict()
+    document["limit_incumbent"] = {**document["limit_incumbent"], **change}
     with pytest.raises(SerializationError, match=message):
         FailureRecord.from_dict(document)
     partial = INCUMBENT.to_dict()
@@ -312,9 +345,10 @@ def test_a_killed_run_keeps_its_last_incumbent_and_its_limit_counts_from_the_sol
     assert failure.solve_started is True
     assert failure.provenance.waited_seconds is not None
     assert failure.provenance.waited_seconds >= 1.0
-    assert 0.5 <= failure.provenance.wall_seconds < 20.0
+    assert 0.5 <= failure.provenance.wall_seconds < 1.5
     incumbent = failure.last_incumbent
     assert incumbent is not None
+    assert failure.limit_incumbent == incumbent
     assert incumbent.objectives == record.outcome.objectives
     assert incumbent.objective == record.outcome.objective
     assert incumbent.value == record.outcome.value
@@ -335,6 +369,129 @@ def test_a_solver_outside_a_search_reports_no_incumbent(tmp_path: Path) -> None:
     (failure,) = read_failures(summary.directory)
     assert failure.error.kind is ErrorKind.TIMEOUT
     assert (failure.solve_started, failure.last_incumbent) == (True, None)
+    assert failure.limit_incumbent is None
+
+
+def test_a_killed_run_keeps_apart_the_incumbent_it_held_at_its_time_limit(tmp_path: Path) -> None:
+    campaign = tiny_campaign(
+        solvers=(SolverSpec("test-overrun", parameters={"after": 0.35, "seconds": 30.0}),),
+        protocols=CLOCK,
+        instances=ONE_PROBLEM,
+        replicates=1,
+        backend="process",
+        grace=0.3,
+    )
+    summary = run(campaign, tmp_path, registry=REGISTRY)
+    (failure,) = read_failures(summary.directory)
+    assert failure.error.kind is ErrorKind.TIMEOUT
+    limit = failure.protocol.stop.time_limit
+    last, held = failure.last_incumbent, failure.limit_incumbent
+    assert limit == 0.2
+    assert last is not None
+    assert held is not None
+    assert (held.evaluations, last.evaluations) == (3, 4)
+    assert held.elapsed <= limit < last.elapsed
+    assert last.value < held.value  # the search went on improving after its time limit
+
+
+def test_an_incumbent_leaves_the_worker_before_a_call_that_keeps_the_interpreter_lock(
+    tmp_path: Path,
+) -> None:
+    campaign = tiny_campaign(
+        solvers=(SolverSpec("test-holds-lock", parameters={"seconds": 20.0}),),
+        protocols=CLOCK,
+        instances=ONE_PROBLEM,
+        replicates=1,
+        backend="process",
+        grace=0.3,
+    )
+    started = time.perf_counter()
+    summary = run(campaign, tmp_path, registry=REGISTRY)
+    assert time.perf_counter() - started < 15.0
+    (failure,) = read_failures(summary.directory)
+    assert failure.error.kind is ErrorKind.TIMEOUT
+    incumbent = failure.last_incumbent
+    assert incumbent is not None
+    assert (incumbent.feasible, incumbent.evaluations) == (True, 1)
+    assert failure.limit_incumbent == incumbent
+
+
+def _slow_start(monkeypatch: pytest.MonkeyPatch, directory: Path, seconds: float) -> None:
+    """Make every interpreter this process starts sleep ``seconds`` seconds as it starts."""
+    directory.mkdir()
+    script = f"import os, time\ntime.sleep(float(os.environ.get({DELAY!r}, '0')))\n"
+    (directory / "sitecustomize.py").write_text(script, encoding="ascii")
+    inherited = os.environ.get("PYTHONPATH")
+    path = [str(directory)] if not inherited else [str(directory), inherited]
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(path))
+    monkeypatch.setenv(DELAY, repr(seconds))
+
+
+def test_the_start_of_a_worker_counts_as_waiting_and_against_the_start_up_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The problem makes a message larger than the buffer of a pipe, which a
+    # worker takes in only once its interpreter has started.
+    _slow_start(monkeypatch, tmp_path / "site", 1.5)
+    campaign = tiny_campaign(
+        solvers=(SolverSpec("input-order"),),
+        protocols=CLOCK,
+        instances=LARGE,
+        replicates=1,
+        backend="process",
+        grace=0.3,
+    )
+    summary = run(campaign, tmp_path / "waited", registry=REGISTRY)
+    assert (summary.completed, summary.failed) == (1, 0)
+    (record,) = read_runs(summary.directory)
+    assert record.provenance.waited_seconds is not None
+    assert record.provenance.waited_seconds >= 1.5
+
+    monkeypatch.setenv(DELAY, "20.0")
+    late = replace(campaign, id="late", execution=replace(campaign.execution, startup_limit=0.5))
+    started = time.perf_counter()
+    summary = run(late, tmp_path / "late", registry=REGISTRY)
+    assert time.perf_counter() - started < 15.0
+    assert (summary.completed, summary.failed) == (0, 1)
+    (failure,) = read_failures(summary.directory)
+    assert (failure.category, failure.error.kind) == (Category.RECOVERABLE, ErrorKind.STARTUP)
+    assert failure.solve_started is False
+    assert failure.provenance.waited_seconds is None
+    assert 0.5 <= failure.provenance.wall_seconds < 5.0
+
+
+def test_a_kill_at_the_hard_limit_does_not_wait_for_another_worker_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first run is killed while the second, which began 0.4 s later, still
+    # has time. The fresh worker that replaces the killed one takes 2 s to start.
+    _slow_start(monkeypatch, tmp_path / "site", 2.0)
+    campaign = tiny_campaign(
+        solvers=(
+            SolverSpec("test-stalled", "first", {"seconds": 30.0}),
+            SolverSpec("test-stalled", "second", {"seconds": 30.0, "delay": 0.4}),
+            SolverSpec("input-order"),
+        ),
+        protocols=CLOCK,
+        instances=LARGE,
+        replicates=1,
+        backend="process",
+        workers=2,
+        grace=0.3,
+    )
+    summary = run(campaign, tmp_path / "store", registry=REGISTRY)
+    assert (summary.completed, summary.failed) == (1, 2)
+    failures = {failure.solver.name: failure for failure in read_failures(summary.directory)}
+    assert set(failures) == {"first", "second"}
+    for failure in failures.values():
+        assert failure.error.kind is ErrorKind.TIMEOUT
+        assert failure.provenance.hard_limit == pytest.approx(0.5)
+        assert 0.5 <= failure.provenance.wall_seconds < 1.5
+        assert failure.provenance.waited_seconds is not None
+        assert failure.provenance.waited_seconds >= 2.0
+    (record,) = read_runs(summary.directory)
+    assert record.provenance.waited_seconds is not None
+    assert record.provenance.waited_seconds >= 2.0
 
 
 def test_a_worker_that_does_not_begin_in_time_is_a_start_up_failure(tmp_path: Path) -> None:
@@ -419,6 +576,8 @@ def test_workers_end_when_the_supervising_process_is_killed(tmp_path: Path) -> N
         assert _alive(worker)
         assert _alive(child)
         _end(supervisor)
+        # Reaped here: a killed child stays listed until its parent has waited for it.
+        launched.wait(15)
         assert _gone(supervisor)
         assert _gone(worker)
         assert _gone(child)
@@ -427,22 +586,129 @@ def test_workers_end_when_the_supervising_process_is_killed(tmp_path: Path) -> N
         launched.wait(30)
 
 
-def test_the_backend_refuses_a_start_up_limit_that_is_not_positive() -> None:
-    with pytest.raises(ConfigError, match="positive start-up limit"):
-        ProcessBackend(1, startup_limit=0.0)
+def test_a_worker_without_its_supervisor_ends_only_a_process_group_it_leads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    killed: list[tuple[int, int]] = []
+    exits: list[int] = []
+    monkeypatch.setattr(os, "_exit", exits.append)
+    if sys.platform == "win32":
+        limits._end_self()
+        assert exits == [1]
+        return
+    monkeypatch.setattr(os, "killpg", lambda group, sent: killed.append((group, sent)))
+    monkeypatch.setattr(os, "getpgrp", lambda: os.getpid() + 1)  # the group of another process
+    limits._end_self()
+    assert (killed, exits) == ([], [1])
+    monkeypatch.setattr(os, "getpgrp", os.getpid)
+    limits._end_self()
+    assert (killed, exits) == ([(os.getpid(), signal.SIGKILL)], [1, 1])
+
+
+@pytest.mark.parametrize("limit", [0.0, -1.0, float("inf"), float("nan")])
+def test_the_backend_refuses_a_start_up_limit_that_is_not_positive_and_finite(
+    limit: float,
+) -> None:
+    with pytest.raises(ConfigError, match="positive, finite start-up limit"):
+        ProcessBackend(1, startup_limit=limit)
+    with pytest.raises(ConfigError, match="positive, finite start-up limit"):
+        backend_for("process", 1, startup_limit=limit)
+
+
+def _task(hard_limit: float | None = 2.0) -> Task:
+    return Task(
+        run_id="run-1",
+        attempt=1,
+        problem=random_problem(1, tasks=6, machines=2),
+        digest="0" * 64,
+        solver=InputOrder(),
+        stop=StopCriteria(time_limit=1.0),
+        seed=1,
+        hard_limit=hard_limit,
+    )
+
+
+def _waiting_slot(task: Task, since: float) -> _Slot:
+    """Return a slot whose task was handed over ``since`` seconds ago and has not begun."""
+    slot = _Slot(1, multiprocessing.get_context("spawn"), {}, None, 60.0)
+    slot.task = task
+    slot._clock = time.perf_counter() - since
+    slot.deadline = slot._clock + 60.0
+    return slot
+
+
+def test_the_hard_limit_and_the_wait_count_from_the_instant_the_worker_states() -> None:
+    task = _task()
+    slot = _waiting_slot(task, 3.0)
+    handed = slot._clock
+    slot._begin((task.run_id, task.attempt, handed + 1.0, "2026-01-01T00:00:01.000000Z"))
+    assert slot._waited == pytest.approx(1.0)
+    assert slot.deadline == pytest.approx(handed + 1.0 + 2.0)
+    assert slot._started == "2026-01-01T00:00:01.000000Z"
+    assert slot.expired()  # the solve began 2 s ago, although its report was read just now
+    measured = slot._measurement(task)
+    assert measured.waited_seconds == pytest.approx(1.0)
+    assert measured.hard_limit == 2.0
+    assert measured.wall_seconds == pytest.approx(2.0, abs=0.2)
+
+
+@pytest.mark.parametrize("offset", [-1.0, 3600.0])
+def test_an_instant_outside_the_wait_is_replaced_by_the_reading_time(offset: float) -> None:
+    task = _task()
+    slot = _waiting_slot(task, 3.0)
+    handed = slot._clock
+    slot._begin((task.run_id, task.attempt, handed + offset, "2026-01-01T00:00:01.000000Z"))
+    assert slot._waited == pytest.approx(3.0, abs=0.2)
+    assert slot.deadline == pytest.approx(handed + 3.0 + 2.0, abs=0.2)
+    assert slot._started != "2026-01-01T00:00:01.000000Z"
+    assert not slot.expired()
+
+
+def test_a_report_of_another_attempt_does_not_start_the_hard_limit() -> None:
+    task = _task()
+    slot = _waiting_slot(task, 3.0)
+    deadline = slot.deadline
+    for report in (
+        (task.run_id, task.attempt + 1, slot._clock + 1.0, "2026-01-01T00:00:01.000000Z"),
+        (task.run_id, task.attempt),
+        None,
+    ):
+        slot._begin(report)
+        assert (slot._solving, slot._waited, slot.deadline) == (False, None, deadline)
+
+
+def test_the_supervisor_keeps_the_last_incumbent_and_the_one_within_the_time_limit() -> None:
+    task = _task()
+    slot = _waiting_slot(task, 0.0)
+    early = replace(INCUMBENT, elapsed=0.5).to_dict()
+    late = replace(INCUMBENT, value=11.0, elapsed=1.5).to_dict()
+    slot._keep((task.run_id, task.attempt, [(early, True)]))
+    assert slot._incumbent == slot._limit_incumbent == Incumbent.from_dict(early)
+    slot._keep((task.run_id, task.attempt, [(late, False)]))
+    assert slot._incumbent == Incumbent.from_dict(late)
+    assert slot._limit_incumbent == Incumbent.from_dict(early)
+    # A report marked as within the limit whose search ran longer is not kept as such,
+    # and a malformed one or one of another attempt changes nothing.
+    slot._keep((task.run_id, task.attempt, [(late, True), ({"value": 1.0}, True), "x"]))
+    slot._keep((task.run_id, task.attempt + 1, [(early, True)]))
+    slot._keep((task.run_id, task.attempt, early))
+    assert slot._incumbent == Incumbent.from_dict(late)
+    assert slot._limit_incumbent == Incumbent.from_dict(early)
 
 
 # ------------------------------------------------------------ the reporter
 
 
 class _Sink:
-    """A connection that keeps what it is sent."""
+    """A connection that keeps what it is sent, and which thread sent it."""
 
     def __init__(self) -> None:
         self.sent: list[Any] = []
+        self.senders: list[int] = []
 
     def send(self, message: Any) -> None:
         self.sent.append(message)
+        self.senders.append(threading.get_ident())
 
 
 TOY = SolverInfo(id="toy", name="Toy", family="random-sampling", summary="Evaluates one order.")
@@ -465,35 +731,86 @@ def _improving(count: int, reporter: _Reporter | None = None) -> float:
     return time.perf_counter() - clock
 
 
-def test_the_reporter_forwards_the_latest_incumbent_at_a_bounded_rate() -> None:
+def _improvements(count: int) -> list[Improvement]:
+    """Return ``count`` successive incumbents of one search."""
     heard: list[Improvement] = []
     with listening(heard.append):
         search = Search(
-            random_problem(1, tasks=6, machines=2), StopCriteria(max_evaluations=3), 1, TOY
+            random_problem(1, tasks=6, machines=2), StopCriteria(max_evaluations=count + 1), 1, TOY
         )
-    for _ in range(2):
+    for _ in range(count):
         search.best = None
         search.evaluate(list(range(search.problem.size)))
-    first, second = heard
+    return heard
+
+
+def _reports(sink: _Sink) -> list[tuple[int, bool]]:
+    """Return the evaluation count and the within-limit mark of every incumbent sent."""
+    sent: list[tuple[int, bool]] = []
+    for kind, (run_id, attempt_number, documents) in sink.sent:
+        assert (kind, run_id, attempt_number) == ("progress", "run-1", 3)
+        sent.extend(
+            (Incumbent.from_dict(document).evaluations, within) for document, within in documents
+        )
+    return sent
+
+
+def test_the_reporter_forwards_the_latest_incumbent_at_a_bounded_rate() -> None:
+    improvements = _improvements(40)
     sink = _Sink()
     interval = 0.2
-    with _Reporter(sink, "run-1", 3, interval) as reporter:  # type: ignore[arg-type]
-        started = time.perf_counter()
-        reporter.note(first)
-        while time.perf_counter() - started < 3 * interval:
-            reporter.note(second)
+    noted = 0
+    begun = time.perf_counter()
+    with _Reporter(sink, "run-1", 3, begun, None, interval) as reporter:  # type: ignore[arg-type]
+        while time.perf_counter() - begun < 3 * interval:
+            reporter.note(improvements[noted % len(improvements)])
+            noted += 1
         busy = len(sink.sent)
         time.sleep(2 * interval)
-    assert 1 <= busy <= 5
-    kinds = {kind for kind, _ in sink.sent}
-    assert kinds == {"progress"}
-    run_id, attempt_number, document = sink.sent[-1][1]
-    assert (run_id, attempt_number) == ("run-1", 3)
-    assert Incumbent.from_dict(document).evaluations == second.point.evaluations == 2
+    assert noted > 100
+    assert 3 <= busy <= 5
+    assert all(len(message[1][2]) == 1 for message in sink.sent)
+    last = improvements[(noted - 1) % len(improvements)]
+    assert _reports(sink)[0] == (1, True)
+    assert _reports(sink)[-1] == (last.point.evaluations, True)
     count = len(sink.sent)
-    reporter.note(first)
+    reporter.note(improvements[0])
     time.sleep(interval)
     assert len(sink.sent) == count  # nothing leaves a closed reporter
+
+
+def test_the_reporter_sends_a_due_incumbent_from_the_thread_of_the_search() -> None:
+    first, second, third = _improvements(3)
+    sink = _Sink()
+    interval = 0.3
+    begun = time.perf_counter()
+    with _Reporter(sink, "run-1", 3, begun, None, interval) as reporter:  # type: ignore[arg-type]
+        reporter.note(first)
+        assert _reports(sink) == [(1, True)]  # sent before note returned
+        reporter.note(second)
+        assert _reports(sink) == [(1, True)]  # too soon: left to the forwarding thread
+        time.sleep(3 * interval)
+        assert _reports(sink) == [(1, True), (2, True)]
+        reporter.note(third)
+        assert _reports(sink) == [(1, True), (2, True), (3, True)]
+    here = threading.get_ident()
+    assert [sender == here for sender in sink.senders] == [True, False, True]
+
+
+def test_the_reporter_keeps_apart_the_incumbent_found_within_the_time_limit() -> None:
+    first, second, third, fourth = _improvements(4)
+    sink = _Sink()
+    limit, interval = 0.2, 0.5
+    begun = time.perf_counter()
+    with _Reporter(sink, "run-1", 3, begun, limit, interval) as reporter:  # type: ignore[arg-type]
+        reporter.note(first)  # sent at once, within the limit
+        reporter.note(second)  # within the limit, and waits for the interval
+        time.sleep(limit - (time.perf_counter() - begun) + 0.05)
+        reporter.note(third)  # past the limit, in the same report as the second
+        time.sleep(2 * interval)
+        reporter.note(fourth)
+    assert _reports(sink) == [(1, True), (2, True), (3, False), (4, False)]
+    assert [len(message[1][2]) for message in sink.sent] == [1, 2, 1]
 
 
 def test_reporting_does_not_slow_a_search_whose_every_evaluation_improves() -> None:
@@ -505,7 +822,8 @@ def test_reporting_does_not_slow_a_search_whose_every_evaluation_improves() -> N
     for _ in range(5):
         plain.append(_improving(count))
         sink = _Sink()
-        with _Reporter(sink, "run-1", 1) as reporter:  # type: ignore[arg-type]
+        begun = time.perf_counter()
+        with _Reporter(sink, "run-1", 1, begun, 0.01) as reporter:  # type: ignore[arg-type]
             reported.append(_improving(count, reporter))
         sent = max(sent, len(sink.sent))
         assert len(sink.sent) <= reported[-1] / PROGRESS_INTERVAL + 2

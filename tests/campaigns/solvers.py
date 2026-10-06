@@ -249,6 +249,51 @@ class Stalled:
 
 
 @dataclass(frozen=True)
+class LockHolder:
+    """Evaluates the listed order inside a search, then keeps the interpreter lock.
+
+    One call that never returns to the interpreter runs for about ``seconds``
+    seconds, so no other thread of the worker runs in that time.
+    """
+
+    seconds: float = 20.0
+    info: ClassVar[SolverInfo] = _info("test-holds-lock", stochastic=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        sample = 2_000_000
+        clock = time.perf_counter()
+        sum(range(sample))
+        count = int(self.seconds * sample / max(time.perf_counter() - clock, 1e-6))
+        search = Search(problem, stop, seed, self.info)
+        search.evaluate(list(range(problem.size)))
+        sum(range(count))
+        return search.result()
+
+
+@dataclass(frozen=True)
+class Overrunner:
+    """Improves once at the start and once ``after`` seconds in, then sleeps whatever its limits.
+
+    Its search has no time limit. The first incumbent is the worse of the
+    listed order and its reverse, the second one the better.
+    """
+
+    after: float = 1.0
+    seconds: float = 60.0
+    info: ClassVar[SolverInfo] = _info("test-overrun", stochastic=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        search = Search(problem, StopCriteria(max_evaluations=10), seed, self.info)
+        listed = list(range(problem.size))
+        orders = sorted((listed, listed[::-1]), key=lambda order: search.probe(order)[0])
+        search.evaluate(orders[1])
+        time.sleep(max(0.0, self.after - search.elapsed))
+        search.evaluate(orders[0])
+        time.sleep(self.seconds)
+        return search.result()
+
+
+@dataclass(frozen=True)
 class Nested:
     """Starts a child process, writes its own pid and the child's to ``marker``, and sleeps."""
 
@@ -283,6 +328,8 @@ TEST_SOLVERS = (
     Unpicklable,
     SlowArrival,
     Stalled,
+    LockHolder,
+    Overrunner,
     Nested,
 )
 

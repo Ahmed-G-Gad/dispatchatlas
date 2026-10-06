@@ -404,6 +404,7 @@ class _Books:
             provenance=provenance,
             solve_started=result.solve_started,
             last_incumbent=result.last_incumbent,
+            limit_incumbent=result.limit_incumbent,
         )
         self.store.write_failure(failure)
         self.errors += 1
