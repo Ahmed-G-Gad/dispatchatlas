@@ -104,6 +104,10 @@ class Measurement:
         peak_rss_bytes: Peak resident memory of the executing process, if measured.
         worker: Where the attempt executed: ``"main"`` or a worker slot.
         hard_limit: The hard limit armed for the attempt, if any.
+        cpu: The processor the executing worker is pinned to, if any.
+        concurrent: Runs executing when the attempt was handed to where it
+            executes, itself included. ``None`` for an attempt that was
+            never handed over.
     """
 
     started: str
@@ -113,6 +117,8 @@ class Measurement:
     peak_rss_bytes: int | None = None
     worker: str = "main"
     hard_limit: float | None = None
+    cpu: int | None = None
+    concurrent: int | None = None
 
 
 @dataclass(frozen=True)

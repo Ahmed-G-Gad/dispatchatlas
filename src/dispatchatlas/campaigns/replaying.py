@@ -177,7 +177,13 @@ def replay(
             replayable.append(item)
     attempts = {item.run_id: records[item.run_id].provenance.attempt for item in replayable}
     queue = deque(tasks_for(prepared, replayable, execution, attempts.__getitem__))
-    chosen = backend_for(execution.backend, execution.worker_count())
+    count = execution.worker_count()
+    chosen = backend_for(
+        execution.backend,
+        count,
+        cpus=execution.worker_cpus(count),
+        threads=execution.threads_per_worker,
+    )
     with contextlib.closing(chosen.run(queue)) as results:
         for result in results:
             item = plan.run(result.run_id)

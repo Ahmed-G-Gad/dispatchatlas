@@ -19,25 +19,32 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
   passes its limit, records a terminal timeout, and hands the next run to a
   fresh worker. A worker that dies, from a crash in native code or the
   out-of-memory killer, costs only the attempt it was running, which is
-  recorded as a recoverable failure. With several workers, the thread pools
-  of numerical libraries are limited to one thread each
-  (:data:`NESTED_THREAD_VARIABLES`) unless the environment sets them, so the
-  workers do not oversubscribe the processors.
+  recorded as a recoverable failure. Every worker starts with the thread
+  pools of numerical libraries limited: the variables of
+  :data:`~dispatchatlas.campaigns.config.THREAD_VARIABLES` are in the
+  environment the worker process is created with, so no import in the
+  worker comes before them. A worker can also be pinned to one processor,
+  which the supervisor does as soon as the process exists.
+
+Every result states how many runs were executing when its attempt was handed
+over (``concurrent``), and the processor its worker is pinned to (``cpu``).
 """
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing
 import os
 import pickle
 import signal
 import time
 from collections import OrderedDict, deque
-from collections.abc import Generator
-from dataclasses import dataclass
+from collections.abc import Generator, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from multiprocessing.connection import wait
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dispatchatlas.campaigns.config import THREAD_VARIABLES
 from dispatchatlas.campaigns.execution import (
     Completion,
     Failure,
@@ -49,6 +56,7 @@ from dispatchatlas.campaigns.execution import (
     exception_error,
     utc_now,
 )
+from dispatchatlas.campaigns.processors import pin_process
 from dispatchatlas.campaigns.records import Category, ErrorKind
 from dispatchatlas.campaigns.timeout import detach, kill
 from dispatchatlas.core.errors import ConfigError
@@ -62,21 +70,12 @@ if TYPE_CHECKING:
     from dispatchatlas.core.model import Problem
 
 __all__ = [
-    "NESTED_THREAD_VARIABLES",
     "STARTUP_ATTEMPTS",
     "Backend",
     "ProcessBackend",
     "SequentialBackend",
     "backend_for",
 ]
-
-NESTED_THREAD_VARIABLES = (
-    "OMP_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-)
-"""Environment variables set to 1 in the workers when several run at once."""
 
 STARTUP_ATTEMPTS = 3
 """Consecutive worker processes that may exit before they start until the backend gives up."""
@@ -104,7 +103,7 @@ class SequentialBackend:
     def run(self, queue: deque[Task]) -> Generator[Result]:
         """Execute tasks from ``queue`` until it is empty, yielding each result."""
         while queue:
-            yield attempt(queue.popleft(), "main")
+            yield _stamped(attempt(queue.popleft(), "main"), None, 1)
 
 
 class ProcessBackend:
@@ -112,14 +111,29 @@ class ProcessBackend:
 
     Args:
         workers: Number of worker processes.
+        cpus: The processor each worker is pinned to, in worker order, or
+            ``None`` to leave the workers on the processors the calling
+            process may use.
+        threads: Threads the numerical libraries of a worker may use.
     """
 
     name = "process"
 
-    def __init__(self, workers: int) -> None:
+    def __init__(
+        self, workers: int, *, cpus: Sequence[int] | None = None, threads: int = 1
+    ) -> None:
         if workers < 1:
             raise ConfigError("a process backend needs at least one worker")
+        if threads < 1:
+            raise ConfigError("a worker needs at least one thread")
+        if cpus is not None and len(cpus) < workers:
+            raise ConfigError(
+                f"{workers} workers cannot be pinned to {len(cpus)} processor(s); every "
+                "worker needs a processor of its own"
+            )
         self.workers = workers
+        self.cpus = None if cpus is None else tuple(cpus)
+        self.threads = threads
 
     def run(self, queue: deque[Task]) -> Generator[Result]:
         """Execute tasks from ``queue`` until it is empty, yielding each result.
@@ -130,18 +144,18 @@ class ProcessBackend:
         Raises:
             ConfigError: If worker processes keep exiting before they start,
                 for example because a script starts a campaign without an
-                ``if __name__ == "__main__":`` guard.
+                ``if __name__ == "__main__":`` guard, or a worker cannot be
+                pinned to its processor.
         """
         count = min(self.workers, len(queue))
         if count == 0:
             return
         context = multiprocessing.get_context("spawn")
-        environment = (
-            {name: "1" for name in NESTED_THREAD_VARIABLES if name not in os.environ}
-            if self.workers > 1
-            else {}
-        )
-        slots = [_Slot(number, context, environment) for number in range(1, count + 1)]
+        environment = dict.fromkeys(THREAD_VARIABLES, str(self.threads))
+        cpus: Sequence[int | None] = [None] * count if self.cpus is None else self.cpus
+        slots = [
+            _Slot(number, context, environment, cpus[number - 1]) for number in range(1, count + 1)
+        ]
         documents = _Documents(self.workers + 2)
         failed_starts = 0
         finished = False
@@ -149,11 +163,7 @@ class ProcessBackend:
             for slot in slots:
                 slot.start()
             while True:
-                for slot in slots:
-                    while slot.task is None and queue:
-                        refused = slot.hand(queue.popleft(), documents)
-                        if refused is not None:
-                            yield refused
+                yield from _hand_over(slots, queue, documents)
                 busy = [slot for slot in slots if slot.task is not None]
                 if not busy:
                     if queue:
@@ -188,19 +198,29 @@ class ProcessBackend:
                 slot.close(graceful=finished)
 
 
-def backend_for(name: str, workers: int) -> Backend:
+def backend_for(
+    name: str, workers: int, *, cpus: Sequence[int] | None = None, threads: int = 1
+) -> Backend:
     """Return the backend of the given name.
+
+    Args:
+        name: ``"sequential"`` or ``"process"``.
+        workers: Attempts that run at once.
+        cpus: The processor each worker process is pinned to, if any.
+        threads: Threads the numerical libraries of a worker process may use.
 
     Raises:
         ConfigError: If the name is unknown, or the sequential backend gets
-            more than one worker.
+            more than one worker or processors to pin to.
     """
     if name == "sequential":
         if workers != 1:
             raise ConfigError("the sequential backend runs one attempt at a time")
+        if cpus is not None:
+            raise ConfigError("the sequential backend does not pin the calling process")
         return SequentialBackend()
     if name == "process":
-        return ProcessBackend(workers)
+        return ProcessBackend(workers, cpus=cpus, threads=threads)
     raise ConfigError(f"unknown backend {name!r}; use 'sequential' or 'process'")
 
 
@@ -221,10 +241,9 @@ class _Job:
     record_schedule: bool
 
 
-def _worker_main(connection: Connection, name: str, environment: dict[str, str]) -> None:
+def _worker_main(connection: Connection, name: str) -> None:
     """Serve attempts sent over ``connection`` until it closes or sends ``None``."""
     detach()
-    os.environ.update(environment)
     _load_installed_plugins()
     held: list[Any] = []  # [digest, problem] of the problem this worker keeps
     try:
@@ -305,6 +324,53 @@ _NOT_STARTED = object()
 """What :meth:`_Slot.collect` returns when the worker exited before it started."""
 
 
+def _stamped(result: Result, cpu: int | None, concurrent: int | None) -> Result:
+    """Return a result whose measurement states its processor and concurrent runs."""
+    measurement = replace(result.measurement, cpu=cpu, concurrent=concurrent)
+    return replace(result, measurement=measurement)
+
+
+@contextlib.contextmanager
+def _exported(values: Mapping[str, str]) -> Iterator[None]:
+    """Hold ``values`` in the environment of this process while a child process starts.
+
+    A process started with ``spawn`` is created with a copy of its parent's
+    environment, so the values are in place before the child's interpreter
+    starts. The environment of this process is as it was afterwards.
+    """
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _hand_over(slots: list[_Slot], queue: deque[Task], documents: _Documents) -> list[Failure]:
+    """Give every idle slot a task from the queue; return the failures of tasks not sent.
+
+    Every task handed over in one call gets the same ``concurrent``: the
+    tasks executing once the call has handed out its tasks.
+    """
+    refused: list[Failure] = []
+    handed: list[_Slot] = []
+    for slot in slots:
+        while slot.task is None and queue:
+            failure = slot.hand(queue.popleft(), documents)
+            if failure is None:
+                handed.append(slot)
+            else:
+                refused.append(failure)
+    executing = sum(1 for slot in slots if slot.task is not None)
+    for slot in handed:
+        slot.concurrent = executing
+    return refused
+
+
 class _Documents:
     """Problem documents by digest, keeping the few most recently used."""
 
@@ -326,8 +392,16 @@ class _Documents:
 class _Slot:
     """One worker process and the task it runs."""
 
-    def __init__(self, number: int, context: SpawnContext, environment: dict[str, str]) -> None:
+    def __init__(
+        self,
+        number: int,
+        context: SpawnContext,
+        environment: Mapping[str, str],
+        cpu: int | None,
+    ) -> None:
         self.name = f"worker-{number}"
+        self.cpu = cpu
+        self.concurrent: int | None = None
         self._context = context
         self._environment = environment
         self._process: BaseProcess | None = None
@@ -350,17 +424,29 @@ class _Slot:
         return self._connection
 
     def start(self) -> None:
-        """Start a worker process for this slot."""
+        """Start a worker process for this slot, with its thread limits and on its processor.
+
+        Raises:
+            ConfigError: If the worker cannot be pinned to its processor.
+        """
         parent, child = self._context.Pipe(duplex=True)
         process = self._context.Process(
             target=_worker_main,
-            args=(child, self.name, self._environment),
+            args=(child, self.name),
             name=f"dispatchatlas-{self.name}",
         )
-        process.start()
+        with _exported(self._environment):
+            process.start()
         child.close()
         self._process, self._connection = process, parent
         self._held, self._ready = None, False
+        if self.cpu is not None:
+            assert process.pid is not None, "a started process has an id"
+            try:
+                pin_process(process.pid, self.cpu)
+            except ConfigError:
+                self.close(graceful=False)
+                raise
 
     def hand(self, task: Task, documents: _Documents) -> Failure | None:
         """Send a task to the worker, or return the failure of a task that cannot be sent.
@@ -422,7 +508,7 @@ class _Slot:
                 if kind == "ready":
                     self._ready = True
                     continue
-                result: Result = payload
+                result = _stamped(payload, self.cpu, self.concurrent)
                 if isinstance(result, Failure) and result.error.kind is ErrorKind.TRANSFER:
                     self._held = None
                 self.release()
@@ -507,6 +593,8 @@ class _Slot:
             wall_seconds=time.perf_counter() - self._clock,
             worker=self.name,
             hard_limit=task.hard_limit,
+            cpu=self.cpu,
+            concurrent=self.concurrent,
         )
 
 

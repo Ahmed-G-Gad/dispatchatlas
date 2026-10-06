@@ -411,6 +411,11 @@ class Provenance:
         worker: ``"main"`` for the sequential backend, else the worker slot.
         hard_limit: Seconds after which the run would have been killed, or
             ``None`` when no hard limit was armed.
+        cpu: Index of the processor the worker was pinned to, or ``None``
+            when it ran on any processor the session's process may use.
+        concurrent: Runs executing in the session when this one was handed
+            to its worker: itself, the runs already executing, and the runs
+            handed over with it. ``None`` when the record does not state it.
     """
 
     attempt: int
@@ -422,6 +427,8 @@ class Provenance:
     peak_rss_bytes: int | None = None
     worker: str = "main"
     hard_limit: float | None = None
+    cpu: int | None = None
+    concurrent: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the provenance as a JSON-ready dictionary."""
@@ -435,11 +442,17 @@ class Provenance:
             "peak_rss_bytes": self.peak_rss_bytes,
             "worker": self.worker,
             "hard_limit": self.hard_limit,
+            "cpu": self.cpu,
+            "concurrent": self.concurrent,
         }
 
     @classmethod
     def from_dict(cls, document: object) -> Provenance:
-        """Build provenance from :meth:`to_dict` output."""
+        """Build provenance from :meth:`to_dict` output.
+
+        The fields ``cpu`` and ``concurrent`` may be absent, and are then
+        ``None``.
+        """
         fields = _Fields(document, "a provenance block")
         rss = fields.raw("peak_rss_bytes")
         return cls(
@@ -452,6 +465,8 @@ class Provenance:
             peak_rss_bytes=None if rss is None else fields.integer("peak_rss_bytes"),
             worker=fields.text("worker"),
             hard_limit=fields.optional_number("hard_limit"),
+            cpu=fields.absent_or_integer("cpu"),
+            concurrent=fields.absent_or_integer("concurrent"),
         )
 
 
@@ -780,6 +795,9 @@ class _Fields:
 
     def optional_number(self, key: str) -> float | None:
         return None if self.raw(key) is None else self.number(key)
+
+    def absent_or_integer(self, key: str) -> int | None:
+        return None if self._document.get(key) is None else self.integer(key)
 
     def boolean(self, key: str) -> bool:
         value = self.raw(key)

@@ -21,6 +21,12 @@ criteria: ``equal-wall-clock`` (``time_limit``), ``equal-evaluations``
 ``fixed-target`` (``target``). Wall-clock budgets depend on the speed and load
 of the machine, and runs they stop cannot be replayed; an iteration means a
 different amount of work in different solvers.
+
+The assessment also carries **notes**: facts that break none of these rules
+but that a reader of a comparison needs. A protocol with a time limit that
+compares solvers whose ``threads`` parameters differ is noted, because equal
+wall-clock budgets then buy unequal processor time; a solver whose parameters
+set no ``threads`` counts as one thread. A note never refuses a plan.
 """
 
 from __future__ import annotations
@@ -79,12 +85,15 @@ class Fairness:
         protocols: Parities of each protocol, by protocol name.
         paired: Whether every problem and replicate has one seed.
         issues: Every violation found. Empty for a fair plan.
+        notes: Facts that violate nothing but bear on a comparison. They
+            leave a plan fair.
     """
 
     solvers: tuple[str, ...]
     protocols: Mapping[str, tuple[str, ...]]
     paired: bool
     issues: tuple[str, ...]
+    notes: tuple[str, ...] = ()
 
     @property
     def fair(self) -> bool:
@@ -107,6 +116,7 @@ class Fairness:
             "seeds": "common random numbers per problem and replicate",
             "paired": self.paired,
             "issues": list(self.issues),
+            "notes": list(self.notes),
         }
 
 
@@ -117,7 +127,8 @@ def assess(plan: Plan) -> Fairness:
         plan: A plan, freshly built or read from a store.
 
     Returns:
-        The assessment. Its ``issues`` name every violation.
+        The assessment. Its ``issues`` name every violation, and its
+        ``notes`` what else bears on the comparison.
     """
     issues: list[str] = []
     protocol_names = [protocol.name for protocol in plan.protocols]
@@ -160,12 +171,33 @@ def assess(plan: Plan) -> Fairness:
     if unpaired:
         issues.append(_listed("problems and replicates with several seeds", unpaired))
 
+    notes: list[str] = []
+    threads = {solver.name: _threads(solver.parameters) for solver in plan.solvers}
+    if len(set(threads.values())) > 1:
+        counts = ", ".join(f"{name}: {count}" for name, count in threads.items())
+        notes.extend(
+            f"protocol {protocol.name!r} sets a time limit and compares solvers whose thread "
+            f"counts differ ({counts}), so its equal wall-clock budgets are unequal processor "
+            "budgets"
+            for protocol in plan.protocols
+            if protocol.stop.time_limit is not None
+        )
+
     return Fairness(
         solvers=tuple(solver.name for solver in plan.solvers),
         protocols={protocol.name: parities(protocol.stop) for protocol in plan.protocols},
         paired=not unpaired,
         issues=tuple(issues),
+        notes=tuple(notes),
     )
+
+
+def _threads(parameters: Mapping[str, Any]) -> int:
+    """Return the ``threads`` parameter a campaign sets on a solver, or 1 when it sets none."""
+    value = parameters.get("threads", 1)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 1
+    return value
 
 
 def _listed(what: str, items: list[Any]) -> str:

@@ -104,7 +104,16 @@ _STOP_KEYS = {
     "target": "number",
     "patience": "integer",
 }
-_EXECUTION_KEYS = ("backend", "workers", "timeout_factor", "grace", "retries", "record_schedules")
+_EXECUTION_KEYS = (
+    "backend",
+    "workers",
+    "timeout_factor",
+    "grace",
+    "retries",
+    "record_schedules",
+    "affinity",
+    "threads_per_worker",
+)
 
 
 def load_campaign(path: str | Path) -> Campaign:
@@ -338,6 +347,7 @@ def _execution(value: object, where: str) -> Execution:
         "grace": _number,
         "retries": _integer,
         "record_schedules": _boolean,
+        "threads_per_worker": _integer,
     }
     for key, read in readers.items():
         item = table.get(key)
@@ -348,6 +358,14 @@ def _execution(value: object, where: str) -> Execution:
         settings["workers"] = workers
     elif workers is not _ABSENT:
         settings["workers"] = _integer(workers, f"{where}.workers")
+    affinity = table.get("affinity")
+    if isinstance(affinity, str):
+        settings["affinity"] = affinity
+    elif affinity is not _ABSENT:
+        settings["affinity"] = tuple(
+            _integer(item, f"{where}.affinity[{index}]")
+            for index, item in enumerate(_array(affinity, f"{where}.affinity"))
+        )
     return _build(where, lambda: Execution(**settings))
 
 

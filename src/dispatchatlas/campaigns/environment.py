@@ -3,10 +3,11 @@
 :func:`capture_environment` records, once per session, the facts that can
 change a measurement or explain a difference between sessions: the Python
 version and implementation, the operating system and machine, the processor
-model and count, the memory size, the versions of DispatchAtlas, NumPy, and
-the optional solver backends that are installed, and the git commit of the
-DispatchAtlas source and of the working directory when either is a git
-checkout. It records no host or user name.
+model and count, the processors the process may use, the thread limits its
+environment sets for numerical libraries, the memory size, the versions of
+DispatchAtlas, NumPy, and the optional solver backends that are installed,
+and the git commit of the DispatchAtlas source and of the working directory
+when either is a git checkout. It records no host or user name.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from dispatchatlas.campaigns.config import available_cpus
+from dispatchatlas.campaigns.config import THREAD_VARIABLES
+from dispatchatlas.campaigns.processors import allowed_cpus
 
 __all__ = ["PACKAGES", "capture_environment", "git_state"]
 
@@ -40,9 +42,17 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
 
     Returns:
         A JSON-ready dictionary with the keys ``python``, ``platform``,
-        ``cpu``, ``memory_bytes``, ``packages``, and ``git``. Facts that
-        cannot be determined are ``None``; packages that are not installed
-        and directories that are not git checkouts are left out.
+        ``cpu``, ``threads``, ``memory_bytes``, ``packages``, and ``git``.
+        ``cpu`` holds the processor ``model``, the ``logical`` processors of
+        the machine, and the processors the process may use: their indices
+        as ``allowed`` and their number as ``available``. ``threads`` holds
+        the value of every variable of
+        :data:`~dispatchatlas.campaigns.config.THREAD_VARIABLES` in the
+        environment of the process, ``None`` when it is not set; worker
+        processes start with the campaign's ``threads_per_worker`` in each
+        of them instead. Facts that cannot be determined are ``None``;
+        packages that are not installed and directories that are not git
+        checkouts are left out.
     """
     source = Path(__file__).resolve().parent.parent
     git: dict[str, Any] = {}
@@ -51,6 +61,7 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
     working = git_state(Path.cwd() if directory is None else Path(directory))
     if working is not None:
         git["working_directory"] = working
+    allowed = allowed_cpus()
     return {
         "python": {
             "version": platform.python_version(),
@@ -62,7 +73,13 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
             "machine": platform.machine(),
             "description": platform.platform(),
         },
-        "cpu": {"model": _cpu_model(), "logical": os.cpu_count(), "available": available_cpus()},
+        "cpu": {
+            "model": _cpu_model(),
+            "logical": os.cpu_count(),
+            "available": len(allowed),
+            "allowed": list(allowed),
+        },
+        "threads": {name: os.environ.get(name) for name in THREAD_VARIABLES},
         "memory_bytes": _memory_bytes(),
         "packages": _package_versions(),
         "git": git,

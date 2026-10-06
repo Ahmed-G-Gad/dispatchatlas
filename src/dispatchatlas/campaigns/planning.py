@@ -470,6 +470,8 @@ def prepare(
     if verdict.issues:
         raise ConfigError("the plan is not a fair comparison: " + "; ".join(verdict.issues))
     _report(result)
+    for note in verdict.notes:
+        _LOG.warning("campaign %s: %s", campaign.id, note)
     return Prepared(campaign, result, problems, solvers)
 
 

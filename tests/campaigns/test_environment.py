@@ -27,7 +27,15 @@ def test_records_interpreter_platform_hardware_and_packages(tmp_path: Path) -> N
     if platform.system() == "Linux":
         assert environment["memory_bytes"] > 0
     assert "working_directory" not in environment["git"]
-    assert set(environment) == {"python", "platform", "cpu", "memory_bytes", "packages", "git"}
+    assert set(environment) == {
+        "python",
+        "platform",
+        "cpu",
+        "threads",
+        "memory_bytes",
+        "packages",
+        "git",
+    }
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")

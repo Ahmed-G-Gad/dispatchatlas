@@ -39,6 +39,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from dispatchatlas.campaigns.processors import (
+    allowed_cpus,
+    available_cpus,
+    describe_cpus,
+    pinning_refusal,
+)
 from dispatchatlas.core.errors import ConfigError
 from dispatchatlas.core.serialization import digest
 from dispatchatlas.core.solver import StopCriteria
@@ -50,6 +56,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_FACTOR",
     "GRACE_SECONDS",
     "SCHEMA_VERSION",
+    "THREAD_VARIABLES",
     "Campaign",
     "CatalogSource",
     "DirectorySource",
@@ -60,6 +67,7 @@ __all__ = [
     "Protocol",
     "SolverSpec",
     "SuiteSource",
+    "allowed_cpus",
     "available_cpus",
     "check_name",
     "jsonable",
@@ -86,6 +94,20 @@ CPU_RESERVE = 1
 
 BACKENDS = ("sequential", "process")
 """Execution backends: in the calling process, or in supervised worker processes."""
+
+THREAD_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "BLIS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+"""Environment variables that limit the thread pools of numerical libraries.
+
+Every worker process starts with each of them set to the campaign's
+``threads_per_worker``.
+"""
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -129,18 +151,6 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def available_cpus() -> int:
-    """Return the processors this process may run on, at least one.
-
-    Uses the scheduler affinity mask where the platform exposes it, so
-    containers and ``taskset`` limits are respected.
-    """
-    try:
-        return max(1, len(os.sched_getaffinity(0)))
-    except (AttributeError, OSError):  # pragma: no cover - platforms without affinity
-        return max(1, os.cpu_count() or 1)
-
-
 def _frozen(value: Any, where: str) -> Any:
     """Return an immutable copy of a JSON-compatible value."""
     if value is None or isinstance(value, (str, bool, int)):
@@ -173,6 +183,24 @@ def _check_integer(value: object, what: str, minimum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ConfigError(f"{what} must be an integer of at least {minimum}, got {value!r}")
     return value
+
+
+def _check_affinity(value: object) -> Literal["inherit", "pin"] | tuple[int, ...]:
+    if value == "inherit":
+        return "inherit"
+    if value == "pin":
+        return "pin"
+    if (
+        isinstance(value, (list, tuple))
+        and value
+        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
+        and min(value) >= 0
+        and len(set(value)) == len(value)
+    ):
+        return tuple(value)
+    raise ConfigError(
+        f"affinity must be 'inherit', 'pin', or a list of distinct processor indices, got {value!r}"
+    )
 
 
 def _check_number(value: object, what: str, minimum: float) -> float:
@@ -457,8 +485,9 @@ class Execution:
             crashing solver. ``"sequential"`` runs in the calling process, one
             run at a time, relying on solvers to honour their time limits; it
             suits debugging and solvers that cannot be sent to another process.
-        workers: Worker processes, or ``"auto"`` for the available processors
-            minus :data:`CPU_RESERVE`. Must be 1 for the sequential backend.
+        workers: Worker processes, or ``"auto"`` for the processors the
+            calling process may use minus :data:`CPU_RESERVE`. Must be 1 for
+            the sequential backend.
         timeout_factor: A run whose protocol sets ``time_limit`` is killed
             after ``timeout_factor * time_limit + grace`` seconds. At least
             1. ``None`` disables hard limits.
@@ -466,6 +495,18 @@ class Execution:
         retries: Further attempts for a run whose failure may be transient.
         record_schedules: Store every run's best schedule in its record. Its
             digest is stored either way.
+        affinity: The processors the worker processes run on. ``"inherit"``
+            leaves every worker on the processors the calling process may
+            use. ``"pin"`` confines worker ``k`` to the ``k``-th of those
+            processors, in index order. A list of processor indices confines
+            worker ``k`` to its ``k``-th entry. A pinned campaign needs the
+            process backend and a processor of its own for every worker.
+        threads_per_worker: Threads the numerical libraries of a worker
+            process may use. Every variable of :data:`THREAD_VARIABLES` is
+            set to it in the environment a worker starts with, for any
+            number of workers and whatever the calling environment holds.
+            The sequential backend runs in the calling process and leaves
+            its environment as it is.
     """
 
     backend: str = "process"
@@ -474,6 +515,8 @@ class Execution:
     grace: float = GRACE_SECONDS
     retries: int = 0
     record_schedules: bool = True
+    affinity: Literal["inherit", "pin"] | tuple[int, ...] = "inherit"
+    threads_per_worker: int = 1
 
     def __post_init__(self) -> None:
         if self.backend not in BACKENDS:
@@ -497,6 +540,13 @@ class Execution:
             raise ConfigError(
                 f"record_schedules must be true or false, got {self.record_schedules!r}"
             )
+        object.__setattr__(self, "affinity", _check_affinity(self.affinity))
+        if self.backend == "sequential" and self.affinity != "inherit":
+            raise ConfigError(
+                "the sequential backend runs in the calling process, whose processors the "
+                "engine does not change; use affinity 'inherit', or backend 'process'"
+            )
+        _check_integer(self.threads_per_worker, "threads_per_worker", 1)
 
     @property
     def max_attempts(self) -> int:
@@ -509,6 +559,52 @@ class Execution:
             return max(1, available_cpus() - CPU_RESERVE)
         return self.workers
 
+    def worker_cpus(self, workers: int | None = None) -> tuple[int, ...] | None:
+        """Return the processor each worker is pinned to, resolved on this machine.
+
+        Args:
+            workers: Number of workers. Defaults to :meth:`worker_count`.
+
+        Returns:
+            One processor index per worker, in worker order, or ``None`` when
+            ``affinity`` is ``"inherit"``.
+
+        Raises:
+            ConfigError: If the platform cannot pin a process, the workers
+                outnumber the processors they are pinned to, or a listed
+                processor is not one the calling process may use.
+        """
+        if self.affinity == "inherit":
+            return None
+        count = self.worker_count() if workers is None else workers
+        refusal = pinning_refusal()
+        if refusal is not None:
+            raise ConfigError(f"workers cannot be pinned: {refusal}; use affinity 'inherit'")
+        allowed = allowed_cpus()
+        chosen: tuple[int, ...]
+        if isinstance(self.affinity, str):
+            chosen = allowed
+            if count > len(chosen):
+                raise ConfigError(
+                    f"affinity 'pin' gives every worker a processor of its own, but {count} "
+                    f"workers exceed the {len(chosen)} processor(s) this process may use "
+                    f"({describe_cpus(chosen)})"
+                )
+        else:
+            chosen = self.affinity
+            foreign = [index for index in chosen if index not in allowed]
+            if foreign:
+                raise ConfigError(
+                    f"affinity lists processor(s) {describe_cpus(foreign)}, which this process "
+                    f"may not use; it may use {describe_cpus(allowed)}"
+                )
+            if count > len(chosen):
+                raise ConfigError(
+                    f"affinity lists {len(chosen)} processor(s) for {count} workers; every "
+                    "worker needs a processor of its own"
+                )
+        return chosen[:count]
+
     def to_dict(self) -> dict[str, Any]:
         """Return the settings as a JSON-ready dictionary."""
         return {
@@ -518,6 +614,8 @@ class Execution:
             "grace": self.grace,
             "retries": self.retries,
             "record_schedules": self.record_schedules,
+            "affinity": self.affinity if isinstance(self.affinity, str) else list(self.affinity),
+            "threads_per_worker": self.threads_per_worker,
         }
 
 

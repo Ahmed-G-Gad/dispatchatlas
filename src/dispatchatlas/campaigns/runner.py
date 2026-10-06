@@ -36,6 +36,7 @@ from dispatchatlas.campaigns.config import Campaign, Execution, available_cpus
 from dispatchatlas.campaigns.environment import capture_environment
 from dispatchatlas.campaigns.execution import Completion, Result, Task, utc_now
 from dispatchatlas.campaigns.planning import PlannedRun, Prepared, prepare
+from dispatchatlas.campaigns.processors import describe_cpus
 from dispatchatlas.campaigns.records import (
     FailureRecord,
     ProblemRef,
@@ -143,7 +144,10 @@ def run(
         if max_runs is not None:
             pending = pending[: max(0, max_runs)]
         count = execution.worker_count()
-        chosen = backend_for(execution.backend, count)
+        cpus = execution.worker_cpus(count)
+        chosen = backend_for(
+            execution.backend, count, cpus=cpus, threads=execution.threads_per_worker
+        )
         started, clock = utc_now(), time.perf_counter()
         record = SessionRecord(
             session=store.next_session(),
@@ -158,6 +162,10 @@ def run(
         )
         store.write_session(record)
         _warn_about_timing(prepared, execution, count)
+        if cpus is not None:
+            _LOG.info(
+                "campaign %s: workers pinned to processor(s) %s", campaign.id, describe_cpus(cpus)
+            )
         _LOG.info(
             "campaign %s, session %d: %d of %d runs to attempt, %s backend, %d worker(s)",
             campaign.id,
@@ -313,6 +321,8 @@ class _Books:
             peak_rss_bytes=measured.peak_rss_bytes,
             worker=measured.worker,
             hard_limit=measured.hard_limit,
+            cpu=measured.cpu,
+            concurrent=measured.concurrent,
         )
         identity: dict[str, Any] = {
             "run_id": planned.run_id,
@@ -413,15 +423,27 @@ def _warn_about_timing(prepared: Prepared, execution: Execution, workers: int) -
             "solvers must honour them",
             ", ".join(timed),
         )
+    threads = _threads_per_worker(prepared, execution)
     processors = available_cpus()
-    if workers > processors:
+    if workers * threads > processors:
         _LOG.warning(
-            "%d workers share %d processors, so the wall-clock budgets of protocols %s differ "
-            "between runs",
+            "%d worker(s) with up to %d thread(s) each share %d processor(s), so the "
+            "wall-clock budgets of protocols %s differ between runs",
             workers,
+            threads,
             processors,
             ", ".join(timed),
         )
+
+
+def _threads_per_worker(prepared: Prepared, execution: Execution) -> int:
+    """Return the most threads one worker may run: its thread limit or a solver's ``threads``."""
+    largest = execution.threads_per_worker if execution.backend == "process" else 1
+    for spec in prepared.campaign.solvers:
+        threads = getattr(prepared.registry.create(spec.id, **spec.arguments()), "threads", 1)
+        if isinstance(threads, int) and not isinstance(threads, bool):
+            largest = max(largest, threads)
+    return largest
 
 
 def _duration(seconds: float) -> str:

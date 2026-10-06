@@ -21,6 +21,8 @@ from dispatchatlas.campaigns import (
     Protocol,
     SolverSpec,
 )
+from dispatchatlas.campaigns.config import THREAD_VARIABLES
+from dispatchatlas.campaigns.processors import allowed_cpus
 from dispatchatlas.core import FEATURES, Problem, SolverError, SolveResult, SolverInfo, StopCriteria
 from dispatchatlas.solvers import SolverRegistry, default_registry
 from dispatchatlas.solvers.rules import InputOrder, RandomSearch
@@ -131,13 +133,29 @@ class Pareto:
 
 @dataclass(frozen=True)
 class EnvironmentProbe:
-    """Input order that reports the thread settings of its process in its extras."""
+    """Input order that reports the thread settings and processors of its process in its extras."""
 
     info: ClassVar[SolverInfo] = _info("test-environment", stochastic=False, iterative=False)
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         result = InputOrder().solve(problem, stop, seed)
-        return replace(result, extras={"omp_threads": os.environ.get("OMP_NUM_THREADS", "")})
+        extras = {
+            "omp_threads": os.environ.get("OMP_NUM_THREADS", ""),
+            "thread_variables": ",".join(os.environ.get(name, "") for name in THREAD_VARIABLES),
+            "cpus": ",".join(str(index) for index in allowed_cpus()),
+        }
+        return replace(result, extras=extras)
+
+
+@dataclass(frozen=True)
+class Threaded:
+    """Input order with a ``threads`` parameter, which it only declares."""
+
+    threads: int = 1
+    info: ClassVar[SolverInfo] = _info("test-threaded", stochastic=False, iterative=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        return InputOrder().solve(problem, stop, seed)
 
 
 @dataclass(frozen=True)
@@ -173,6 +191,7 @@ TEST_SOLVERS = (
     NoDeadlines,
     Pareto,
     EnvironmentProbe,
+    Threaded,
     Tabled,
     Unpicklable,
 )
