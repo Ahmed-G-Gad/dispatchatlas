@@ -15,6 +15,20 @@ its failures settle it: its latest failure is terminal, or it has failed
 ``1 + retries`` times. Each session writes ``sessions/<n>.json`` with the
 environment it runs in, when it starts and again when it ends.
 
+A session that resumes a campaign compares its execution settings and its
+environment with those of the last session the directory recorded
+(:func:`session_changes`). It logs a warning that names each difference and
+stores them in its record, and a campaign whose ``on_changed_code`` is
+``"refuse"`` refuses a session on other code instead. A file at the path of a
+planned run that is not the valid record of that run, such as a record made
+on another version of its problem, is moved under ``superseded/`` before the
+run is repeated, unless ``on_changed_problem`` is ``"refuse"``.
+
+Each session also writes ``logs/session-<n>.log``: every record of level
+``INFO`` or higher that the library logs while :func:`run` works, in this
+process and in its worker processes, each with its UTC time. What the
+handlers of the application show does not change.
+
 Progress is logged through :mod:`dispatchatlas.core.logs`: a line when the
 session starts, one at most every :data:`PROGRESS_INTERVAL` seconds while it
 runs, and a summary at the end.
@@ -23,10 +37,11 @@ runs, and a summary at the end.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -39,7 +54,7 @@ from dispatchatlas.campaigns.config import (
     Execution,
     available_cpus,
 )
-from dispatchatlas.campaigns.environment import capture_environment
+from dispatchatlas.campaigns.environment import capture_environment, sample_load
 from dispatchatlas.campaigns.execution import Completion, Result, Task, utc_now
 from dispatchatlas.campaigns.planning import PlannedRun, Prepared, prepare
 from dispatchatlas.campaigns.processors import affinity_cpus, describe_cpus
@@ -54,15 +69,38 @@ from dispatchatlas.campaigns.records import (
 )
 from dispatchatlas.campaigns.store import Store, campaign_directory
 from dispatchatlas.campaigns.timeout import hard_limit
-from dispatchatlas.core.logs import get_logger
+from dispatchatlas.core.errors import ConfigError
+from dispatchatlas.core.logs import SessionLog, get_logger
 from dispatchatlas.solvers.registry import SolverRegistry
 
-__all__ = ["PROGRESS_INTERVAL", "RunSummary", "overridden", "run", "tasks_for"]
+__all__ = [
+    "PROGRESS_INTERVAL",
+    "RunSummary",
+    "overridden",
+    "run",
+    "session_changes",
+    "tasks_for",
+]
 
 PROGRESS_INTERVAL = 10.0
 """Seconds between progress lines while a session runs."""
 
 _LOG = get_logger(__name__)
+
+_UNCOMPARED = ("on_changed_code", "on_changed_problem")
+"""Execution settings that say what a session does about a difference, and are no difference."""
+
+_CODE = ("python", "packages", "library", "plugins", "git")
+"""The parts of an environment that describe code; the others describe the machine."""
+
+_OPEN = (("packages",), ("plugins",), ("git",))
+"""The parts of an environment whose entries come and go: an entry one side lacks differs."""
+
+_NAMED = 8
+"""Differences a message names before it counts the rest."""
+
+_DIGEST_LENGTH = 32
+"""Length from which a hexadecimal value is shortened in a message."""
 
 
 @dataclass(frozen=True)
@@ -142,98 +180,127 @@ def run(
             asks: the platform cannot pin a process, the workers outnumber
             their processors, or a listed processor is not one this process
             may use. A campaign refused for its pinning loses no record, also
-            with ``fresh``, and a new one leaves no directory.
+            with ``fresh``, and a new one leaves no directory. Also if the
+            campaign's ``on_changed_code`` is ``"refuse"`` and the code
+            differs from that of the last recorded session, or its
+            ``on_changed_problem`` is ``"refuse"`` and the directory holds a
+            record made on another version of a planned run's problem; such
+            a refusal moves no file and writes no session record.
         KeyboardInterrupt: When interrupted. Records written so far are kept
             and the session is marked interrupted.
     """
     execution = overridden(campaign.execution, backend, workers, affinity)
-    prepared = prepare(campaign, registry=registry, families=families)
-    plan = prepared.plan
-    count = execution.worker_count()
-    store = Store(campaign_directory(root, campaign.id))
-    if fresh or not store.directory.exists():
-        # Every run is pending, so a refusal comes before records are discarded
-        # or a directory is created.
-        execution.worker_cpus(count)
-    with store.locked():
-        store.open(campaign, fresh=fresh)
-        change = store.plan_change(plan)
-        ledger = store.ledger(plan)
-        pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
-        if max_runs is not None:
-            pending = pending[: max(0, max_runs)]
-        cpus = execution.worker_cpus(count) if pending else None
-        chosen = backend_for(
-            execution.backend,
-            count,
-            cpus=cpus,
-            threads=execution.threads_per_worker,
-            startup_limit=execution.startup_limit,
-        )
-        started, clock = utc_now(), time.perf_counter()
-        record = SessionRecord(
-            session=store.next_session(),
-            campaign=campaign.id,
-            config_hash=plan.config_hash,
-            started=started,
-            finished=None,
-            status=SessionStatus.RUNNING,
-            execution=execution,
-            workers=count,
-            environment=capture_environment(),
-            plan_digest=plan.runs_digest,
-            plan_left=change.left,
-            plan_entered=change.entered,
-            plan_reseeded=change.reseeded,
-            plan_solvers=change.solvers,
-        )
-        # The session record, which states how the plan changed, is written before
-        # the plan it was compared with is replaced, so a session that ends in
-        # between leaves the comparison to the next one.
-        store.write_session(record)
-        store.write_plan(plan)
-        _warn_about_timing(prepared, execution, count, cpus)
-        if cpus is not None:
-            _LOG.info(
-                "campaign %s: workers pinned to processor(s) %s", campaign.id, describe_cpus(cpus)
+    with SessionLog() as log:
+        prepared = prepare(campaign, registry=registry, families=families)
+        plan = prepared.plan
+        count = execution.worker_count()
+        store = Store(campaign_directory(root, campaign.id))
+        if fresh or not store.directory.exists():
+            # Every run is pending, so a refusal comes before records are discarded
+            # or a directory is created.
+            execution.worker_cpus(count)
+        with store.locked():
+            store.open(campaign, fresh=fresh)
+            number = store.next_session()
+            environment = capture_environment(exclude=[store.directory])
+            changes = _compare(store, campaign.id, number, execution, count, environment)
+            change = store.plan_change(plan)
+            ledger = store.ledger(plan)
+            if execution.on_changed_problem == "refuse":
+                store.refuse_changed_problems(ledger)
+            pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
+            if max_runs is not None:
+                pending = pending[: max(0, max_runs)]
+            cpus = execution.worker_cpus(count) if pending else None
+
+            def from_worker(worker: str, created: float, level: int, name: str, text: str) -> None:
+                log.write(created, level, name, f"[{worker}] {text}")
+
+            chosen = backend_for(
+                execution.backend,
+                count,
+                cpus=cpus,
+                threads=execution.threads_per_worker,
+                startup_limit=execution.startup_limit,
+                source=environment["library"]["source_digest"],
+                log=from_worker,
             )
-        _LOG.info(
-            "campaign %s, session %d: %d of %d runs to attempt, %s backend, %d worker(s)",
-            campaign.id,
-            record.session,
-            len(pending),
-            len(plan.runs),
-            chosen.name,
-            count,
-        )
-        books = _Books(prepared, store, execution, record.session, ledger.completed)
-        for run_id, failures in ledger.failures.items():
-            books.failures[run_id] = list(failures)
-        queue = deque(tasks_for(prepared, pending, execution, ledger.next_attempt))
-        status = SessionStatus.FAILED
-        try:
-            with contextlib.closing(chosen.run(queue)) as results:
-                for result in results:
-                    retry = books.record(result)
-                    if retry is not None:
-                        queue.append(retry)
-                    books.progress(len(queue))
-            status = SessionStatus.FINISHED
-        except KeyboardInterrupt:
-            status = SessionStatus.INTERRUPTED
-            raise
-        finally:
-            counts = books.counts()
-            store.write_session(replace(record, finished=utc_now(), status=status, counts=counts))
+            started, clock = utc_now(), time.perf_counter()
+            load: dict[str, Any] = {"start": sample_load()} if pending else {}
+            record = SessionRecord(
+                session=number,
+                campaign=campaign.id,
+                config_hash=plan.config_hash,
+                started=started,
+                finished=None,
+                status=SessionStatus.RUNNING,
+                execution=execution,
+                workers=count,
+                environment=environment,
+                plan_digest=plan.runs_digest,
+                plan_left=change.left,
+                plan_entered=change.entered,
+                plan_reseeded=change.reseeded,
+                plan_solvers=change.solvers,
+                changes=changes,
+                load=load,
+            )
+            # The session record, which states how the plan changed, is written before
+            # the plan it was compared with is replaced, so a session that ends in
+            # between leaves the comparison to the next one. Files are moved aside
+            # only once the session that repeats their runs is on record.
+            store.write_session(record)
+            log.open(store.log_path(number))
+            store.set_aside(ledger)
+            store.write_plan(plan)
+            _warn_about_timing(prepared, execution, count, cpus)
+            if cpus is not None:
+                _LOG.info(
+                    "campaign %s: workers pinned to processor(s) %s",
+                    campaign.id,
+                    describe_cpus(cpus),
+                )
             _LOG.info(
-                "campaign %s, session %d %s: %d completed, %d failed, %d pending",
+                "campaign %s, session %d: %d of %d runs to attempt, %s backend, %d worker(s)",
                 campaign.id,
                 record.session,
-                status.value,
-                counts["completed"],
-                counts["failed"],
-                counts["pending"],
+                len(pending),
+                len(plan.runs),
+                chosen.name,
+                count,
             )
+            books = _Books(prepared, store, execution, record.session, ledger.completed)
+            for run_id, failures in ledger.failures.items():
+                books.failures[run_id] = list(failures)
+            queue = deque(tasks_for(prepared, pending, execution, ledger.next_attempt))
+            status = SessionStatus.FAILED
+            try:
+                with contextlib.closing(chosen.run(queue)) as results:
+                    for result in results:
+                        retry = books.record(result)
+                        if retry is not None:
+                            queue.append(retry)
+                        books.progress(len(queue))
+                status = SessionStatus.FINISHED
+            except KeyboardInterrupt:
+                status = SessionStatus.INTERRUPTED
+                raise
+            finally:
+                counts = books.counts()
+                if pending and status is SessionStatus.FINISHED:
+                    load = {**load, "end": sample_load()}
+                store.write_session(
+                    replace(record, finished=utc_now(), status=status, counts=counts, load=load)
+                )
+                _LOG.info(
+                    "campaign %s, session %d %s: %d completed, %d failed, %d pending",
+                    campaign.id,
+                    record.session,
+                    status.value,
+                    counts["completed"],
+                    counts["failed"],
+                    counts["pending"],
+                )
     return RunSummary(
         campaign=campaign.id,
         config_hash=plan.config_hash,
@@ -248,6 +315,62 @@ def run(
         errors=counts["errors"],
         elapsed=time.perf_counter() - clock,
     )
+
+
+def session_changes(
+    previous: SessionRecord,
+    execution: Execution,
+    workers: int,
+    environment: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Return how a session differs from an earlier session of its campaign directory.
+
+    The execution settings are compared one by one, except those that only
+    say what a session does about a difference, and the resolved worker
+    count is compared when both sessions state the same ``workers``. The
+    environments are compared value by value. A value the earlier record
+    does not state is not compared, so a record of a library that recorded
+    less differs in nothing it lacks; a package, a plugin, or a git checkout
+    that only one session has is a difference. The load of the machine is no
+    part of the environment and is not compared.
+
+    Args:
+        previous: The record of the earlier session.
+        execution: The execution settings of the session.
+        workers: Its number of workers, with ``"auto"`` resolved.
+        environment: Its environment, as
+            :func:`~dispatchatlas.campaigns.environment.capture_environment`
+            records it.
+
+    Returns:
+        One document per difference, with ``field``, a dotted path under
+        ``execution`` or ``environment`` or the name ``workers``; ``kind``,
+        which is ``"execution"``, ``"code"`` for the Python version, the
+        packages, the library, the plugins, and the git states, or
+        ``"machine"`` for the rest of the environment; and the values
+        ``earlier`` and ``now``.
+    """
+    changes: list[dict[str, Any]] = []
+    before, now = previous.execution.to_dict(), execution.to_dict()
+    for key, value in now.items():
+        if key not in _UNCOMPARED and before[key] != value:
+            changes.append(
+                {
+                    "field": f"execution.{key}",
+                    "kind": "execution",
+                    "earlier": before[key],
+                    "now": value,
+                }
+            )
+    if before["workers"] == now["workers"] and previous.workers != workers:
+        changes.append(
+            {"field": "workers", "kind": "execution", "earlier": previous.workers, "now": workers}
+        )
+    for path, earlier, current in _differences(previous.environment, environment, ()):
+        kind = "code" if path[0] in _CODE else "machine"
+        field = ".".join(("environment", *path))
+        changes.append({"field": field, "kind": kind, "earlier": earlier, "now": current})
+    return tuple(changes)
 
 
 def tasks_for(
@@ -392,16 +515,15 @@ class _Books:
             f"protocol {planned.protocol}, replicate {planned.replicate})"
         )
         if isinstance(result, Completion):
-            self.store.write_run(
-                RunRecord(
-                    **identity,
-                    outcome=result.outcome,
-                    result_hash=result.result_hash,
-                    schedule=result.schedule,
-                    provenance=provenance,
-                    notes=result.notes,
-                )
+            completed = RunRecord(
+                **identity,
+                outcome=result.outcome,
+                result_hash=result.result_hash,
+                schedule=result.schedule,
+                provenance=provenance,
+                notes=result.notes,
             )
+            self.store.write_run(replace(completed, identity_hash=completed.identity_digest()))
             self.completed.add(planned.run_id)
             self.succeeded += 1
             for note in result.notes:
@@ -469,6 +591,80 @@ class _Books:
             queued,
             _duration(queued / rate) if rate > 0 else "unknown",
         )
+
+
+def _compare(
+    store: Store,
+    campaign: str,
+    session: int,
+    execution: Execution,
+    workers: int,
+    environment: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Compare a session with the last recorded one and warn about every difference.
+
+    Raises:
+        ConfigError: If the code differs and ``on_changed_code`` is ``"refuse"``.
+    """
+    previous = store.last_session()
+    if previous is None:
+        return ()
+    changes = session_changes(previous, execution, workers, environment)
+    code = [item for item in changes if item["kind"] == "code"]
+    if code and execution.on_changed_code == "refuse":
+        raise ConfigError(
+            f"{store.directory}: the code differs from that of session {previous.session} "
+            f"({_named(code)}), and on_changed_code is 'refuse'; run on the code of that "
+            "session, set on_changed_code to 'warn' to resume on this code, or give the "
+            "campaign another id"
+        )
+    if changes:
+        _LOG.warning(
+            "campaign %s: session %d differs from session %d: %s; every record keeps the "
+            "session that made it, whose record states what it ran on",
+            campaign,
+            session,
+            previous.session,
+            _named(changes),
+        )
+    return changes
+
+
+def _differences(
+    earlier: object, now: object, path: tuple[str, ...]
+) -> Iterator[tuple[tuple[str, ...], object, object]]:
+    """Yield the paths at which two environments differ, with both values.
+
+    A key the earlier mapping lacks is skipped, except in the parts of
+    :data:`_OPEN`, where an entry that only one side has differs.
+    """
+    if isinstance(earlier, Mapping) and isinstance(now, Mapping):
+        for key in sorted({*earlier, *now}, key=str):
+            if key in earlier or path in _OPEN:
+                yield from _differences(earlier.get(key), now.get(key), (*path, str(key)))
+    elif earlier != now:
+        yield path, earlier, now
+
+
+def _named(changes: Sequence[Mapping[str, Any]]) -> str:
+    """Name the first differences of a list, each with both values."""
+    shown = "; ".join(
+        f"{item['field']} {_brief(item['earlier'])} -> {_brief(item['now'])}"
+        for item in changes[:_NAMED]
+    )
+    more = f"; and {len(changes) - _NAMED} more" if len(changes) > _NAMED else ""
+    return f"{shown}{more}"
+
+
+def _brief(value: object) -> str:
+    """Return a value as a short text: a long hexadecimal value by its first 12 digits."""
+    if isinstance(value, str):
+        text = value
+        if len(text) >= _DIGEST_LENGTH and all(digit in "0123456789abcdef" for digit in text):
+            return text[:12]
+    else:
+        text = json.dumps(value, sort_keys=True, default=str)
+    return text if len(text) <= 2 * _DIGEST_LENGTH else f"{text[: 2 * _DIGEST_LENGTH]}..."
 
 
 def _warn_about_timing(

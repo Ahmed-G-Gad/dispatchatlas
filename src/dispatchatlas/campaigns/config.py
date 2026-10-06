@@ -104,6 +104,12 @@ CPU_RESERVE = 1
 """Processors that ``workers = "auto"`` leaves to the supervising process and the system."""
 
 BACKENDS = ("sequential", "process")
+
+CODE_POLICIES = ("warn", "refuse")
+"""Values of ``on_changed_code``, the default first."""
+
+PROBLEM_POLICIES = ("rerun", "refuse")
+"""Values of ``on_changed_problem``, the default first."""
 """Execution backends: in the calling process, or in supervised worker processes."""
 
 THREAD_VARIABLES = (
@@ -540,6 +546,21 @@ class Execution:
             run, to begin its solve. A worker that takes longer is killed,
             and the attempt is a start-up failure, which ``retries`` covers
             and which is no timeout of the solver. Positive.
+        on_changed_code: What a session does when the code it runs on differs
+            from the code of the last recorded session of the campaign
+            directory: the Python version, the version of a recorded
+            package, the library's distribution, revision, or source
+            digest, a plugin distribution, or the git state of the
+            library or of the working directory. ``"warn"`` logs a
+            warning that names each difference and records them in the
+            session; ``"refuse"`` ends the session before it writes
+            anything. A difference of execution settings or of the machine
+            is warned about and recorded under either value.
+        on_changed_problem: What a session does when the directory holds
+            the record of a planned run made on another version of its
+            problem. ``"rerun"`` moves the record aside and runs the run
+            again; ``"refuse"`` ends the session before it moves or
+            writes anything.
     """
 
     backend: str = "process"
@@ -551,6 +572,8 @@ class Execution:
     affinity: Literal["inherit", "pin"] | tuple[int, ...] = "inherit"
     threads_per_worker: int = 1
     startup_limit: float = STARTUP_SECONDS
+    on_changed_code: Literal["warn", "refuse"] = "warn"
+    on_changed_problem: Literal["rerun", "refuse"] = "rerun"
 
     def __post_init__(self) -> None:
         if self.backend not in BACKENDS:
@@ -574,6 +597,14 @@ class Execution:
             raise ConfigError(f"startup_limit must be positive, got {self.startup_limit!r}")
         object.__setattr__(self, "startup_limit", startup)
         _check_integer(self.retries, "retries", 0)
+        for key, allowed in (
+            ("on_changed_code", CODE_POLICIES),
+            ("on_changed_problem", PROBLEM_POLICIES),
+        ):
+            if getattr(self, key) not in allowed:
+                raise ConfigError(
+                    f"{key} must be one of {list(allowed)}, got {getattr(self, key)!r}"
+                )
         if not isinstance(self.record_schedules, bool):
             raise ConfigError(
                 f"record_schedules must be true or false, got {self.record_schedules!r}"
@@ -661,6 +692,8 @@ class Execution:
             "affinity": self.affinity if isinstance(self.affinity, str) else list(self.affinity),
             "threads_per_worker": self.threads_per_worker,
             "startup_limit": self.startup_limit,
+            "on_changed_code": self.on_changed_code,
+            "on_changed_problem": self.on_changed_problem,
         }
 
 

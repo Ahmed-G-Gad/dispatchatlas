@@ -9,6 +9,9 @@ Layout under an output root::
                            digest of its plan and the runs that left or entered it
         runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
         failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
+        superseded/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
+                           files moved aside before their runs were repeated
+        logs/session-<n>.log  what each session logged, with UTC time stamps
         .lock              locked while a runner works on the campaign
 
 ``<solver>`` is the solver's name, its label or else its id. Every document
@@ -19,15 +22,22 @@ The readers :func:`read_campaign`, :func:`read_plan`, :func:`read_runs`,
 :func:`read_failures`, and :func:`read_sessions` return typed records. They
 only return records of the plan in ``plan.json``: a file left by an earlier
 plan, whose run id or config hash differs, is skipped with a warning. A record
-whose content no longer matches its result hash raises an error.
+whose content no longer matches its result hash or its identity hash raises an
+error. :func:`read_runs` also warns about every other file under ``runs/``,
+which :func:`read_strays` lists: records of runs the plan does not hold, files
+that cannot be read, and files that are no records.
 
 :class:`Store` is the writing side, used by the runner: it locks the
-directory, refuses to mix configurations, and settles which runs remain.
+directory, refuses to mix configurations, and settles which runs remain. It
+never replaces a file that is not the valid record of a planned run: before
+the run is repeated, such a file is moved under ``superseded/``, where nothing
+reads it and nothing replaces it.
 """
 
 from __future__ import annotations
 
 import contextlib
+import re
 import shutil
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -53,11 +63,15 @@ __all__ = [
     "CAMPAIGN_FILE",
     "CAMPAIGN_SCHEMA",
     "FAILURES",
+    "LOGS",
     "PLAN_FILE",
     "RUNS",
     "SESSIONS",
+    "SUPERSEDED",
     "Ledger",
+    "Stale",
     "Store",
+    "Strays",
     "campaign_directory",
     "failure_path",
     "read_campaign",
@@ -65,6 +79,7 @@ __all__ = [
     "read_plan",
     "read_runs",
     "read_sessions",
+    "read_strays",
     "recorded_config_hash",
     "run_path",
 ]
@@ -75,7 +90,12 @@ PLAN_FILE = "plan.json"
 SESSIONS = "sessions"
 RUNS = "runs"
 FAILURES = "failures"
+SUPERSEDED = "superseded"
+LOGS = "logs"
 _LOCK = ".lock"
+
+_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+"""What a run id must match to become part of a file name."""
 
 _SHOWN = 3
 """Runs a warning about a changed plan names before it counts the rest."""
@@ -168,8 +188,11 @@ def read_runs(directory: str | Path, *, verify: bool = True) -> tuple[RunRecord,
 
     Args:
         directory: The campaign directory.
-        verify: Check that every record still matches its result hash and
-            schedule digest.
+        verify: Check that every record still matches its result hash,
+            schedule digest, and identity hash.
+
+    Every other file under ``runs/`` is warned about, by kind and with the
+    first names (:func:`read_strays`).
 
     Raises:
         SerializationError: If the plan or a record is malformed, or, with
@@ -190,7 +213,69 @@ def read_runs(directory: str | Path, *, verify: bool = True) -> tuple[RunRecord,
         if verify and (issues := record.verify()):
             raise SerializationError(f"{path}: {'; '.join(issues)}")
         records.append(record)
+    strays = _strays(folder, plan)
+    for paths, what in (
+        (strays.unplanned, "record(s) of runs the plan does not hold, which are not read"),
+        (strays.unreadable, "file(s) that cannot be read as run records"),
+        (strays.other, "file(s) that are no records"),
+    ):
+        if paths:
+            shown = ", ".join(path.relative_to(folder).as_posix() for path in paths[:_SHOWN])
+            more = f" and {len(paths) - _SHOWN} more" if len(paths) > _SHOWN else ""
+            _LOG.warning("%s holds %d %s: %s%s", folder / RUNS, len(paths), what, shown, more)
     return tuple(records)
+
+
+@dataclass(frozen=True)
+class Strays:
+    """The files under ``runs/`` that are at no path of a planned run.
+
+    Attributes:
+        unplanned: Run records, such as those of runs that left the plan.
+        unreadable: JSON files that cannot be read as run records.
+        other: Files that are no JSON documents, such as a temporary file
+            an interrupted write left behind.
+    """
+
+    unplanned: tuple[Path, ...] = ()
+    unreadable: tuple[Path, ...] = ()
+    other: tuple[Path, ...] = ()
+
+    def __bool__(self) -> bool:
+        """Whether there is any such file."""
+        return bool(self.unplanned or self.unreadable or self.other)
+
+
+def read_strays(directory: str | Path) -> Strays:
+    """List the files under ``runs/`` that are at no path of a run of the plan.
+
+    No reader returns such a file, and no session replaces it.
+
+    Raises:
+        SerializationError: If the plan is missing or malformed.
+    """
+    folder = Path(directory)
+    return _strays(folder, read_plan(folder))
+
+
+def _strays(folder: Path, plan: Plan) -> Strays:
+    planned = {_planned_path(folder, run) for run in plan.runs}
+    unplanned: list[Path] = []
+    unreadable: list[Path] = []
+    other: list[Path] = []
+    for path in sorted((folder / RUNS).rglob("*")):
+        if path in planned or not path.is_file():
+            continue
+        if path.suffix != ".json" or path.name.startswith("."):
+            other.append(path)
+            continue
+        try:
+            _parse(path, RunRecord.from_dict)
+        except SerializationError:
+            unreadable.append(path)
+        else:
+            unplanned.append(path)
+    return Strays(tuple(unplanned), tuple(unreadable), tuple(other))
 
 
 def read_failures(directory: str | Path) -> tuple[FailureRecord, ...]:
@@ -228,16 +313,42 @@ def read_sessions(directory: str | Path) -> tuple[SessionRecord, ...]:
 
 
 @dataclass(frozen=True)
+class Stale:
+    """A file at the path of a planned run that is no valid record of the run.
+
+    Attributes:
+        run_id: Id of the planned run.
+        problem: Id of the problem of the planned run.
+        path: The file.
+        found: The run id the file states, or ``run_id`` when it states
+            none that can be part of a file name.
+        reason: Why the file does not count as the record of the run.
+        changed_problem: Whether the file is a record made on another
+            version of the problem of the run.
+    """
+
+    run_id: str
+    problem: str
+    path: Path
+    found: str
+    reason: str
+    changed_problem: bool = False
+
+
+@dataclass(frozen=True)
 class Ledger:
     """What a store already holds for a plan.
 
     Attributes:
         completed: Ids of the runs with a valid record.
         failures: Failed attempts of the plan's runs, by run id, in attempt order.
+        stale: The files at the paths of planned runs that do not count as
+            their records, in plan order.
     """
 
     completed: frozenset[str] = frozenset()
     failures: Mapping[str, tuple[FailureRecord, ...]] = field(default_factory=dict)
+    stale: tuple[Stale, ...] = ()
 
     def next_attempt(self, run_id: str) -> int:
         """Return the number of the next attempt of a run: one past its last failure."""
@@ -416,11 +527,14 @@ class Store:
     def ledger(self, plan: Plan) -> Ledger:
         """Read which runs of a plan are complete and which attempts failed.
 
-        A record that cannot be read, belongs to another plan, or no longer
-        matches its result hash does not count: its run is attempted again,
-        and the new record replaces it.
+        A file at the path of a planned run that cannot be read, belongs to
+        another plan, or no longer matches its hashes does not count: it is
+        listed as stale and its run is attempted again. Nothing is moved or
+        written here; :meth:`set_aside` keeps the stale files before new
+        records take their places.
         """
         completed: set[str] = set()
+        stale: list[Stale] = []
         for run in plan.runs:
             path = _planned_path(self.directory, run)
             if not path.is_file():
@@ -428,14 +542,17 @@ class Store:
             try:
                 record = _parse(path, RunRecord.from_dict)
             except SerializationError as error:
-                _LOG.warning("will run %s again: %s", run.run_id, error)
+                stale.append(Stale(run.run_id, run.problem, path, run.run_id, str(error)))
                 continue
-            stale = _foreign(record.run_id, record.config_hash, run.run_id, plan.config_hash)
-            issues = stale or "; ".join(record.verify())
-            if issues:
-                _LOG.warning("will run %s again: %s (%s)", run.run_id, issues, path)
+            foreign = _foreign(record.run_id, record.config_hash, run.run_id, plan.config_hash)
+            issues = foreign or "; ".join(record.verify())
+            if not issues:
+                completed.add(run.run_id)
                 continue
-            completed.add(run.run_id)
+            found = record.run_id if _FILE_NAME.fullmatch(record.run_id) else run.run_id
+            changed = bool(foreign) and record.config_hash == plan.config_hash
+            reason = f"{issues} ({path})"
+            stale.append(Stale(run.run_id, run.problem, path, found, reason, changed))
         failures: dict[str, list[FailureRecord]] = {}
         for path in sorted((self.directory / FAILURES).rglob("*.json")):
             try:
@@ -451,7 +568,73 @@ class Store:
                 run_id: tuple(sorted(items, key=lambda item: item.provenance.attempt))
                 for run_id, items in failures.items()
             },
+            tuple(stale),
         )
+
+    def refuse_changed_problems(self, ledger: Ledger) -> None:
+        """Refuse a directory that holds a record made on another version of a problem.
+
+        Raises:
+            ConfigError: If a stale file of the ledger is the record of a
+                planned run made on another version of its problem.
+        """
+        changed = [item for item in ledger.stale if item.changed_problem]
+        if changed:
+            problems = ", ".join(sorted({item.problem for item in changed}))
+            raise ConfigError(
+                f"{self.directory} holds {len(changed)} record(s) made on another version of "
+                f"problem(s) {problems}, and on_changed_problem is 'refuse'; restore the "
+                "problem(s), set on_changed_problem to 'rerun' to keep those records aside "
+                "and run their runs again, or give the campaign another id"
+            )
+
+    def set_aside(self, ledger: Ledger) -> tuple[Path, ...]:
+        """Move the stale files of a ledger under ``superseded/``, and warn about each.
+
+        A file keeps its path below ``runs/``, with the run id it states
+        before ``.json``, and a number after that when the name is taken, so
+        no file is replaced.
+
+        Returns:
+            Where the files are kept, in the order of the ledger.
+        """
+        kept: list[Path] = []
+        for item in ledger.stale:
+            relative = item.path.relative_to(self.directory / RUNS)
+            stem = f"{item.path.stem}.{item.found}"
+            target = self.directory / SUPERSEDED / relative.with_name(f"{stem}.json")
+            number = 1
+            while target.exists():
+                number += 1
+                target = target.with_name(f"{stem}.{number}.json")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            item.path.replace(target)
+            kept.append(target)
+            _LOG.warning(
+                "will run %s again: %s; the earlier file is kept as %s",
+                item.run_id,
+                item.reason,
+                target,
+            )
+        return tuple(kept)
+
+    def last_session(self) -> SessionRecord | None:
+        """Return the record of the latest session, or ``None`` when there is none.
+
+        A session record that cannot be read is skipped with a warning, and
+        the one before it is returned.
+        """
+        paths = [path for path in (self.directory / SESSIONS).glob("*.json") if path.stem.isdigit()]
+        for path in sorted(paths, key=lambda item: int(item.stem), reverse=True):
+            try:
+                return _parse(path, SessionRecord.from_dict)
+            except SerializationError as error:
+                _LOG.warning("cannot compare with session %s: %s", path.stem, error)
+        return None
+
+    def log_path(self, session: int) -> Path:
+        """Return the path of the log file of a session."""
+        return self.directory / LOGS / f"session-{session}.log"
 
     def next_session(self) -> int:
         """Return the number of the next session: one past the highest recorded."""
@@ -492,7 +675,7 @@ class Store:
         return path
 
     def _clear(self) -> None:
-        """Remove every result, plan, session, and campaign file of the directory."""
+        """Remove every result, plan, session, log, and campaign file of the directory."""
         runs = len(list((self.directory / RUNS).rglob("*.json")))
         failures = len(list((self.directory / FAILURES).rglob("*.json")))
         if runs or failures:
@@ -502,7 +685,7 @@ class Store:
                 failures,
                 self.directory,
             )
-        for name in (RUNS, FAILURES, SESSIONS):
+        for name in (RUNS, FAILURES, SESSIONS, SUPERSEDED, LOGS):
             shutil.rmtree(self.directory / name, ignore_errors=True)
         for name in (PLAN_FILE, CAMPAIGN_FILE):
             (self.directory / name).unlink(missing_ok=True)

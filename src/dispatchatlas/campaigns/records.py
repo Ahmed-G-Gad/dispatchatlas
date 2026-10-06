@@ -5,16 +5,19 @@ version:
 
 - ``dispatchatlas.run/1`` (:class:`RunRecord`): one completed run. It names
   the run (campaign, config hash, problem, solver, protocol, replicate, seed),
-  holds its :class:`Outcome`, the ``result_hash`` of that outcome, the best
-  schedule as ``[task, mode, start, end]`` rows unless the campaign disables
-  it, and the :class:`Provenance` of the attempt that produced it.
+  holds its :class:`Outcome`, the ``result_hash`` of that outcome, the
+  ``identity_hash`` of the fields that name the run, the best schedule as
+  ``[task, mode, start, end]`` rows unless the campaign disables it, and the
+  :class:`Provenance` of the attempt that produced it.
 - ``dispatchatlas.failure/1`` (:class:`FailureRecord`): one failed attempt,
   with its error and :class:`Category`, and, for a run killed at its hard
   limit, the last :class:`Incumbent` its search had reported.
 - ``dispatchatlas.session/1`` (:class:`SessionRecord`): one invocation of the
-  runner, with its execution settings, the environment it ran in, the digest
-  of the plan it executed, and how that plan differs from the one the
-  directory held (:class:`PlanChange`).
+  runner, with its execution settings, the environment it ran in, the load
+  of the machine when it began and ended, how its settings and environment
+  differ from those of the session before it, the digest of the plan it
+  executed, and how that plan differs from the one the directory held
+  (:class:`PlanChange`).
 
 The **result hash** is the SHA-256 digest of the canonical JSON of
 :meth:`Outcome.hashed`: every outcome field except those that measure wall
@@ -24,6 +27,12 @@ machine, the session, or the attempt enters it, so a replay on any machine
 compares results directly (see :mod:`~dispatchatlas.campaigns.replaying`). The
 schedule enters it through its digest, so a record with or without stored
 schedule rows hashes alike.
+
+The **identity hash** is the SHA-256 digest of the canonical JSON of
+:meth:`RunRecord.identity`: the digest of the problem, the id and the
+parameters of the solver, the protocol, the replicate, and the seed. A record
+whose outcome or identity was edited after it was written no longer matches
+its hashes, which :meth:`RunRecord.verify` reports.
 
 These classes convert records to and from documents. Where the files live is
 the business of :mod:`~dispatchatlas.campaigns.store`.
@@ -543,6 +552,9 @@ class RunRecord:
             out of order or that ends at another value than the outcome.
             Empty when the engine noticed nothing, and when the record does
             not state them.
+        identity_hash: :meth:`identity_digest` at the time of the run.
+            ``None`` for a record that does not state it, whose identity
+            is then not checked.
     """
 
     run_id: str
@@ -558,6 +570,7 @@ class RunRecord:
     schedule: Schedule | None
     provenance: Provenance
     notes: tuple[str, ...] = ()
+    identity_hash: str | None = None
 
     @property
     def replayable(self) -> bool:
@@ -582,10 +595,13 @@ class RunRecord:
     def verify(self) -> tuple[str, ...]:
         """Return the integrity problems of the record, empty when it is intact.
 
-        The outcome must hash to :attr:`result_hash`, and stored schedule rows
-        must match the outcome's schedule digest.
+        The outcome must hash to :attr:`result_hash`, stored schedule rows
+        must match the outcome's schedule digest, and the identity must
+        hash to :attr:`identity_hash` when the record states one.
         """
         issues: list[str] = []
+        if self.identity_hash is not None and self.identity_digest() != self.identity_hash:
+            issues.append("the identity does not match the identity hash")
         if self.outcome.result_hash() != self.result_hash:
             issues.append("the outcome does not match the result hash")
         if self.schedule is not None and schedule_digest(self.schedule) != (
@@ -593,6 +609,27 @@ class RunRecord:
         ):
             issues.append("the schedule does not match the outcome's schedule digest")
         return tuple(issues)
+
+    def identity(self) -> dict[str, Any]:
+        """Return the fields the identity hash covers.
+
+        They are the digest of the problem, the id and the parameters of
+        the solver, the protocol with its stop criteria, the replicate,
+        and the seed: what, with the library, determines the result of a
+        run. The metadata a solver declares and the campaign's label for
+        it are left out.
+        """
+        return {
+            "problem": self.problem.digest,
+            "solver": {"id": self.solver.id, "parameters": dict(self.solver.parameters)},
+            "protocol": self.protocol.to_dict(),
+            "replicate": self.replicate,
+            "seed": self.seed,
+        }
+
+    def identity_digest(self) -> str:
+        """Return the SHA-256 digest of the canonical JSON of :meth:`identity`."""
+        return digest(self.identity())
 
     def to_dict(self) -> dict[str, Any]:
         """Return the record as a JSON-ready document."""
@@ -611,13 +648,15 @@ class RunRecord:
             "schedule": None if self.schedule is None else schedule_rows(self.schedule),
             "provenance": self.provenance.to_dict(),
             "notes": list(self.notes),
+            "identity_hash": self.identity_hash,
         }
 
     @classmethod
     def from_dict(cls, document: object) -> RunRecord:
         """Build a record from :meth:`to_dict` output.
 
-        The field ``notes`` may be absent, and is then empty.
+        The field ``notes`` may be absent, and is then empty, and so may
+        ``identity_hash``, which is then ``None``.
 
         Raises:
             SerializationError: If the document is not a run record of this
@@ -632,6 +671,7 @@ class RunRecord:
                 raise SerializationError("the schedule of a run record must be a list of rows")
             schedule = _schedule(rows)
         stated = fields.absent_or_raw("notes")
+        stated_hash = fields.absent_or_raw("identity_hash")
         notes = tuple(
             _text(note, "a note of a run record")
             for note in ([] if stated is None else _list(stated, "the notes of a run record"))
@@ -650,6 +690,7 @@ class RunRecord:
             schedule=schedule,
             provenance=Provenance.from_dict(fields.raw("provenance")),
             notes=notes,
+            identity_hash=(None if stated_hash is None else _text(stated_hash, "an identity hash")),
         )
 
 
@@ -922,6 +963,18 @@ class SessionRecord:
         plan_reseeded: The runs both plans hold whose seed differs.
         plan_solvers: The fields by which the solver entries of the two
             plans differ.
+        changes: How the session differs from the last session the
+            directory recorded before it: each a document with ``field``,
+            a dotted path such as ``execution.workers`` or
+            ``environment.library.source_digest``, the values ``earlier``
+            and ``now``, and ``kind``, which is ``"execution"``,
+            ``"code"``, or ``"machine"``. Empty for a first session and
+            for a record that does not state them.
+        load: The load of the machine, as
+            :func:`~dispatchatlas.campaigns.environment.sample_load`
+            measures it, under ``start``, taken before the first run of
+            the session, and ``end``, taken after its last. Empty for a
+            record that does not state it.
     """
 
     session: int
@@ -939,6 +992,8 @@ class SessionRecord:
     plan_entered: tuple[Mapping[str, Any], ...] = ()
     plan_reseeded: tuple[Mapping[str, Any], ...] = ()
     plan_solvers: tuple[Mapping[str, Any], ...] = ()
+    changes: tuple[Mapping[str, Any], ...] = ()
+    load: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the record as a JSON-ready document."""
@@ -959,6 +1014,8 @@ class SessionRecord:
             "plan_entered": [dict(item) for item in self.plan_entered],
             "plan_reseeded": [dict(item) for item in self.plan_reseeded],
             "plan_solvers": [dict(item) for item in self.plan_solvers],
+            "changes": [dict(item) for item in self.changes],
+            "load": dict(self.load),
         }
 
     @classmethod
@@ -967,7 +1024,8 @@ class SessionRecord:
 
         A document without ``plan_digest``, ``plan_left``, ``plan_entered``,
         ``plan_reseeded``, or ``plan_solvers`` reads as a record that states
-        no digest and no change of plan.
+        no digest and no change of plan, and one without ``changes`` or
+        ``load`` as a record that states neither.
 
         Raises:
             SerializationError: If the document is not a session record of
@@ -978,7 +1036,12 @@ class SessionRecord:
         execution = fields.mapping("execution")
         status = fields.text("status")
         plan_digest = fields.absent_or_raw("plan_digest")
+        load = fields.absent_or_raw("load")
+        if load is not None and not isinstance(load, Mapping):
+            raise SerializationError("a session record field 'load' must be an object")
         return cls(
+            changes=_documents(fields.absent_or_raw("changes"), "changes", ("field", "kind")),
+            load={} if load is None else dict(load),
             plan_digest=(
                 None if plan_digest is None else _text(plan_digest, "a session's plan_digest")
             ),

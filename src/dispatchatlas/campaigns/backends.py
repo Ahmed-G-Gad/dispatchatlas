@@ -36,7 +36,12 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
   worker comes before them. A worker can also be pinned to one processor:
   the supervisor creates it while confined to that processor itself, so the
   worker and every thread it starts run there, and the worker reports its
-  processors when it is ready, which the supervisor checks.
+  processors when it is ready, which the supervisor checks. A backend that is
+  given the digest of the library source its session started on has every
+  worker report the digest of the source it starts on: a worker on other
+  source is warned about, and every run it completes carries a note. A
+  backend that is given a sink for log records has every worker send what
+  the library's loggers record in it, of :data:`WORKER_LOG_LEVEL` or higher.
 
 Every result states how many runs were executing when its attempt was handed
 over (``concurrent``), the processor its worker is pinned to (``cpu``), and
@@ -47,6 +52,7 @@ its hand-over, before a fresh worker exists, to the instant its worker states.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import multiprocessing
 import os
@@ -56,12 +62,13 @@ import sys
 import threading
 import time
 from collections import OrderedDict, deque
-from collections.abc import Generator, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from multiprocessing.connection import wait
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dispatchatlas.campaigns.config import STARTUP_SECONDS, THREAD_VARIABLES
+from dispatchatlas.campaigns.environment import LIBRARY, source_digest
 from dispatchatlas.campaigns.execution import (
     Completion,
     Failure,
@@ -78,6 +85,7 @@ from dispatchatlas.campaigns.processors import affinity_cpus, confined, describe
 from dispatchatlas.campaigns.records import Category, ErrorKind, Incumbent
 from dispatchatlas.campaigns.timeout import contain, detach, end_with_parent, kill, release
 from dispatchatlas.core.errors import ConfigError, SerializationError
+from dispatchatlas.core.logs import get_logger
 from dispatchatlas.core.serialization import problem_from_dict, problem_to_dict
 from dispatchatlas.solvers.search import Improvement, listening
 
@@ -92,7 +100,9 @@ if TYPE_CHECKING:
 __all__ = [
     "PROGRESS_INTERVAL",
     "STARTUP_ATTEMPTS",
+    "WORKER_LOG_LEVEL",
     "Backend",
+    "LogSink",
     "ProcessBackend",
     "SequentialBackend",
     "backend_for",
@@ -103,6 +113,18 @@ STARTUP_ATTEMPTS = 3
 
 PROGRESS_INTERVAL = 0.25
 """Fewest seconds between two incumbents a worker forwards to the supervisor."""
+
+WORKER_LOG_LEVEL = logging.INFO
+"""Lowest level of the log records a worker sends to the supervisor."""
+
+type LogSink = Callable[[str, float, int, str, str], None]
+"""Receives a record a worker logged: the worker's name, the time of the record in
+seconds since the epoch, its level, the name of its logger, and its message."""
+
+_LOG = get_logger(__name__)
+
+_SENDING = threading.Lock()
+"""Held by the thread of a worker process that writes to the worker's pipe."""
 
 
 class Backend(Protocol):
@@ -141,6 +163,12 @@ class ProcessBackend:
         threads: Threads the numerical libraries of a worker may use.
         startup_limit: Seconds a worker has, from the hand-over of a run, to
             report that the solve begins.
+        source: The digest of the library source the session started on
+            (:func:`~dispatchatlas.campaigns.environment.source_digest`),
+            which every worker compares the source it starts on with.
+            ``None`` compares nothing.
+        log: Receives the records the workers log. ``None`` leaves them in
+            the workers.
 
     Raises:
         ConfigError: If there is no worker, a worker has no thread, the
@@ -157,6 +185,8 @@ class ProcessBackend:
         cpus: Sequence[int] | None = None,
         threads: int = 1,
         startup_limit: float = STARTUP_SECONDS,
+        source: str | None = None,
+        log: LogSink | None = None,
     ) -> None:
         if workers < 1:
             raise ConfigError("a process backend needs at least one worker")
@@ -173,6 +203,8 @@ class ProcessBackend:
         self.cpus = None if cpus is None else tuple(cpus)
         self.threads = threads
         self.startup_limit = float(startup_limit)
+        self.source = source
+        self.log = log
 
     def run(self, queue: deque[Task]) -> Generator[Result]:
         """Execute tasks from ``queue`` until it is empty, yielding each result.
@@ -193,7 +225,15 @@ class ProcessBackend:
         environment = dict.fromkeys(THREAD_VARIABLES, str(self.threads))
         cpus: Sequence[int | None] = [None] * count if self.cpus is None else self.cpus
         slots = [
-            _Slot(number, context, environment, cpus[number - 1], self.startup_limit)
+            _Slot(
+                number,
+                context,
+                environment,
+                cpus[number - 1],
+                self.startup_limit,
+                source=self.source,
+                log=self.log,
+            )
             for number in range(1, count + 1)
         ]
         documents = _Documents(self.workers + 2)
@@ -247,6 +287,8 @@ def backend_for(
     cpus: Sequence[int] | None = None,
     threads: int = 1,
     startup_limit: float = STARTUP_SECONDS,
+    source: str | None = None,
+    log: LogSink | None = None,
 ) -> Backend:
     """Return the backend of the given name.
 
@@ -257,6 +299,10 @@ def backend_for(
         threads: Threads the numerical libraries of a worker process may use.
         startup_limit: Seconds a worker process has, from the hand-over of a
             run, to report that the solve begins.
+        source: The digest of the library source the session started on,
+            for the worker processes to compare theirs with.
+        log: Receives the records the worker processes log. The sequential
+            backend has no worker process and uses neither.
 
     Raises:
         ConfigError: If the name is unknown, or the sequential backend gets
@@ -269,7 +315,14 @@ def backend_for(
             raise ConfigError("the sequential backend does not pin the calling process")
         return SequentialBackend()
     if name == "process":
-        return ProcessBackend(workers, cpus=cpus, threads=threads, startup_limit=startup_limit)
+        return ProcessBackend(
+            workers,
+            cpus=cpus,
+            threads=threads,
+            startup_limit=startup_limit,
+            source=source,
+            log=log,
+        )
     raise ConfigError(f"unknown backend {name!r}; use 'sequential' or 'process'")
 
 
@@ -290,14 +343,28 @@ class _Job:
     record_schedule: bool
 
 
-def _worker_main(connection: Connection, name: str) -> None:
-    """Serve attempts sent over ``connection`` until it closes or sends ``None``."""
+def _worker_main(
+    connection: Connection, name: str, forward: bool = False, identify: bool = False
+) -> None:
+    """Serve attempts sent over ``connection`` until it closes or sends ``None``.
+
+    With ``forward`` the worker sends what the library's loggers record in
+    it to the supervisor. With ``identify`` it reports the digest of the
+    library source it started on before it reports that it is ready.
+    """
     detach()
     end_with_parent()
+    if forward:
+        logger = get_logger(LIBRARY)
+        logger.addHandler(_Forwarder(connection, WORKER_LOG_LEVEL))
+        if logger.getEffectiveLevel() > WORKER_LOG_LEVEL:
+            logger.setLevel(WORKER_LOG_LEVEL)
     _load_installed_plugins()
     held: list[Any] = []  # [digest, problem] of the problem this worker keeps
     try:
-        connection.send(("ready", affinity_cpus()))
+        if identify:
+            _send(connection, ("source", source_digest()))
+        _send(connection, ("ready", affinity_cpus()))
         while (message := connection.recv()) is not None:
             result = _serve(message, name, held, connection)
             try:
@@ -313,9 +380,35 @@ def _worker_main(connection: Connection, name: str) -> None:
                     solve_started=True,
                 )
                 payload = pickle.dumps(("done", failure), protocol=pickle.HIGHEST_PROTOCOL)
-            connection.send_bytes(payload)
+            with _SENDING:
+                connection.send_bytes(payload)
     except (EOFError, OSError):
         return
+
+
+def _send(connection: Connection, message: tuple[str, Any]) -> None:
+    """Send a message from a worker, which writes to its pipe from one thread at a time."""
+    with _SENDING:
+        connection.send(message)
+
+
+class _Forwarder(logging.Handler):
+    """Sends the records a worker logs to the supervisor.
+
+    Each record travels as its time, its level, the name of its logger, and
+    its message with any traceback. A record that cannot be sent is dropped:
+    the run goes on.
+    """
+
+    def __init__(self, connection: Connection, level: int) -> None:
+        super().__init__(level)
+        self._connection = connection
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Send one record over the worker's pipe."""
+        with contextlib.suppress(Exception):
+            report = (record.created, record.levelno, record.name, self.format(record))
+            _send(self._connection, ("log", report))
 
 
 def _load_installed_plugins() -> None:
@@ -384,7 +477,7 @@ def _serve(message: tuple[Any, ...], name: str, held: list[Any], connection: Con
                 _Reporter(connection, task.run_id, task.attempt, begun, task.stop.time_limit)
             )
             stack.enter_context(listening(reporter.note))
-        connection.send(("started", (task.run_id, task.attempt, begun, utc_now())))
+        _send(connection, ("started", (task.run_id, task.attempt, begun, utc_now())))
         return attempt(task, name, origin=begun)
 
 
@@ -411,7 +504,9 @@ class _Reporter:
     it, enters a call that keeps the interpreter lock until the kill.
 
     Reports are sent only inside the ``with`` block, in which the serving
-    thread sends nothing, and never by two threads at once.
+    thread sends nothing, and never by two threads at once: every thread of
+    a worker writes to the pipe under one lock, which a thread that logs
+    takes as well.
 
     Args:
         connection: The worker's end of the pipe.
@@ -506,7 +601,8 @@ class _Reporter:
         # A report that cannot be built or sent is dropped: the run goes on.
         with contextlib.suppress(Exception):
             documents = [(_report(improvement), within) for improvement, within in reports]
-            self._connection.send(("progress", (*self._key, documents)))
+            with _SENDING:
+                self._connection.send(("progress", (*self._key, documents)))
 
 
 def _report(improvement: Improvement) -> dict[str, Any]:
@@ -625,8 +721,14 @@ class _Slot:
         environment: Mapping[str, str],
         cpu: int | None,
         startup_limit: float,
+        *,
+        source: str | None = None,
+        log: LogSink | None = None,
     ) -> None:
         self.name = f"worker-{number}"
+        self._source = source
+        self._log = log
+        self._note: str | None = None  # what every run of this worker is noted with
         self.cpu = cpu
         self.concurrent: int | None = None
         self._context = context
@@ -673,7 +775,7 @@ class _Slot:
         parent, child = self._context.Pipe(duplex=True)
         process = self._context.Process(
             target=_worker_main,
-            args=(child, self.name),
+            args=(child, self.name, self._log is not None, self._source is not None),
             name=f"dispatchatlas-{self.name}",
         )
         try:
@@ -686,7 +788,7 @@ class _Slot:
         child.close()
         self._process, self._connection = process, parent
         self._job = contain(process)
-        self._held, self._ready = None, False
+        self._held, self._ready, self._note = None, False, None
 
     def hand(self, task: Task, documents: _Documents) -> Failure | None:
         """Send a task to the worker, or return the failure of a task that cannot be sent.
@@ -773,7 +875,11 @@ class _Slot:
 
         A report that the worker is ready sends it the task that waits for
         it. A report that the solve begins arms the hard limit of the running
-        task, and a report of an incumbent is kept for its failure record.
+        task, and a report of an incumbent is kept for its failure record. A
+        record the worker logged goes to the sink of the backend, and the
+        digest of the source the worker started on is compared with the
+        session's: every run a worker on other source completes carries a
+        note that says so.
 
         Returns:
             The result of the task; ``None`` when only reports arrived; a
@@ -803,7 +909,15 @@ class _Slot:
                 if kind == "progress":
                     self._keep(payload)
                     continue
+                if kind == "log":
+                    self._logged(payload)
+                    continue
+                if kind == "source":
+                    self._identify(payload)
+                    continue
                 result = _stamped(payload, self.cpu, self.concurrent, self._waited)
+                if self._note is not None and isinstance(result, Completion):
+                    result = replace(result, notes=(*result.notes, self._note))
                 if isinstance(result, Failure) and result.error.kind is ErrorKind.TRANSFER:
                     self._held = None
                 self.release()
@@ -849,6 +963,37 @@ class _Slot:
         self._solving, self._waited = True, now - self._clock
         self._started, self._clock = stamp, now
         self.deadline = None if task.hard_limit is None else now + task.hard_limit
+
+    def _logged(self, report: object) -> None:
+        """Hand a record the worker logged to the sink; ignore any other report."""
+        if self._log is None or not isinstance(report, tuple) or len(report) != 4:
+            return
+        created, level, name, message = report
+        if (
+            isinstance(created, float)
+            and isinstance(level, int)
+            and isinstance(name, str)
+            and isinstance(message, str)
+        ):
+            self._log(self.name, created, level, name, message)
+
+    def _identify(self, found: object) -> None:
+        """Compare the source the worker started on with the session's; warn when they differ."""
+        expected = self._source
+        if expected is None or not isinstance(found, str) or found == expected:
+            return
+        self._note = (
+            f"the worker started on other library source (digest {found[:12]}) than the "
+            f"session (digest {expected[:12]})"
+        )
+        _LOG.warning(
+            "%s started on other library source (digest %s) than the session (digest %s): the "
+            "source files changed while the session ran; every run this worker completes "
+            "carries a note",
+            self.name,
+            found[:12],
+            expected[:12],
+        )
 
     def _keep(self, report: object) -> None:
         """Keep the incumbents the running task reports; ignore any other report.
