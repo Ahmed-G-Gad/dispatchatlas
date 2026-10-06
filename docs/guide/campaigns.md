@@ -448,6 +448,9 @@ of one campaign.
                        and the runs that left or entered the plan
     runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
     failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
+    superseded/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
+                       files moved aside before their runs were repeated
+    logs/session-<n>.log  what each session logged, with UTC time stamps
     .lock              held while a runner works on the campaign
 ```
 
@@ -485,6 +488,14 @@ indentation, ASCII text, and a final newline.
   machine or the session enters it, so a replay on any machine compares
   results directly, and a record edited after it was written fails the
   comparison with its hash.
+- Its **identity hash** (`identity_hash`) is the SHA-256 of what names the
+  run: the digest of the problem, the id and the parameters of the solver,
+  the protocol with its stop criteria, the replicate, and the seed. A
+  record whose seed, or another of these fields, was edited fails the
+  comparison as a record with an edited outcome does: `read_runs` refuses
+  it, and a resume keeps it aside and runs its run again. The times an
+  attempt measured, the solver-specific extras, and the provenance are
+  under neither hash. A record without the field is not checked for it.
 - A **failure record** (`dispatchatlas.failure/1`) holds the error, its kind
   (`exception`, `timeout`, `startup`, `worker-exit`, or `transfer`), and
   whether it is terminal or recoverable. It says whether the solve had begun
@@ -502,23 +513,60 @@ indentation, ASCII text, and a final newline.
   session was allowed to use (`cpu.allowed`, null when the system does not
   tell, in which case `cpu.available` counts the machine), the value of each thread
   variable in the launching environment (`threads`, null when unset), the
-  versions of DispatchAtlas, NumPy, and the installed backends, and the git
-  commit when the source or the working directory is a checkout. It records
-  no host or user name. It also holds `plan_digest`, the digest of the run
+  versions of DispatchAtlas, NumPy, and the installed backends, and what
+  identifies the code. `library` states where the DispatchAtlas
+  distribution was installed from (`origin`: `vcs`, `archive`, `directory`,
+  or `index`), whether it is `editable`, its `revision`, and
+  `source_digest`, a SHA-256 over the files of the package. The revision is
+  the commit of a checkout, the commit of the version-control URL an
+  installed copy came from, or the hash of an archive; it is null for a
+  copy built from a local directory, whose record does not say which state
+  was built, and the source digest identifies that copy. `plugins` states
+  the same facts for every distribution that provides a solver or
+  benchmark entry point. `git` states, for the source and for the working
+  directory when either is a checkout, the `commit`, whether the checkout
+  is `dirty` (a tracked file differs from the commit, or there is an
+  untracked file that git does not ignore), the number of `untracked`
+  files, and a `digest` of the uncommitted changes, so two different sets
+  of edits of one commit have different digests; the directory of the
+  campaign is left out of the state of the working directory. The
+  processor is recorded by its model name, with its `sockets` and physical
+  `cores` where the system gives them. The record holds
+  no host or user name. Under `load` it holds two samples of the machine,
+  one taken before the first run (`start`) and one after the last (`end`,
+  for a session that finished): the share of the processor time of the
+  whole machine that was busy over a tenth of a second (`busy`), and the
+  one-minute load average where the system has one. A session with nothing
+  to attempt takes no sample. Under `changes` it holds how the session
+  differs from the session before it (see [Resuming](#resuming)). It also holds `plan_digest`, the digest of the run
   ids and seeds of the plan the session executed, which `plan.json` states as
   `runs_digest`, and `plan_left`, `plan_entered`, `plan_reseeded`, and
   `plan_solvers`: how that plan differs from the one the directory held
   before under the same config hash (see [Resuming](#resuming)). A record
-  without these fields reads as one that states no digest and no change.
+  without these fields reads as one that states no digest, no change, and
+  no load.
 
 `read_campaign`, `read_plan`, `read_runs`, `read_failures`, and
-`read_sessions` read these files back as typed records.
+`read_sessions` read these files back as typed records. `read_runs` returns
+the records of the plan, and warns about every other file under `runs/`:
+records of runs the plan does not hold, files that cannot be read, and files
+that are no records. `read_strays` returns those files. No session replaces
+or removes them.
+
+The log file of a session holds every record of level `INFO` or higher that
+the library logs while the session runs, one per line, with its UTC time to
+the millisecond, its level, and its logger. What a solver or the engine logs
+inside a worker process is in the file too, marked with the name of the
+worker, when it goes through `dispatchatlas.core.logs.get_logger`. The file
+is written beside whatever the application shows: the lines on standard
+error are the same with and without it.
 
 ## Resuming
 
 Running `campaign run` again with the same file and output resumes the
 campaign. A record already written is kept when it belongs to the same config
-hash and still matches its result hash, and only the runs that are neither
+hash and still matches its result hash and its identity hash, and only the
+runs that are neither
 completed nor settled by failures are attempted. An interrupted session
 therefore loses at most the runs that were in progress.
 
@@ -531,6 +579,35 @@ therefore loses at most the runs that were in progress.
   `threads_per_worker`. `campaign replay` takes the same three options, so a
   campaign pinned on one machine resumes and replays on another. A campaign
   with nothing left to attempt is not refused for its pinning.
+- A session compares its execution settings and its environment with those
+  of the last session the directory recorded. It logs one warning that
+  names each difference with both values, such as `execution.workers 1 ->
+  2` or `environment.library.source_digest`, and its record stores all of
+  them in `changes`, each with `field`, `earlier`, `now`, and `kind`:
+  `execution`, `code` (the Python version, the packages, the library, the
+  plugins, and the git states), or `machine` (the rest of the
+  environment). A value the earlier record does not state is not compared.
+  With the execution key `on_changed_code = "refuse"`, a session whose
+  code differs is refused before it writes anything; the default `"warn"`
+  resumes. A difference of execution settings or of the machine is never
+  refused. Keep results out of the git state of the working directory, by
+  an ignore rule or an output directory outside the checkout, or the
+  results of other campaigns change it between sessions.
+- A worker process that starts after a source file of the library changed
+  runs on other code than the session recorded. The runner warns about
+  such a worker, and every run it completes carries a note with both
+  source digests.
+- A file at the path of a planned run that is not the valid record of that
+  run is never replaced: before the run is repeated, the file moves to
+  `superseded/`, under the same solver and problem folders, with the run
+  id it states before `.json`. This holds for a record made on another
+  version of its problem, whose content changed under the same id, for a
+  record that no longer matches one of its hashes, and for a file that
+  cannot be read. With the execution key `on_changed_problem = "refuse"`,
+  a directory that holds a record of another version of a problem is
+  refused before anything moves; the default `"rerun"` keeps the record
+  aside and runs its run again. `--fresh` also discards `superseded/` and
+  `logs/`.
 - A directory that holds results of another configuration is refused;
   `--fresh` discards its records first. Give a changed experiment a new `id`
   to keep both.

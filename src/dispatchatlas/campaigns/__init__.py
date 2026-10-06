@@ -69,12 +69,14 @@ from dispatchatlas.campaigns.records import (
 from dispatchatlas.campaigns.replaying import ReplayEntry, ReplayReport, Verdict, replay
 from dispatchatlas.campaigns.runner import RunSummary, run
 from dispatchatlas.campaigns.store import (
+    Strays,
     campaign_directory,
     read_campaign,
     read_failures,
     read_plan,
     read_runs,
     read_sessions,
+    read_strays,
 )
 
 __all__ = [
@@ -104,6 +106,7 @@ __all__ = [
     "RunSummary",
     "SessionRecord",
     "SolverSpec",
+    "Strays",
     "SuiteSource",
     "Verdict",
     "campaign_directory",
@@ -120,6 +123,7 @@ __all__ = [
     "read_plan",
     "read_runs",
     "read_sessions",
+    "read_strays",
     "replay",
     "run",
 ]

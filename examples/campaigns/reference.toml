@@ -119,6 +119,14 @@ affinity = "inherit"      # "inherit": the workers run on every processor the
 threads_per_worker = 1    # threads the numerical libraries of a worker may
                           # use (default 1, the only value the sequential
                           # backend accepts)
+on_changed_code = "warn"  # a session on other code than the last recorded
+                          # one: "warn" names each difference and records
+                          # it; "refuse" ends the session (default "warn")
+on_changed_problem = "rerun"
+                          # a record made on another version of its
+                          # problem: "rerun" keeps it under superseded/
+                          # and runs its run again; "refuse" ends the
+                          # session (default "rerun")
 
 # ---------------------------------------------------------------- metadata
 # Free annotations, kept with the results; not part of the config hash.
