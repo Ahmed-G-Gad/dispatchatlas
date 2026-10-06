@@ -113,7 +113,8 @@ affinity = "inherit"      # "inherit": the workers run on every processor the
                           # of them; or a list of processor indices, one per
                           # worker, such as [2, 4, 6] (default "inherit")
 threads_per_worker = 1    # threads the numerical libraries of a worker may
-                          # use (default 1)
+                          # use (default 1, the only value the sequential
+                          # backend accepts)
 
 # ---------------------------------------------------------------- metadata
 # Free annotations, kept with the results; not part of the config hash.

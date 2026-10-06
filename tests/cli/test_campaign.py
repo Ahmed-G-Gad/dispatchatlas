@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from dispatchatlas.campaigns import read_runs
+from dispatchatlas.cli._common import affinity
 from tests.cli.runner import Cli, campaign_file
 
 CHEAP_SOLVERS = (
@@ -270,3 +274,38 @@ def test_analyze_writes_the_figure_formats_asked_for(cli: Cli, tmp_path: Path) -
     figures = [name for name in result.json()["files"] if name.startswith("figures/")]
     assert figures
     assert all(name.endswith(".tex") for name in figures)
+
+
+def test_the_affinity_option_reads_names_and_processor_indices() -> None:
+    assert affinity("inherit") == "inherit"
+    assert affinity("pin") == "pin"
+    assert affinity("0,2,4") == (0, 2, 4)
+    assert affinity("7") == (7,)
+    for text in ("", "a,b", "1,,2", "-1", "pinned"):
+        with pytest.raises(argparse.ArgumentTypeError, match="processor indices such as 0,2,4"):
+            affinity(text)
+
+
+def test_the_affinity_option_frees_a_campaign_from_its_processors(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(
+        tmp_path,
+        solvers=CHEAP_SOLVERS,
+        execution='backend = "process"\naffinity = [4096]',
+        campaign_id="pinned",
+    )
+    output = tmp_path / "runs"
+    refused = cli("campaign", "run", config, "--output", output)
+    assert refused.code != 0
+    assert "affinity" in refused.err
+    assert not (output / "pinned").exists()
+    ran = cli("campaign", "run", config, "--output", output, "--affinity", "inherit", "--json")
+    assert ran.code == 0
+    summary = ran.json()
+    assert summary["completed"] == summary["planned"] > 0
+    directory = output / "pinned"
+    assert cli("campaign", "run", config, "--output", output).code == 0
+    refused = cli("campaign", "replay", directory)
+    assert refused.code != 0
+    assert "affinity" in refused.err
+    assert cli("campaign", "replay", directory, "--backend", "sequential").code == 0
+    assert cli("campaign", "replay", directory, "--affinity", "inherit").code == 0

@@ -60,19 +60,17 @@ def affinity_cpus() -> tuple[int, ...] | None:
         platform has no affinity call, the call fails, or one Windows mask
         cannot describe the process.
     """
+    indices: tuple[int, ...] | None = None
     if sys.platform == "win32":
         mask = _windows_mask()
         if mask:
-            return tuple(index for index in range(mask.bit_length()) if mask >> index & 1)
-        return None
-    read = getattr(os, "sched_getaffinity", None)
-    if read is None:
-        return None
-    try:
-        indices = tuple(sorted(read(0)))
-    except OSError:
-        return None
-    return indices or None
+            indices = tuple(index for index in range(mask.bit_length()) if mask >> index & 1)
+    else:
+        read = getattr(os, "sched_getaffinity", None)
+        if read is not None:
+            with contextlib.suppress(OSError):
+                indices = tuple(sorted(read(0))) or None
+    return indices
 
 
 def allowed_cpus() -> tuple[int, ...]:
@@ -201,19 +199,22 @@ def _set_cpus(pid: int, cpus: Iterable[int]) -> str | None:
     ``pid`` 0 is the caller: the whole calling process on Windows, the
     calling thread elsewhere.
     """
+    error: str | None = None
     if sys.platform == "win32":
         mask = 0
         for index in cpus:
             mask |= 1 << index
-        return _windows_set(pid or os.getpid(), mask)
-    write = getattr(os, "sched_setaffinity", None)
-    if write is None:
-        return "this platform has no call that confines a process to a processor"
-    try:
-        write(pid, set(cpus))
-    except (OSError, ValueError) as failure:
-        return str(failure)
-    return None
+        error = _windows_set(pid or os.getpid(), mask)
+    else:
+        write = getattr(os, "sched_setaffinity", None)
+        if write is None:
+            error = "this platform has no call that confines a process to a processor"
+        else:
+            try:
+                write(pid, set(cpus))
+            except (OSError, ValueError) as failure:
+                error = str(failure)
+    return error
 
 
 def _windows_mask() -> int | None:

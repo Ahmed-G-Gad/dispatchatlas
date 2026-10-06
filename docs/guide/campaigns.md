@@ -166,17 +166,29 @@ of one campaign.
   `if __name__ == "__main__":`, since every worker imports the main module.
 - **Processors.** The engine counts the processors its process is allowed to
   use, not those of the machine: the scheduler affinity on Linux, which
-  `taskset` and containers set, and the process affinity mask on Windows.
-  `workers = "auto"` uses that number minus one. `affinity` chooses where the
-  workers run. `"inherit"`, the default, leaves every worker on all the
-  allowed processors. `"pin"` confines worker `k` to the `k`-th allowed
-  processor, in index order. A list such as `affinity = [2, 4, 6]` confines
-  worker `k` to its `k`-th entry, which lets a campaign use one logical
-  processor of each core. A pinned campaign is refused before it starts when
-  the workers outnumber the processors, when a listed processor is not an
-  allowed one, with the sequential backend, and on a platform that cannot pin
-  a process: macOS, and a Windows machine whose processors form several
-  processor groups.
+  `taskset` and the cpuset of a container set, and the process affinity mask
+  on Windows. A limit on processor time is not an affinity: under the CPU
+  quota of a container (`docker run --cpus`, a Kubernetes CPU limit) every
+  processor of the host is still counted, so set `workers` by hand there.
+  Where the set cannot be read, on macOS and on a Windows machine whose
+  processors form several processor groups, every processor of the machine
+  is counted, the session records `cpu.allowed` as null, and a campaign with
+  a time limit logs a warning. `workers = "auto"` uses the count minus one.
+  `affinity` chooses where the workers run. `"inherit"`, the default, leaves
+  every worker on all the allowed processors. `"pin"` confines worker `k` to
+  the `k`-th allowed processor, in index order. It does not look at cores:
+  on a machine with simultaneous multithreading that numbers the two
+  hardware threads of a core side by side, two pinned workers share one
+  core. A list such as `affinity = [2, 4, 6]` confines worker `k` to its
+  `k`-th entry, so name one logical processor of each core there. A pinned
+  worker is created on its processor, where every thread it starts also
+  runs, and it reports its processors to the supervisor, which stops the
+  campaign when they are not the one it was given. A pinned campaign with
+  runs to attempt is refused, before it discards a record or creates its
+  directory, when the workers outnumber the processors, when a listed
+  processor is not an allowed one, and on a system that cannot pin a
+  process: macOS, and a Windows machine whose processors form several
+  processor groups. The sequential backend accepts only `"inherit"`.
 - **Threads.** Every worker process starts with the thread pools of
   numerical libraries limited to `threads_per_worker` threads, 1 by default.
   The engine sets `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
@@ -184,13 +196,20 @@ of one campaign.
   `NUMEXPR_NUM_THREADS` in the environment each worker is created with, so
   the limit holds for any number of workers, whatever the launching
   environment sets, and also when the launching script imports NumPy first.
-  The sequential backend runs in the calling process and leaves its
-  environment alone. A solver's own `threads` parameter is separate. When a
-  protocol sets a time limit and the workers, each with the larger of
-  `threads_per_worker` and the largest `threads` among the solvers, need more
-  processors than are allowed, the runner warns that the budgets differ
-  between runs. When such a protocol compares solvers whose `threads` differ,
-  the plan keeps a note of it in its fairness assessment and stays fair.
+  The sequential backend has no worker processes and leaves the environment
+  of the calling process alone, so it accepts only the default
+  `threads_per_worker`; under a time limit the runner names every one of
+  these variables that is unset, since a numerical library may then use
+  every processor, and they take effect when set before Python starts. A
+  solver's own `threads` parameter is separate. When a protocol sets a time
+  limit and the workers, each with the larger of `threads_per_worker` and
+  the largest `threads` among the solvers, need more processors than are
+  allowed, the runner warns that the budgets differ between runs. A pinned
+  worker has one processor, so the runner warns whenever that thread count
+  is above 1. The plan records the `threads` every solver holds in its
+  solver entry, the solver's default when the campaign sets none. When a
+  protocol with a time limit compares solvers whose `threads` differ, the
+  plan keeps a note of it in its fairness assessment and stays fair.
 - **Hard time limits.** Stop criteria are cooperative, so the process
   backend gives every run whose protocol sets `time_limit` a hard limit of
   `timeout_factor * time_limit + grace` seconds, counted from the moment the
@@ -245,7 +264,8 @@ indentation, ASCII text, and a final newline.
 - A **session record** (`dispatchatlas.session/1`) holds the execution
   settings, the counts, and the environment: Python, the operating system and
   machine, the processor and memory, the indices of the processors the
-  session was allowed to use (`cpu.allowed`), the value of each thread
+  session was allowed to use (`cpu.allowed`, null when the system does not
+  tell, in which case `cpu.available` counts the machine), the value of each thread
   variable in the launching environment (`threads`, null when unset), the
   versions of DispatchAtlas, NumPy, and the installed backends, and the git
   commit when the source or the working directory is a checkout. It records
@@ -264,8 +284,13 @@ therefore loses at most the runs that were in progress.
 
 - `--retry-failed` gives every run that failures settled one more attempt.
 - `--max-runs N` attempts at most `N` runs in this session.
-- `--workers` and `--backend` override the file's execution settings; they
-  do not change the config hash.
+- `--workers`, `--backend`, and `--affinity` override the file's execution
+  settings; they do not change the config hash. `--affinity` takes
+  `inherit`, `pin`, or processor indices such as `0,2,4`. `--backend
+  sequential` implies `--affinity inherit` and the default
+  `threads_per_worker`. `campaign replay` takes the same three options, so a
+  campaign pinned on one machine resumes and replays on another. A campaign
+  with nothing left to attempt is not refused for its pinning.
 - A directory that holds results of another configuration is refused;
   `--fresh` discards its records first. Give a changed experiment a new `id`
   to keep both.

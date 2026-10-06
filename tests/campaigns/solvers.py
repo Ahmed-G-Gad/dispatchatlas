@@ -6,6 +6,7 @@ import them when they unpickle a run.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from collections.abc import Callable, Mapping
@@ -143,8 +144,22 @@ class EnvironmentProbe:
             "omp_threads": os.environ.get("OMP_NUM_THREADS", ""),
             "thread_variables": ",".join(os.environ.get(name, "") for name in THREAD_VARIABLES),
             "cpus": ",".join(str(index) for index in allowed_cpus()),
+            "thread_cpus": ",".join(str(index) for index in _thread_cpus()),
         }
         return replace(result, extras=extras)
+
+
+def _thread_cpus() -> tuple[int, ...]:
+    """Return the processors that any thread of this process may run on."""
+    tasks = Path("/proc/self/task")
+    read = getattr(os, "sched_getaffinity", None)
+    if read is None or not tasks.is_dir():
+        return allowed_cpus()
+    found: set[int] = set()
+    for task in tasks.iterdir():
+        with contextlib.suppress(OSError, ValueError):
+            found.update(read(int(task.name)))
+    return tuple(sorted(found))
 
 
 @dataclass(frozen=True)
@@ -153,6 +168,17 @@ class Threaded:
 
     threads: int = 1
     info: ClassVar[SolverInfo] = _info("test-threaded", stochastic=False, iterative=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        return InputOrder().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class FourThreads:
+    """Input order whose ``threads`` parameter, which it only declares, is 4 by default."""
+
+    threads: int = 4
+    info: ClassVar[SolverInfo] = _info("test-four-threads", stochastic=False, iterative=False)
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         return InputOrder().solve(problem, stop, seed)
@@ -192,6 +218,7 @@ TEST_SOLVERS = (
     Pareto,
     EnvironmentProbe,
     Threaded,
+    FourThreads,
     Tabled,
     Unpicklable,
 )

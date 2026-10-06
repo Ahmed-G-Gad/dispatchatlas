@@ -58,7 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worker from the moment its process is created. A run record states the
   processor its worker was pinned to and how many runs were executing when
   it was handed over, and a plan notes a time limit that compares solvers
-  with different thread counts.
+  with different thread counts, which it reads from the `threads` every
+  solver holds and keeps in its solver entries. A pinned worker is created
+  on its processor and reports it; a campaign that cannot be pinned is
+  refused before it discards a record or creates its directory;
+  `campaign run` and `campaign replay` take `--affinity`; and the sequential
+  backend, which has no workers, accepts neither a pinning nor a
+  `threads_per_worker` other than 1.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
