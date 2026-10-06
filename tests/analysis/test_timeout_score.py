@@ -166,7 +166,10 @@ def test_the_summary_scores_killed_runs_as_the_worst_value_by_default() -> None:
     assert {cell.succeeded for cell in summary.cells if cell.solver == "b"} == {1}
     limitations = {item.topic: item.message for item in summary.limitations}
     assert limitations["failures"] == (
-        "6 runs failed and 0 completed without a feasible schedule; each counts as the worst value."
+        "6 runs failed and 0 completed without a feasible schedule; each counts as the worst "
+        "value. The failed runs by solver and by the kind of error of their last attempt: "
+        "b 1 startup, 5 timeout. An exception was raised by the solver or by the checks of its "
+        "result; the engine ended the attempts of every other kind."
     )
     assert limitations["startup"] == (
         "1 of the failed runs ended at the start-up limit: their worker did not begin the "
@@ -191,9 +194,10 @@ def test_the_summary_scores_killed_runs_by_their_incumbent_when_asked() -> None:
     cells = {cell.problem: cell for cell in summary.cells if cell.solver == "b"}
     assert (cells["p1"].succeeded, cells["p1"].mean, cells["p1"].best) == (1, 10.0, 10.0)
     limitations = {item.topic: item.message for item in summary.limitations}
-    assert limitations["failures"] == (
+    assert limitations["failures"].startswith(
         "6 runs failed and 0 completed without a feasible schedule; each counts as the worst "
-        "value, except 2 killed runs scored by their incumbent."
+        "value, except 2 killed runs scored by their incumbent. The failed runs by solver and "
+        "by the kind of error of their last attempt: b 1 startup, 5 timeout."
     )
     assert limitations["startup"].startswith("1 of the failed runs ended at the start-up limit")
     assert limitations["timeouts"] == (

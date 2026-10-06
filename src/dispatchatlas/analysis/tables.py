@@ -196,6 +196,20 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
     incumbent, and its ``evaluations`` and ``elapsed`` columns say when its
     search found it, which is within the time limit.
 
+    The columns from ``time_limit`` to ``attempts`` compare a run with its
+    budget and say under which load it executed. ``time_limit`` is the time
+    limit of the run's protocol. ``wall_seconds`` is the wall time the
+    engine measured for the last attempt of the run, the completing one or
+    the last failed one, where ``elapsed`` is the solver's own report.
+    ``overrun_seconds`` is the wall time minus the time limit, negative for
+    a run that ended early. ``cpu_share`` is the processor seconds of the
+    attempt over its wall seconds: below 1 when the process waited for a
+    processor, above 1 when the solver ran threads. ``concurrent`` is the
+    number of runs executing when the attempt started, itself included,
+    ``cpu`` the processor its worker was pinned to, and ``attempts`` the
+    number of the last attempt. A cell is empty when the protocol has no
+    time limit or the record does not state the value.
+
     Args:
         dataset: The runs.
         timeout_score: How the analysis the table belongs to scores a run
@@ -217,12 +231,23 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
         Column("iterations", "Iterations", "count"),
         Column("elapsed", "Elapsed (s)", "number"),
         Column("cpu_seconds", "CPU (s)", "number"),
+        Column("time_limit", "Time limit (s)", "number"),
+        Column("wall_seconds", "Wall (s)", "number"),
+        Column("overrun_seconds", "Overrun (s)", "number"),
+        Column("cpu_share", "CPU share", "number"),
+        Column("concurrent", "Concurrent", "count"),
+        Column("cpu", "Processor", "count"),
+        Column("attempts", "Attempts", "count"),
         *(Column(f"objective.{name}", name, "number") for name in objectives),
     )
+    limits = {protocol.name: protocol.stop.time_limit for protocol in dataset.protocols}
     rows = []
     for run in dataset.runs:
         record = run.record
         outcome = None if record is None else record.outcome
+        executed = run.provenance
+        limit = limits.get(run.protocol)
+        wall = None if executed is None else executed.wall_seconds
         held = run.incumbent if timeout_score == "incumbent" else None
         source = "result" if run.succeeded else ("worst" if held is None else "incumbent")
         timed = outcome if held is None else held
@@ -243,6 +268,13 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
                 None if outcome is None else outcome.iterations,
                 None if timed is None else timed.elapsed,
                 None if record is None else record.provenance.cpu_seconds,
+                limit,
+                wall,
+                None if limit is None or wall is None else wall - limit,
+                run.cpu_share,
+                None if executed is None else executed.concurrent,
+                None if executed is None else executed.cpu,
+                None if executed is None else executed.attempt,
                 *(
                     run.value(name) if held is None else held.objectives.get(name)
                     for name in objectives

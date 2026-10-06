@@ -27,8 +27,12 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    bootstrap interval when no failure makes it infinite, and Cohen's d_z, as
    Carrasco et al. (2020) recommend.
 6. **Limitations.** What qualifies the results: failed or missing runs,
+   with the failed ones by solver and kind of error,
    runs whose worker did not begin the solve in time,
    runs killed at their hard limit and how they are scored,
+   completed runs whose wall time passed the time limit of the protocol,
+   the processor share and the concurrency the runs of a protocol with a
+   time limit executed under,
    problems left out of the ranks, too few shared problems for the paired
    test to reach significance, cells below a replicate floor, and tests that
    could not run.
@@ -43,6 +47,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from itertools import combinations
@@ -466,11 +471,19 @@ def _design_limitations(
     rescored = holding if config.timeout_score == "incumbent" else 0
     if counts["failed"] or counts["infeasible"]:
         exception = f", except {rescored} killed runs scored by their incumbent" if rescored else ""
+        kinds = _failure_kinds(scope.dataset)
+        breakdown = (
+            f" The failed runs by solver and by the kind of error of their last attempt: {kinds}. "
+            "An exception was raised by the solver or by the checks of its result; the engine "
+            "ended the attempts of every other kind."
+            if kinds
+            else ""
+        )
         found.append(
             Limitation(
                 "failures",
                 f"{counts['failed']} runs failed and {counts['infeasible']} completed without a "
-                f"feasible schedule; each counts as the worst value{exception}.",
+                f"feasible schedule; each counts as the worst value{exception}.{breakdown}",
             )
         )
     unstarted = sum(1 for run in scope.dataset.runs if run.unstarted)
@@ -502,6 +515,7 @@ def _design_limitations(
                 "runs reported an incumbent after their time limit, which no score uses.",
             )
         )
+    found.extend(_time_limitations(scope, config))
     left_out = [problem for problem in problems if problem not in blocks]
     if left_out and len(scope.dataset.solvers) > 1:
         found.append(
@@ -545,6 +559,107 @@ def _design_limitations(
                     "problem: " + ", ".join(below) + ".",
                 )
             )
+    return found
+
+
+def _failure_kinds(dataset: Dataset) -> str:
+    """Return the failed runs of each solver, counted by the error kind of their last attempt."""
+    counts: dict[str, Counter[str]] = {}
+    for run in dataset.runs:
+        if run.status == "failed" and run.failures:
+            counts.setdefault(run.solver, Counter())[run.failures[-1].error.kind.value] += 1
+    return "; ".join(
+        f"{entry.name} "
+        + ", ".join(f"{number} {kind}" for kind, number in sorted(counts[entry.name].items()))
+        for entry in dataset.solvers
+        if entry.name in counts
+    )
+
+
+def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
+    """Compare the completed runs of a protocol with a time limit against that limit.
+
+    The ``budget`` limitation names the solvers whose completed runs took
+    more wall time than the limit allows with ``overrun_tolerance``. The
+    ``timing`` limitation states under which load the completed runs
+    executed: the spread of their processor share and of the number of runs
+    executing at once.
+    """
+    limit = scope.dataset.protocol(scope.protocol).stop.time_limit
+    completed = [run for run in scope.dataset.runs if run.record is not None]
+    if limit is None or not completed:
+        return []
+    found: list[Limitation] = []
+    allowed = limit * (1.0 + config.overrun_tolerance)
+    late: list[str] = []
+    for entry in scope.dataset.solvers:
+        walls = [
+            run.record.provenance.wall_seconds
+            for run in completed
+            if run.solver == entry.name and run.record is not None
+        ]
+        over = [wall for wall in walls if wall > allowed]
+        if over:
+            late.append(
+                f"{entry.name} in {len(over)} of {len(walls)} "
+                f"(up to {max(over) / limit:.3g} times the limit)"
+            )
+    if late:
+        found.append(
+            Limitation(
+                "budget",
+                f"Under protocol {scope.protocol}, whose time limit is {limit:g} s, completed "
+                f"runs took more wall time than the limit with overrun_tolerance "
+                f"{config.overrun_tolerance:g} allows: " + "; ".join(late) + ". These runs "
+                "searched for longer than the protocol states, and their results are compared "
+                "as they are.",
+            )
+        )
+    shares = {
+        entry.name: [
+            share
+            for run in completed
+            if run.solver == entry.name and (share := run.cpu_share) is not None
+        ]
+        for entry in scope.dataset.solvers
+    }
+    pooled = [share for values in shares.values() for share in values]
+    concurrency = [
+        run.record.provenance.concurrent
+        for run in completed
+        if run.record is not None and run.record.provenance.concurrent is not None
+    ]
+    parts: list[str] = []
+    if pooled:
+        part = (
+            "the processor share of a run, its processor seconds over its wall seconds, lies "
+            f"between {min(pooled):.2f} and {max(pooled):.2f} with median "
+            f"{statistics.median(pooled):.2f}"
+        )
+        medians = sorted(
+            (statistics.median(values), name) for name, values in shares.items() if values
+        )
+        if len(medians) > 1:
+            (low, lowest), (high, highest) = medians[0], medians[-1]
+            part += (
+                f", and its median per solver between {low:.2f} ({lowest}) and "
+                f"{high:.2f} ({highest})"
+            )
+        parts.append(part)
+    if concurrency:
+        parts.append(
+            f"between {min(concurrency)} and {max(concurrency)} runs executed at once, with "
+            f"median {statistics.median(concurrency):g}"
+        )
+    if parts:
+        found.append(
+            Limitation(
+                "timing",
+                f"Protocol {scope.protocol} gives every run the same wall-clock time, so a run "
+                "searches as far as the processor time it received in that time allows. Over "
+                f"the {len(completed)} completed runs, " + "; ".join(parts) + ".",
+            )
+        )
     return found
 
 

@@ -42,6 +42,7 @@ from dispatchatlas.campaigns.records import (
     FailureRecord,
     Incumbent,
     Outcome,
+    Provenance,
     RunRecord,
     SessionRecord,
     SolverEntry,
@@ -143,6 +144,29 @@ class Run:
     def outcome(self) -> Outcome | None:
         """The recorded outcome, or ``None`` for a run that did not complete."""
         return None if self.record is None else self.record.outcome
+
+    @property
+    def provenance(self) -> Provenance | None:
+        """How the last attempt of the run executed, or ``None`` for a run never attempted.
+
+        The attempt that completed the run, else its last failed attempt.
+        """
+        if self.record is not None:
+            return self.record.provenance
+        return self.failures[-1].provenance if self.failures else None
+
+    @property
+    def cpu_share(self) -> float | None:
+        """Processor seconds of the last attempt over its wall seconds, or ``None``.
+
+        A share below 1 means the executing process waited, for a processor
+        or otherwise; a share above 1 means the solver ran threads. ``None``
+        when either time was not measured or the wall time is zero.
+        """
+        executed = self.provenance
+        if executed is None or executed.cpu_seconds is None or not executed.wall_seconds > 0.0:
+            return None
+        return executed.cpu_seconds / executed.wall_seconds
 
     @property
     def objectives(self) -> Mapping[str, float]:

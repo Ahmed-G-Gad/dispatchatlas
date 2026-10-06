@@ -95,6 +95,10 @@ class AnalysisConfig:
             seconds as one that stopped on time. The value is the solver's
             own, with no schedule to check it against. The limitations count
             these runs under either choice.
+        overrun_tolerance: Share of the time limit by which the wall time of
+            a completed run may pass the limit before the limitations name
+            the run: 0.05 allows 5 % more wall time than the limit. Nothing
+            is excluded or rescored.
     """
 
     protocol: str | None = None
@@ -121,6 +125,7 @@ class AnalysisConfig:
     focal: str | None = None
     baselines: tuple[str, ...] | None = None
     timeout_score: TimeoutScore = "worst"
+    overrun_tolerance: float = 0.05
 
     def __post_init__(self) -> None:
         for name in ("protocol", "objective", "reference_source", "focal"):
@@ -160,6 +165,12 @@ class AnalysisConfig:
         if self.reference_rule == "ishibuchi" and parameter != int(parameter):
             raise ConfigError(f"the ishibuchi rule needs an integer h >= 1, got {parameter!r}")
         object.__setattr__(self, "reference_parameter", float(parameter))
+        tolerance = self.overrun_tolerance
+        if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)):
+            raise ConfigError(f"overrun_tolerance must be a number, got {tolerance!r}")
+        if not (math.isfinite(tolerance) and tolerance >= 0.0):
+            raise ConfigError(f"overrun_tolerance must be zero or positive, got {tolerance!r}")
+        object.__setattr__(self, "overrun_tolerance", float(tolerance))
         if not isinstance(self.normalize, bool):
             raise ConfigError(f"normalize must be true or false, got {self.normalize!r}")
         object.__setattr__(self, "references", _references(self.references))
@@ -194,6 +205,7 @@ class AnalysisConfig:
             "focal": self.focal,
             "baselines": None if self.baselines is None else list(self.baselines),
             "timeout_score": self.timeout_score,
+            "overrun_tolerance": self.overrun_tolerance,
         }
 
 
