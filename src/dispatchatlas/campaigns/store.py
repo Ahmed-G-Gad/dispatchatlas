@@ -333,57 +333,85 @@ class Store:
             },
         )
 
-    def write_plan(self, plan: Plan) -> PlanChange:
-        """Write ``plan.json`` and report how it differs from the plan it replaces.
+    def plan_change(self, plan: Plan) -> PlanChange:
+        """Report how a plan differs from the plan the directory holds, and warn about it.
 
         A plan can change while the campaign file, and so the config hash,
         stays the same: the plan also follows the metadata the registered
         solvers declare, the content of the problems, and the library that
         plans. When the directory holds a plan of the same config hash, a
         warning names the problems whose content changed, and one names the
-        runs that left the plan and the runs that entered it. The records of
-        runs that left stay in the directory and are no longer read.
+        runs that left the plan, the runs that entered it, the runs whose
+        seed changed, and the fields of the solver entries that changed. The
+        records of runs that left stay in the directory and are no longer
+        read. Nothing is written, so the comparison gives the same answer
+        until :meth:`write_plan` replaces the plan.
 
         Returns:
-            The runs that left and entered. Empty when the directory holds
-            no plan, one that cannot be read, or one of another config hash.
+            The differences. Empty when the directory holds no plan, one
+            that cannot be read, or one of another config hash.
         """
-        path = self.directory / PLAN_FILE
-        change = PlanChange()
-        if path.is_file():
-            try:
-                previous = read_plan(self.directory)
-            except SerializationError:
-                previous = None
-            if previous is not None and previous.config_hash == plan.config_hash:
-                digests = {problem.id: problem.digest for problem in previous.problems}
-                for problem in plan.problems:
-                    if digests.get(problem.id, problem.digest) != problem.digest:
-                        _LOG.warning(
-                            "problem %s changed since the last session; its runs will run again",
-                            problem.id,
-                        )
-                left = [run for run in previous.runs if not plan.has_run(run.run_id)]
-                entered = [run for run in plan.runs if not previous.has_run(run.run_id)]
-                change = PlanChange(
-                    tuple(run.to_dict() for run in left),
-                    tuple(run.to_dict() for run in entered),
+        if not (self.directory / PLAN_FILE).is_file():
+            return PlanChange()
+        try:
+            previous = read_plan(self.directory)
+        except SerializationError:
+            return PlanChange()
+        if previous.config_hash != plan.config_hash:
+            return PlanChange()
+        digests = {problem.id: problem.digest for problem in previous.problems}
+        for problem in plan.problems:
+            if digests.get(problem.id, problem.digest) != problem.digest:
+                _LOG.warning(
+                    "problem %s changed since the last session; its runs will run again",
+                    problem.id,
                 )
-                if change:
-                    _LOG.warning(
-                        "the plan of campaign %s changed under config hash %s: %d run(s) left "
-                        "it and %d entered it%s%s; the campaign file is the same, so the "
-                        "solvers' metadata, the problems, or the library changed; records of "
-                        "runs that left stay in the directory and are no longer read",
-                        plan.campaign,
-                        plan.config_hash[:12],
-                        len(left),
-                        len(entered),
-                        _named("; left", left),
-                        _named("; entered", entered),
-                    )
-        atomic_write_json(path, plan.to_dict())
+        left = [run for run in previous.runs if not plan.has_run(run.run_id)]
+        entered = [run for run in plan.runs if not previous.has_run(run.run_id)]
+        reseeded = [
+            run
+            for run in plan.runs
+            if previous.has_run(run.run_id) and previous.run(run.run_id).seed != run.seed
+        ]
+        solvers = _entry_changes(previous, plan)
+        change = PlanChange(
+            tuple(run.to_dict() for run in left),
+            tuple(run.to_dict() for run in entered),
+            tuple(
+                {**run.to_dict(), "earlier_seed": previous.run(run.run_id).seed} for run in reseeded
+            ),
+            tuple(solvers),
+        )
+        if not change:
+            return change
+        parts: list[str] = []
+        effects: list[str] = []
+        if left or entered:
+            parts.append(
+                f"{len(left)} run(s) left it and {len(entered)} entered it"
+                f"{_named('; left', left)}{_named('; entered', entered)}"
+            )
+        if left:
+            effects.append("records of runs that left stay in the directory and are no longer read")
+        if reseeded:
+            parts.append(f"the seed of {len(reseeded)} run(s) changed{_named('', reseeded)}")
+            effects.append("a record made with the earlier seed still counts as its run's record")
+        if solvers:
+            parts.append(f"{len(solvers)} field(s) of the solver entries changed{_fields(solvers)}")
+            effects.append("records made before keep the entries they were made with")
+        _LOG.warning(
+            "the plan of campaign %s changed under config hash %s: %s; the campaign file is "
+            "the same, so the solvers' metadata, the problems, or the library changed%s",
+            plan.campaign,
+            plan.config_hash[:12],
+            "; ".join(parts),
+            "".join(f"; {effect}" for effect in effects),
+        )
         return change
+
+    def write_plan(self, plan: Plan) -> None:
+        """Write ``plan.json``, replacing the plan the directory holds."""
+        atomic_write_json(self.directory / PLAN_FILE, plan.to_dict())
 
     def ledger(self, plan: Plan) -> Ledger:
         """Read which runs of a plan are complete and which attempts failed.
@@ -509,6 +537,39 @@ def _named(heading: str, runs: list[PlannedRun]) -> str:
     )
     more = f" and {len(runs) - _SHOWN} more" if len(runs) > _SHOWN else ""
     return f"{heading}: {shown}{more}"
+
+
+_UNSTATED = ("threads", "replicates")
+"""The fields of a solver entry that read as ``None`` when a stored entry lacks them."""
+
+
+def _entry_changes(previous: Plan, plan: Plan) -> list[dict[str, Any]]:
+    """Return the fields by which the solver entries of two plans differ, in plan order.
+
+    A solver only one plan holds is left out: its runs left or entered. A
+    field the earlier entry does not state is not compared.
+    """
+    earlier = {entry.name: entry.to_dict() for entry in previous.solvers}
+    changes: list[dict[str, Any]] = []
+    for entry in plan.solvers:
+        before = earlier.get(entry.name)
+        if before is None:
+            continue
+        for key, now in entry.to_dict().items():
+            was = before[key]
+            if was != now and not (was is None and key in _UNSTATED):
+                changes.append({"solver": entry.name, "field": key, "earlier": was, "now": now})
+    return changes
+
+
+def _fields(changes: list[dict[str, Any]]) -> str:
+    """Name the first changed fields of solver entries, each with both values."""
+    shown = ", ".join(
+        f"{item['solver']}: {item['field']} {item['earlier']} -> {item['now']}"
+        for item in changes[:_SHOWN]
+    )
+    more = f" and {len(changes) - _SHOWN} more" if len(changes) > _SHOWN else ""
+    return f": {shown}{more}"
 
 
 def _foreign(found_id: str, found_hash: str, run_id: str, config_hash: str) -> str:

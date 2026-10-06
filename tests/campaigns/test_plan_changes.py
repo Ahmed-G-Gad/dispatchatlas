@@ -19,9 +19,10 @@ from dispatchatlas.campaigns import (
     read_sessions,
     run,
 )
-from dispatchatlas.campaigns.records import PlanChange
+from dispatchatlas.campaigns.records import PlanChange, SessionStatus
 from dispatchatlas.campaigns.store import Store
 from dispatchatlas.core import Problem, SolveResult, SolverInfo, StopCriteria, save_problem
+from dispatchatlas.core.errors import SerializationError
 from dispatchatlas.solvers import SolverRegistry, default_registry
 from dispatchatlas.solvers.rules import InputOrder
 from tests.campaigns.solvers import registry, tiny_campaign
@@ -30,13 +31,14 @@ from tests.helpers import chain_problem
 REGISTRY = registry()
 
 
-def _info(*, stochastic: bool) -> SolverInfo:
+def _info(*, stochastic: bool, iterative: bool = False) -> SolverInfo:
     return SolverInfo(
         id="test-switch",
         name="Switch",
         family="random-sampling",
         summary="Builds the input order under metadata the tests change.",
         stochastic=stochastic,
+        iterative=iterative,
     )
 
 
@@ -60,7 +62,17 @@ class SwitchMany:
         return InputOrder().solve(problem, stop, seed)
 
 
-def _registry(factory: type[SwitchOnce | SwitchMany]) -> SolverRegistry:
+@dataclass(frozen=True)
+class SwitchIterative:
+    """The same solver id, declared deterministic and iterative."""
+
+    info: ClassVar[SolverInfo] = _info(stochastic=False, iterative=True)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        return InputOrder().solve(problem, stop, seed)
+
+
+def _registry(factory: type[SwitchOnce | SwitchMany | SwitchIterative]) -> SolverRegistry:
     solvers = default_registry(plugins=False)
     solvers.register(factory)
     return solvers
@@ -163,22 +175,130 @@ def test_the_store_returns_the_change_it_warns_about(tmp_path: Path) -> None:
     many = plan(campaign, registry=_registry(SwitchMany))
     store = Store(tmp_path / "tiny")
     store.directory.mkdir()
-    assert store.write_plan(once) == PlanChange()
-    assert not store.write_plan(once)
-    change = store.write_plan(many)
+    assert store.plan_change(once) == PlanChange()
+    store.write_plan(once)
+    assert not store.plan_change(once)
+    change = store.plan_change(many)
     assert change
     assert change.left == ()
     # In plan order: by problem, then by replicate.
     assert [item["replicate"] for item in change.entered] == [1, 2, 1, 2]
-    back = store.write_plan(once)
+    # The comparison writes nothing: the directory still holds the first plan.
+    assert read_plan(store.directory) == once
+    assert store.plan_change(many) == change
+    store.write_plan(many)
+    back = store.plan_change(once)
     assert [item["run_id"] for item in back.left] == [item["run_id"] for item in change.entered]
     assert back.entered == ()
-    # A plan of another configuration replaces the earlier one without a comparison.
+    # A plan of another configuration is not compared with the one the directory holds.
     other = plan(replace(campaign, seed=campaign.seed + 1), registry=_registry(SwitchOnce))
-    assert store.write_plan(other) == PlanChange()
+    assert store.plan_change(other) == PlanChange()
 
 
-def test_the_runs_digest_identifies_the_set_of_runs() -> None:
+def test_a_plan_change_is_stored_after_a_session_that_ended_before_its_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tiny_campaign(solvers=SWITCHING, replicates=2)
+    first = run(campaign, tmp_path, registry=_registry(SwitchOnce))
+    before = read_plan(first.directory)
+
+    def interrupted(self: Store, plan: object) -> None:
+        raise KeyboardInterrupt
+
+    # The session sees the changed plan and ends before it writes its record.
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "ledger", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            run(campaign, tmp_path, registry=_registry(SwitchMany))
+    assert len(read_sessions(first.directory)) == 1
+    assert read_plan(first.directory) == before
+    assert len(_plan_warnings(caplog)) == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        resumed = run(campaign, tmp_path, registry=_registry(SwitchMany))
+    after = read_plan(resumed.directory)
+    entered = [item for item in after.runs if not before.has_run(item.run_id)]
+    assert len(entered) == 2
+    latest = read_sessions(resumed.directory)[-1]
+    assert [dict(item) for item in latest.plan_entered] == [item.to_dict() for item in entered]
+    assert latest.plan_digest == after.runs_digest != before.runs_digest
+    (warning,) = _plan_warnings(caplog)
+    assert "0 run(s) left it and 2 entered it" in warning
+
+
+def test_a_changed_seed_under_one_run_id_is_named(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    result = plan(tiny_campaign(), registry=REGISTRY)
+    first = result.runs[0]
+    reseeded = replace(result, runs=(replace(first, seed=first.seed + 1), *result.runs[1:]))
+    assert reseeded.runs_digest != result.runs_digest
+    store = Store(tmp_path / "tiny")
+    store.directory.mkdir()
+    store.write_plan(result)
+    with caplog.at_level(logging.WARNING):
+        change = store.plan_change(reseeded)
+    assert change
+    assert change.left == change.entered == change.solvers == ()
+    assert [dict(item) for item in change.reseeded] == [
+        {**first.to_dict(), "seed": first.seed + 1, "earlier_seed": first.seed}
+    ]
+    (warning,) = _plan_warnings(caplog)
+    assert "the seed of 1 run(s) changed" in warning
+    assert f"{first.run_id} ({first.solver} on {first.problem}" in warning
+    assert "left it" not in warning
+
+
+def test_a_changed_solver_entry_under_one_hash_is_named(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    campaign = tiny_campaign(solvers=SWITCHING, replicates=2)
+    first = run(campaign, tmp_path, registry=_registry(SwitchOnce))
+    before = read_plan(first.directory)
+    assert before.solver("test-switch").iterative is False
+
+    with caplog.at_level(logging.WARNING):
+        second = run(campaign, tmp_path, registry=_registry(SwitchIterative))
+    after = read_plan(second.directory)
+    assert after.solver("test-switch").iterative is True
+    # The runs are the same, so the digest of the runs is, and the change is still named.
+    assert after.runs_digest == before.runs_digest
+    assert second.attempted == 0
+    latest = read_sessions(second.directory)[-1]
+    assert latest.plan_left == latest.plan_entered == latest.plan_reseeded == ()
+    assert [dict(item) for item in latest.plan_solvers] == [
+        {"solver": "test-switch", "field": "iterative", "earlier": False, "now": True}
+    ]
+    (warning,) = _plan_warnings(caplog)
+    assert "test-switch: iterative False -> True" in warning
+    assert "left it" not in warning
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        run(campaign, tmp_path, registry=_registry(SwitchIterative))
+    assert _plan_warnings(caplog) == []
+    assert read_sessions(second.directory)[-1].plan_solvers == ()
+
+
+def test_an_entry_that_states_no_threads_is_not_a_change(tmp_path: Path) -> None:
+    result = plan(tiny_campaign(), registry=REGISTRY)
+    silent = replace(
+        result, solvers=tuple(replace(entry, threads=None) for entry in result.solvers)
+    )
+    stated = replace(result, solvers=tuple(replace(entry, threads=2) for entry in result.solvers))
+    store = Store(tmp_path / "tiny")
+    store.directory.mkdir()
+    store.write_plan(silent)
+    assert store.plan_change(stated) == PlanChange()
+    store.write_plan(stated)
+    change = store.plan_change(silent)
+    assert [(item["field"], item["earlier"], item["now"]) for item in change.solvers] == [
+        ("threads", 2, None)
+    ] * len(result.solvers)
+
+
+def test_the_runs_digest_identifies_the_runs_and_their_seeds() -> None:
     result = plan(tiny_campaign(), registry=REGISTRY)
     assert len(result.runs_digest) == 64
     assert result.to_dict()["runs_digest"] == result.runs_digest
@@ -186,6 +306,9 @@ def test_the_runs_digest_identifies_the_set_of_runs() -> None:
     assert reordered.runs_digest == result.runs_digest
     shorter = replace(result, runs=result.runs[:-1])
     assert shorter.runs_digest != result.runs_digest
+    last = result.runs[-1]
+    reseeded = replace(result, runs=(*result.runs[:-1], replace(last, seed=last.seed + 1)))
+    assert reseeded.runs_digest != result.runs_digest
     assert plan(tiny_campaign(), registry=REGISTRY).runs_digest == result.runs_digest
 
 
@@ -195,9 +318,35 @@ def test_a_session_record_without_the_plan_fields_still_loads(tmp_path: Path) ->
     document = session.to_dict()
     assert document["plan_digest"] == read_plan(summary.directory).runs_digest
     assert document["plan_left"] == document["plan_entered"] == []
+    assert document["plan_reseeded"] == document["plan_solvers"] == []
     assert SessionRecord.from_dict(document) == session
-    del document["plan_digest"], document["plan_left"], document["plan_entered"]
+    for key in ("plan_digest", "plan_left", "plan_entered", "plan_reseeded", "plan_solvers"):
+        del document[key]
     stored = SessionRecord.from_dict(document)
     assert stored.plan_digest is None
     assert stored.plan_left == stored.plan_entered == ()
+    assert stored.plan_reseeded == stored.plan_solvers == ()
     assert stored == replace(session, plan_digest=None)
+
+
+def test_a_session_record_reads_back_every_change_of_plan() -> None:
+    execution = tiny_campaign().execution
+    record = SessionRecord(
+        session=2,
+        campaign="tiny",
+        config_hash="0" * 64,
+        started="2000-01-01T00:00:00+00:00",
+        finished=None,
+        status=SessionStatus.RUNNING,
+        execution=execution,
+        workers=1,
+        environment={},
+        plan_digest="1" * 64,
+        plan_reseeded=({"run_id": "run-0", "seed": 2, "earlier_seed": 1},),
+        plan_solvers=({"solver": "a", "field": "iterative", "earlier": False, "now": True},),
+    )
+    assert SessionRecord.from_dict(record.to_dict()) == record
+    document = record.to_dict()
+    document["plan_solvers"] = [{"field": "iterative"}]
+    with pytest.raises(SerializationError, match="plan_solvers"):
+        SessionRecord.from_dict(document)

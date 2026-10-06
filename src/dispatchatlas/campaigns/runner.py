@@ -157,7 +157,7 @@ def run(
         execution.worker_cpus(count)
     with store.locked():
         store.open(campaign, fresh=fresh)
-        change = store.write_plan(plan)
+        change = store.plan_change(plan)
         ledger = store.ledger(plan)
         pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
         if max_runs is not None:
@@ -184,8 +184,14 @@ def run(
             plan_digest=plan.runs_digest,
             plan_left=change.left,
             plan_entered=change.entered,
+            plan_reseeded=change.reseeded,
+            plan_solvers=change.solvers,
         )
+        # The session record, which states how the plan changed, is written before
+        # the plan it was compared with is replaced, so a session that ends in
+        # between leaves the comparison to the next one.
         store.write_session(record)
+        store.write_plan(plan)
         _warn_about_timing(prepared, execution, count, cpus)
         if cpus is not None:
             _LOG.info(

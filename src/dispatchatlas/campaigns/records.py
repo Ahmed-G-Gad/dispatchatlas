@@ -13,8 +13,8 @@ version:
   limit, the last :class:`Incumbent` its search had reported.
 - ``dispatchatlas.session/1`` (:class:`SessionRecord`): one invocation of the
   runner, with its execution settings, the environment it ran in, the digest
-  of the plan it executed, and the runs by which that plan differs from the
-  one it replaced (:class:`PlanChange`).
+  of the plan it executed, and how that plan differs from the one the
+  directory held (:class:`PlanChange`).
 
 The **result hash** is the SHA-256 digest of the canonical JSON of
 :meth:`Outcome.hashed`: every outcome field except those that measure wall
@@ -858,7 +858,7 @@ class FailureRecord:
 
 @dataclass(frozen=True)
 class PlanChange:
-    """The runs by which a plan differs from the plan it replaced under one config hash.
+    """How a plan differs from the plan a directory holds under the same config hash.
 
     A campaign file fixes the config hash, and the plan also follows what the
     file does not hold: the metadata the registered solvers declare, the
@@ -867,18 +867,28 @@ class PlanChange:
     ``replicate``, and ``seed``.
 
     Attributes:
-        left: The runs of the replaced plan that the plan does not hold, in
-            the order of the replaced plan.
-        entered: The runs of the plan that the replaced plan did not hold,
+        left: The runs of the earlier plan that the plan does not hold, in
+            the order of the earlier plan.
+        entered: The runs of the plan that the earlier plan did not hold,
             in plan order.
+        reseeded: The runs both plans hold whose seed differs, in plan
+            order, each with the seed of the plan and, as ``earlier_seed``,
+            the seed of the earlier plan. A record of such a run was made
+            with the earlier seed and still counts as the run's record.
+        solvers: The fields by which the solver entries differ, in plan
+            order: each a document with ``solver`` (the solver's name),
+            ``field``, ``earlier``, and ``now``. A field the earlier entry
+            does not state is not compared.
     """
 
     left: tuple[Mapping[str, Any], ...] = ()
     entered: tuple[Mapping[str, Any], ...] = ()
+    reseeded: tuple[Mapping[str, Any], ...] = ()
+    solvers: tuple[Mapping[str, Any], ...] = ()
 
     def __bool__(self) -> bool:
-        """Whether a run left or entered."""
-        return bool(self.left or self.entered)
+        """Whether the plans differ in a run, a seed, or a solver entry."""
+        return bool(self.left or self.entered or self.reseeded or self.solvers)
 
 
 @dataclass(frozen=True)
@@ -900,8 +910,8 @@ class SessionRecord:
         counts: Run counts at the end of the session: ``planned``,
             ``completed``, ``failed`` (settled by failures), ``pending``, and
             this session's ``attempted``, ``succeeded``, and ``errors``.
-        plan_digest: Digest of the run ids of the plan the session executed,
-            :attr:`Plan.runs_digest
+        plan_digest: Digest of the run ids and seeds of the plan the session
+            executed, :attr:`Plan.runs_digest
             <dispatchatlas.campaigns.planning.Plan.runs_digest>`. ``None``
             for a record that does not state it.
         plan_left: The runs of the plan the directory held before the
@@ -909,6 +919,9 @@ class SessionRecord:
             does not hold, as :class:`PlanChange` describes them.
         plan_entered: The runs of the session's plan that the earlier plan
             did not hold.
+        plan_reseeded: The runs both plans hold whose seed differs.
+        plan_solvers: The fields by which the solver entries of the two
+            plans differ.
     """
 
     session: int
@@ -924,6 +937,8 @@ class SessionRecord:
     plan_digest: str | None = None
     plan_left: tuple[Mapping[str, Any], ...] = ()
     plan_entered: tuple[Mapping[str, Any], ...] = ()
+    plan_reseeded: tuple[Mapping[str, Any], ...] = ()
+    plan_solvers: tuple[Mapping[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return the record as a JSON-ready document."""
@@ -942,15 +957,17 @@ class SessionRecord:
             "plan_digest": self.plan_digest,
             "plan_left": [dict(item) for item in self.plan_left],
             "plan_entered": [dict(item) for item in self.plan_entered],
+            "plan_reseeded": [dict(item) for item in self.plan_reseeded],
+            "plan_solvers": [dict(item) for item in self.plan_solvers],
         }
 
     @classmethod
     def from_dict(cls, document: object) -> SessionRecord:
         """Build a record from :meth:`to_dict` output.
 
-        A document without ``plan_digest``, ``plan_left``, or
-        ``plan_entered`` reads as a record that states no digest and no
-        change of plan.
+        A document without ``plan_digest``, ``plan_left``, ``plan_entered``,
+        ``plan_reseeded``, or ``plan_solvers`` reads as a record that states
+        no digest and no change of plan.
 
         Raises:
             SerializationError: If the document is not a session record of
@@ -967,6 +984,10 @@ class SessionRecord:
             ),
             plan_left=_run_documents(fields.absent_or_raw("plan_left"), "plan_left"),
             plan_entered=_run_documents(fields.absent_or_raw("plan_entered"), "plan_entered"),
+            plan_reseeded=_run_documents(fields.absent_or_raw("plan_reseeded"), "plan_reseeded"),
+            plan_solvers=_documents(
+                fields.absent_or_raw("plan_solvers"), "plan_solvers", ("solver", "field")
+            ),
             session=fields.integer("session"),
             campaign=fields.text("campaign"),
             config_hash=fields.text("config_hash"),
@@ -1093,6 +1114,14 @@ def _list(value: object, what: str) -> list[Any]:
 
 def _run_documents(value: object, key: str) -> tuple[Mapping[str, Any], ...]:
     """Read the runs a session record lists under ``key``; an absent list is empty."""
+    return _documents(value, key, ("run_id",))
+
+
+def _documents(value: object, key: str, texts: tuple[str, ...]) -> tuple[Mapping[str, Any], ...]:
+    """Read the objects a session record lists under ``key``; an absent list is empty.
+
+    Each object must hold a string under every key of ``texts``.
+    """
     if value is None:
         return ()
     what = f"a session record field {key!r}"
@@ -1100,7 +1129,8 @@ def _run_documents(value: object, key: str) -> tuple[Mapping[str, Any], ...]:
     for item in items:
         if not isinstance(item, Mapping):
             raise SerializationError(f"{what} must list objects")
-        _text(item.get("run_id"), f"a run_id of {what}")
+        for name in texts:
+            _text(item.get(name), f"a {name} of {what}")
     return tuple(dict(item) for item in items)
 
 

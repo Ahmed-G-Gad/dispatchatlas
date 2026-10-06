@@ -251,15 +251,19 @@ class Plan:
 
     @cached_property
     def runs_digest(self) -> str:
-        """SHA-256 hex digest of the canonical JSON of the sorted run ids.
+        """SHA-256 hex digest of the canonical JSON of every run's id and seed, sorted by id.
 
-        Two plans have the same digest exactly when they hold the same runs,
-        in whatever order. A run id covers the config hash, the problem and
-        its content, the solver and its parameters, the protocol, and the
-        replicate, so the digest tells apart two plans of one campaign file
-        whose runs differ.
+        Two plans have the same digest exactly when they hold the same runs
+        with the same seeds, in whatever order. A run id covers the config
+        hash, the problem and its content, the solver and its parameters, the
+        protocol, and the replicate; the seed is derived by the library that
+        plans. The digest does not cover the solver entries: the metadata a
+        solver declares can differ between two plans of one digest, and
+        :meth:`Store.plan_change
+        <dispatchatlas.campaigns.store.Store.plan_change>` names such a
+        difference.
         """
-        return digest(sorted(self._runs))
+        return digest(sorted([run.run_id, run.seed] for run in self.runs))
 
     def run(self, run_id: str) -> PlannedRun:
         """Return the run with the given id.

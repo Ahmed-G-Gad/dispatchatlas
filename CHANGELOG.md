@@ -134,10 +134,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   analysed protocol (`plan`) as limitations.
 - `campaign validate --runs` lists every planned run with its id and seed
   before anything runs. A plan written over one of the same config hash
-  names, in a warning, the runs that left it and the runs that entered it,
-  and the session record keeps them (`plan_left`, `plan_entered`) with the
-  digest of the plan's run ids (`plan_digest`), which `plan.json` states as
-  `runs_digest`.
+  names, in a warning, the runs that left it, the runs that entered it, the
+  runs whose seed changed, and the fields of the solver entries that
+  changed, and the session record keeps them (`plan_left`, `plan_entered`,
+  `plan_reseeded`, `plan_solvers`) with the digest of the plan's run ids and
+  seeds (`plan_digest`), which `plan.json` states as `runs_digest`. The
+  session record is written before `plan.json` is replaced
+  (`Store.plan_change`, then `Store.write_plan`).
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

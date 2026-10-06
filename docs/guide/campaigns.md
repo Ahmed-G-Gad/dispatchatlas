@@ -491,11 +491,11 @@ indentation, ASCII text, and a final newline.
   versions of DispatchAtlas, NumPy, and the installed backends, and the git
   commit when the source or the working directory is a checkout. It records
   no host or user name. It also holds `plan_digest`, the digest of the run
-  ids of the plan the session executed, which `plan.json` states as
-  `runs_digest`, and `plan_left` and `plan_entered`, the runs by which that
-  plan differs from the one the directory held before under the same config
-  hash (see [Resuming](#resuming)). A record without these fields reads as
-  one that states no digest and no change.
+  ids and seeds of the plan the session executed, which `plan.json` states as
+  `runs_digest`, and `plan_left`, `plan_entered`, `plan_reseeded`, and
+  `plan_solvers`: how that plan differs from the one the directory held
+  before under the same config hash (see [Resuming](#resuming)). A record
+  without these fields reads as one that states no digest and no change.
 
 `read_campaign`, `read_plan`, `read_runs`, `read_failures`, and
 `read_sessions` read these files back as typed records.
@@ -528,7 +528,15 @@ therefore loses at most the runs that were in progress.
   the first of each, and the session record stores all of them in
   `plan_left` and `plan_entered`, beside the `plan_digest` of the new plan.
   The records of runs that left stay in the directory and are no longer
-  read. Two sessions with equal `plan_digest` executed the same set of runs.
+  read. The warning also names the runs whose seed changed and the fields of
+  the solver entries that changed, such as a solver's `iterative` flag, and
+  the session record stores them in `plan_reseeded` (each run with its
+  `earlier_seed`) and `plan_solvers` (each with `solver`, `field`,
+  `earlier`, and `now`). The session record is written before `plan.json` is
+  replaced, so a session that ends before its record leaves the comparison
+  to the next session. Two sessions with equal `plan_digest` executed the
+  same runs with the same seeds. The digest does not cover the solver
+  entries.
 
 ## Replaying
 
