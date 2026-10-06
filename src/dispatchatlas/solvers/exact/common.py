@@ -17,6 +17,7 @@ import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 
+from dispatchatlas.core.clock import clock_start
 from dispatchatlas.core.errors import SolverError, UnsupportedProblemError
 from dispatchatlas.core.model import Dependency, Problem, Scalar
 from dispatchatlas.core.objectives import evaluate, is_built_in
@@ -266,13 +267,17 @@ def backend_version(distribution: str) -> str:
 class Clock:
     """Wall-clock time of one run against an optional limit.
 
+    The clock starts at :func:`~dispatchatlas.core.clock.clock_start`: the
+    instant it is created, or the origin set by
+    :func:`~dispatchatlas.core.clock.clock_origin`.
+
     Args:
         limit: Seconds the run may take, or ``None``.
     """
 
     def __init__(self, limit: float | None) -> None:
         self.limit = limit
-        self._started = time.perf_counter()
+        self._started = clock_start()
 
     @property
     def elapsed(self) -> float:

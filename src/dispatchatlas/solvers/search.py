@@ -40,6 +40,7 @@ from contextvars import ContextVar
 from types import TracebackType
 from typing import TYPE_CHECKING, Self
 
+from dispatchatlas.core.clock import clock_start
 from dispatchatlas.core.errors import SolverError, UnsupportedProblemError
 from dispatchatlas.core.pareto import dominates
 from dispatchatlas.core.solver import (
@@ -201,7 +202,7 @@ class Search:
             None if stop.target is None else self.evaluator.objective.minimized(stop.target)
         )
         self._listener = _LISTENER.get()
-        self._started = time.perf_counter()
+        self._started = clock_start()
 
     # ------------------------------------------------------------ properties
 
@@ -212,7 +213,12 @@ class Search:
 
     @property
     def elapsed(self) -> float:
-        """Seconds since the search started."""
+        """Seconds since the origin of the run's clock.
+
+        The origin is the instant the search was created, or, inside
+        :func:`~dispatchatlas.core.clock.clock_origin`, the origin set there.
+        The time limit counts from the same instant.
+        """
         return time.perf_counter() - self._started
 
     def numpy_rng(self) -> np.random.Generator:

@@ -20,6 +20,8 @@ The data model, objectives, feasibility checking, seeds, serialization, and the 
 
 ::: dispatchatlas.core.solver
 
+::: dispatchatlas.core.clock
+
 ::: dispatchatlas.core.seeds
 
 ::: dispatchatlas.core.serialization

@@ -33,6 +33,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from dispatchatlas.core.clock import clock_start
 from dispatchatlas.core.errors import SolverError
 from dispatchatlas.core.model import Scalar
 from dispatchatlas.core.solver import StopCriteria, StopReason
@@ -267,11 +268,11 @@ class FunctionRun:
         self.reason: StopReason | None = None
         self.extras: dict[str, Scalar] = {}
         self._last_improvement = 0
-        self._started = time.perf_counter()
+        self._started = clock_start()
 
     @property
     def elapsed(self) -> float:
-        """Seconds since the run started."""
+        """Seconds since the run started, or since the origin ``clock_origin`` set."""
         return time.perf_counter() - self._started
 
     @property
