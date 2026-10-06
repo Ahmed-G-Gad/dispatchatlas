@@ -242,9 +242,8 @@ class StopCriteria:
     def to_dict(self) -> dict[str, Any]:
         """Return the criteria that are set, as a JSON-ready dictionary.
 
-        :attr:`schedule` is part of it only when it is not the default, so
-        criteria that leave it alone have the dictionary, and with it the
-        identity in a campaign, that they have without the field.
+        :attr:`schedule` is written only when it is not the default, so it
+        enters the identity of a campaign only when a protocol sets it.
         """
         values = {
             name: getattr(self, name)

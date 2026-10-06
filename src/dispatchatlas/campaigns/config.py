@@ -746,8 +746,7 @@ class Campaign:
         settings that are set: ``replicate_timed`` when it is true,
         ``seed_namespace`` when there is one, a solver's own ``replicates``,
         and a protocol's ``schedule`` when it is not the default. A setting
-        left at its default is absent, so a campaign that sets none of them
-        has the config hash it has without them.
+        left at its default is absent from the identity.
         """
         identity: dict[str, Any] = {
             "seed": self.seed,

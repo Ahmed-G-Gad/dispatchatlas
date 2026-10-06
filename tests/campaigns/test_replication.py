@@ -277,6 +277,17 @@ def test_every_example_campaign_is_pinned() -> None:
     assert sorted(path.name for path in EXAMPLES.glob("*.toml")) == sorted(EXAMPLE_HASHES)
 
 
+def test_the_identity_docstrings_state_the_rule_and_compare_no_versions() -> None:
+    written, identity = StopCriteria.to_dict.__doc__, Campaign.identity.__doc__
+    assert written is not None
+    assert identity is not None
+    assert "written only when it is not the default" in written
+    assert "left at its default is absent from the identity" in identity
+    for text in (written, identity):
+        assert "without the field" not in text
+        assert "without them" not in text
+
+
 def test_the_identity_holds_the_optional_keys_only_when_they_are_set() -> None:
     base = tiny_campaign()
     assert sorted(base.identity()) == [
