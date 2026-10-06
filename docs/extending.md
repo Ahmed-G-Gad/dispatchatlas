@@ -59,6 +59,24 @@ criterion it is given, return a `SolveResult` whose `objectives` come from
 `dispatchatlas.core.evaluate`, and set `status` from what it knows; check its
 schedules with `check_schedule` in its tests.
 
+Two things decide what a time limit means for a solver in a campaign:
+
+- **What it does once in a process.** A campaign times a run from the start
+  of its attempt, so work that only the first call in a process pays, such as
+  the import of a backend or the filling of a cache, would shorten the search
+  of the first run of every worker process and of no other. Put that work in
+  a method `prepare(self) -> None`: the engine calls it before the clock of a
+  run starts, and it counts toward the start-up limit of the worker, not
+  toward the time limit of a run. `solve` must still work when `prepare` was
+  not called. Import at module level what needs no optional dependency.
+- **Where its clocks start.** Inside a campaign every `Search`, and every
+  clock started at `dispatchatlas.core.clock.clock_start()`, counts from the
+  start of the attempt, not from its own creation. A solver that runs
+  several searches in turn, or gives one a share of its time limit, wraps
+  each in `with clock_origin():` so that the search counts from its own
+  start; otherwise the limit of a later search has passed before it begins.
+  The engine notes a run that stops for its time limit well before the limit.
+
 ### Registering it in your code
 
 ```python

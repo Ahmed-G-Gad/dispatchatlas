@@ -160,10 +160,10 @@ def test_the_timing_limitation_reports_the_processor_share_and_the_concurrency()
     assert timing.message == (
         "Protocol p gives every run the same wall-clock time, so a run searches as far as the "
         "processor time it received in that time allows. Over the 8 completed runs that lasted "
-        "at least half of the time limit, the processor share of a run, its processor seconds "
-        "over its wall seconds, lies between 0.50 and 0.98 with median 0.74, and its median "
-        "per solver between 0.50 (b) and 0.98 (a); between 2 and 8 runs executed at once, with "
-        "median 5."
+        "at least half of the time limit, the processor share of a run, the processor seconds "
+        "of its own process over its wall seconds, lies between 0.50 and 0.98 with median 0.74, "
+        "and its median per solver between 0.50 (b) and 0.98 (a); between 2 and 8 runs executed "
+        "at once, with median 5."
     )
     rows = _rows(dataset)
     assert {row["cpu_share"] for row in rows if row["solver"] == "b"} == {0.5}

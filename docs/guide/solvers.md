@@ -136,7 +136,15 @@ the backend is imported. A caller that wants one origin for every solver sets
 it with `clock_origin` of
 [`dispatchatlas.core.clock`](../api/core.md), and the clocks created inside
 the block start there. A campaign does so at the start of every attempt, so
-in a campaign `elapsed` and the time limit cover everything a solver does.
+in a campaign `elapsed` and the time limit cover everything a solver does
+from that start on. What a solver does once in a process, the import of its
+backend, a campaign has it do before that start, through the solver's
+`prepare` method (see [Extending](../extending.md#a-solver)).
+
+Inside a `clock_origin` block a clock counts from the origin, not from its
+own creation, and so does the time limit of a search created there. Code
+that runs several searches in turn inside one block opens a block of its own
+around each, `with clock_origin():`, to give each its whole limit.
 
 ## How candidates are compared
 

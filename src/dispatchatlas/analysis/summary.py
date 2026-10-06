@@ -688,8 +688,8 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
     parts: list[str] = []
     if pooled:
         part = (
-            "the processor share of a run, its processor seconds over its wall seconds, lies "
-            f"between {min(pooled):.2f} and {max(pooled):.2f} with median "
+            "the processor share of a run, the processor seconds of its own process over its "
+            f"wall seconds, lies between {min(pooled):.2f} and {max(pooled):.2f} with median "
             f"{statistics.median(pooled):.2f}"
         )
         medians = sorted(

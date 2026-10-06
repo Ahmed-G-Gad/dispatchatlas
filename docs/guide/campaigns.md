@@ -217,8 +217,9 @@ of one campaign.
   `timeout_factor * time_limit + grace` seconds, counted from the instant its
   worker states as the start of the solve. What comes before that instant is
   not charged to the run: the start of the worker's interpreter and the
-  loading of plugins, for a worker that started for this run, and the
-  rebuilding of the solver and the problem. The provenance of the attempt
+  loading of plugins, for a worker that started for this run, the
+  rebuilding of the solver and the problem, and the preparation of the
+  solver. The provenance of the attempt
   records it as `waited_seconds`, counted from the hand-over, before a fresh
   worker exists. When the hard limit passes, the supervisor kills the worker
   and records a timeout, and a fresh worker takes the next run. The
@@ -226,17 +227,36 @@ of one campaign.
   run when it reports that it is ready, so the limits of the other runs are
   enforced meanwhile.
 - **One clock per run.** The engine fixes the origin of a run's clock at the
-  start of each attempt, the instant from which it measures the wall time of
-  the attempt, and every solver counts its elapsed time and its time limit
-  from that origin. The `elapsed` of an outcome and the times of its trace
-  are therefore seconds since the start of the attempt, for every solver
-  alike: they include what a solver does before its search starts, such as
-  building its evaluator or its model and importing a backend, and the time
-  limit covers that work too. A solver called directly, outside a campaign,
-  counts from the instant it creates its clock, as
+  start of each attempt, and every solver counts its elapsed time and its
+  time limit from that origin. It is one instant: the wall time of the
+  attempt counts from it, and under the process backend it is the instant
+  the worker states as the start of the solve, from which the hard limit
+  counts. The `elapsed` of an outcome and the times of its trace are
+  therefore seconds since the start of the attempt, for every solver alike:
+  they include what a solver does in every run before its search starts,
+  such as building its evaluator or its model, and the time limit covers
+  that work too. A solver called directly, outside a campaign, counts from
+  the instant it creates its clock, as
   [`dispatchatlas.core.clock`](../api/core.md) describes; a solver from a
   plugin that keeps a clock of its own starts it at `clock_start()` to
-  follow the same origin.
+  follow the same origin. The provenance of an attempt states that its
+  solver was timed this way (`shared_clock`).
+- **What a solver does once in a process.** The first call of a solver in a
+  process may pay what no later call pays, such as the import of a backend.
+  Inside the time limit, that cost would shorten the search of the first run
+  each worker executes, and of the first run of every worker that replaces
+  a killed one, so replicates of one solver would search for unequal times
+  according to the order of the runs and the number of workers. The engine
+  therefore prepares the solver before the start of each attempt: it loads
+  NumPy's random module and calls the solver's `prepare` method, which
+  `cp-sat`, `milp`, and `restricted-neighbourhood-search` use to import
+  their backend. The preparation is outside the time limit and the wall
+  time of every run; under the process backend it counts toward the
+  start-up limit and is part of `waited_seconds`. A preparation that raises
+  fails the attempt as an `exception`. A solver from a plugin that pays such
+  a cost inside `solve`, without a `prepare` method, is charged for it in
+  the first run of each process; see
+  [Extending](../extending.md#a-solver).
 - **What the time limit cannot stop.** A solver checks its time limit
   between evaluations and never before its first one, so a run passes the
   limit by the evaluation in progress and by any work between two checks,
@@ -245,9 +265,9 @@ of one campaign.
   hard limit, and under the process backend a run that ends late but before
   its hard limit is an ordinary success. The engine therefore compares the
   wall time of every completed attempt with the time limit and keeps a note
-  when it passes the limit by more than 5 percent, and the
-  [analysis](analyzing.md#runs-failures-and-denominators) reports these
-  runs.
+  when it passes the limit by more than 5 percent and by more than 0.05
+  seconds, and the [analysis](analyzing.md#runs-failures-and-denominators)
+  reports these runs.
 - **Start-up limit.** From the hand-over of a run, its worker has
   `startup_limit` seconds, 120 by default, to begin the solve, whatever the
   size of the problem it is sent. A worker that takes longer, or never
@@ -313,13 +333,21 @@ of one campaign.
   ordinary completed run. A note is kept when the solver reports an
   objective value its schedule does not give, calls an infeasible schedule
   feasible, or returns a malformed schedule; when the wall time passes the
-  time limit by more than 5 percent of the limit; when the elapsed time the
-  solver reports differs from the wall time the engine measured by more
-  than 0.05 seconds and by more than 5 percent of that wall time; when the
-  trace holds a negative time, times that decrease, or a time beyond the
-  elapsed time the solver reports; when the evaluation counts of the trace
-  decrease; when the last value of the trace differs from the value of the
-  outcome; and when an iterative solver returns a schedule and no trace.
+  time limit by more than 5 percent of the limit and by more than 0.05
+  seconds, which the scheduler of a machine can add to any run; when the
+  solver stops for its time limit while the wall time is below the limit by
+  more than 5 percent of it and by more than 0.05 seconds, as a solver does
+  that gives a search a share of its limit counted from the start of the
+  attempt; when the elapsed time the solver reports differs from the wall
+  time the engine measured by more than 0.05 seconds and by more than 5
+  percent of that wall time; when the trace holds a negative time, times
+  that decrease, or a time more than a microsecond beyond the elapsed time
+  the solver reports; when the evaluation counts of the trace decrease; when
+  the last value of the trace differs from the value of the outcome; and
+  when an iterative solver returns a schedule and no trace. A result whose
+  elapsed time, or whose trace holds a time or a value, that is not a finite
+  number cannot be compared or stored: the attempt fails with an
+  `exception`, and the session continues.
 
 ## Storage layout
 
@@ -347,8 +375,15 @@ indentation, ASCII text, and a final newline.
   not pinned), the runs executing when the run was handed to its worker
   (`concurrent`), and the seconds from that hand-over to the start of the
   solve (`waited_seconds`, null for the sequential backend), which hold the
-  start of a worker that started for the run. A record that
-  lacks one of the three reads as null for it. The record also holds the
+  start of a worker that started for the run and the preparation of the
+  solver, and whether the solver's clocks started at the instant the wall
+  time counts from (`shared_clock`, true for an attempt whose solver
+  returned or raised, null for one the engine ended or that never reached
+  its solver). A record that lacks one of the four reads as null for it. The CPU
+  seconds are those of the executing process, with the threads the solver
+  started, and on POSIX systems those of the child processes it started and
+  waited for; on Windows the time of a child process, such as a backend
+  that runs as a program of its own, is not in them. The record also holds the
   `notes` of the engine on the attempt, a list of sentences that is empty
   when the engine noticed nothing; a record without the field reads as one
   with no notes. The `elapsed` of the outcome is the solver's report, in

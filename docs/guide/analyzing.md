@@ -63,10 +63,20 @@ the worst value like any other failure, and a limitation of its own
 with `--retry-failed` gives them another attempt.
 
 The `failures` limitation counts the failed runs of each solver by the kind
-of error of their last attempt. An `exception` was raised by the solver or
-by the checks of its result; the engine ended the attempts of every other
-kind (`timeout`, `startup`, `worker-exit`, `transfer`), so the two are told
-apart.
+of error of their last attempt, and states what each kind that occurs says
+about who ended the attempt:
+
+| Kind | Meaning |
+| --- | --- |
+| `exception` | the solver, its preparation, or the checks of its result raised an exception |
+| `timeout` | the engine killed the worker at the hard limit of the run |
+| `startup` | the engine killed a worker that had not begun the solve at the start-up limit |
+| `worker-exit` | the worker process ended during the run, as after a crash in the solver's native code or when memory runs out; the engine does not know the cause |
+| `transfer` | the run could not be sent to a worker or rebuilt in it, as when its solver cannot be pickled |
+
+Only `timeout` and `startup` are the engine's doing. A `worker-exit` is as
+likely the solver's as the machine's, and the traceback or the message of
+the failure record is where to look.
 
 ### Realised time against the budget
 
@@ -81,13 +91,24 @@ time limit of its protocol. `runs.csv` holds, for every run:
 | --- | --- |
 | `time_limit` | the time limit of the run's protocol, empty without one |
 | `wall_seconds` | the wall time the engine measured for the last attempt of the run, the completing one or the last failed one; `elapsed` is the solver's own report |
-| `overrun_seconds` | `wall_seconds` minus `time_limit`, negative for a run that ended early |
-| `cpu_share` | the processor seconds of the attempt over its wall seconds: below 1 when its process waited for a processor, above 1 when the solver ran threads |
+| `overrun_seconds` | `wall_seconds` minus `time_limit`, negative for a run that ended early; empty for a run that did not complete |
+| `cpu_share` | the processor seconds of the completing attempt over its wall seconds: below 1 when the executing process was not computing for part of the run, above 1 when the solver ran threads; empty for a run that did not complete |
 | `concurrent` | the runs executing when the attempt started, itself included |
 | `cpu` | the processor the attempt's worker was pinned to, empty when it was not pinned |
 | `attempts` | the number of the last attempt of the run |
 
-Two limitations summarise these columns for the analysed protocol when it
+For a run that did not complete, `cpu_seconds`, `wall_seconds`,
+`concurrent`, `cpu`, and `attempts` all describe its last failed attempt,
+whose kind is in the `failure` column.
+
+A `cpu_share` below 1 does not say why the process was not computing: it
+waited for a processor, it slept, or it left the work to another process
+whose time the record does not hold. The processor seconds are those of the
+worker process and, on POSIX systems, of the child processes it waited for;
+on Windows a solver whose backend runs as a program of its own, as `milp`
+does with CBC, shows a share near 0 while that program computes.
+
+Three limitations summarise the timing of the analysed protocol when it
 sets a time limit. `budget` names every solver whose completed runs took
 more wall time than `time_limit * (1 + overrun_tolerance)`, with how many of
 its completed runs did and the largest ratio of wall time to limit. Such a
@@ -95,12 +116,20 @@ run searched for longer than the protocol states; it is neither excluded nor
 rescored. `timing` states the load that the completed runs which lasted at
 least half of the time limit executed under: the range and median of their
 processor share, the lowest and highest median share of a solver, and the
-range and median of the number of runs executing at once. Under a wall-clock
-budget a run searches as far as the processor time it received allows, so
-solvers whose shares differ were not given the same budget. Shorter runs are
-left out: the clock did not bound them, and processor time advances in
-steps, of about 16 milliseconds on Windows, so the `cpu_share` of a run
-shorter than a few tenths of a second is coarse.
+range and median of the number of runs executing at once. When the time
+limit is the protocol's only bound, every run has the same wall-clock time
+and searches as far as the processor time it received allows, so solvers
+whose shares differ for want of a processor were not given the same budget;
+when the protocol also bounds evaluations or iterations, that holds for the
+runs the time limit stopped. Shorter runs are left out: the clock did not
+bound them, and processor time advances in steps, of about 16 milliseconds
+on Windows, so the `cpu_share` of a run shorter than a few tenths of a
+second is coarse. `clock` appears when only some of the completed runs
+state, in their provenance, that their solver's clock started at the start
+of the attempt (`shared_clock`): a solver whose clock starts after its
+set-up has the whole time limit for its search, so the time limit and the
+elapsed times of the two groups may not measure the same thing. A directory
+whose records all state it, or none, has no such limitation.
 
 ## The statistical comparison
 

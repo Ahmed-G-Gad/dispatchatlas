@@ -87,22 +87,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clocks, and the engine sets it at the start of every attempt, so the
   elapsed time and the time limit of every solver in a campaign cover what
   the solver does before its search starts, such as building an evaluator
-  or a model and importing a backend. A solver called outside a campaign
-  counts from the instant it creates its clock.
+  or a model. The same instant is the start of the hard limit and of the
+  wall time, and the provenance of an attempt states it in the optional
+  field `shared_clock`. What a solver does once in a process, such as
+  importing a backend, the engine has it do before that instant, through
+  the solver's optional `prepare` method, so that it shortens the search of
+  no run. A solver called outside a campaign counts from the instant it
+  creates its clock.
 - The engine compares what every completed attempt took with its budget and
   keeps what it notices in the optional field `notes` of the run record: a
-  wall time beyond the time limit, an elapsed time its own clock
-  contradicts, a trace whose times or evaluation counts are out of order or
-  that ends at another value than the outcome, and an iterative solver that
-  returns no trace, beside the claims of a solver that the checks of its
-  result contradict. The runs table holds `time_limit`, `wall_seconds`,
+  wall time beyond the time limit, a stop for the time limit well before
+  it, an elapsed time its own clock contradicts, a trace whose times or
+  evaluation counts are out of order or that ends at another value than the
+  outcome, and an iterative solver that returns no trace, beside the claims
+  of a solver that the checks of its result contradict. A result whose
+  times are not finite numbers fails its attempt. The CPU seconds of an
+  attempt include, on POSIX systems, the child processes the solver waited
+  for. The runs table holds `time_limit`, `wall_seconds`,
   `overrun_seconds`, `cpu_share`, `concurrent`, `cpu`, and `attempts`; the
   limitations name the solvers whose completed runs passed their time limit
   by more than the analysis setting `overrun_tolerance` (`budget`), state
   the processor share and the concurrency the runs of a timed protocol
-  executed under (`timing`), and count the failed runs by solver and kind
-  of error. A run of an iterative solver under a protocol whose only bound
-  is its time limit is not replayed, whatever stopped it.
+  executed under (`timing`), report records that do not all state a shared
+  clock (`clock`), and count the failed runs by solver and kind of error,
+  with what each kind means. A run of an iterative solver under a protocol
+  whose only bound is its time limit is not replayed, whatever stopped it.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
