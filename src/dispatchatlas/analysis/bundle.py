@@ -136,7 +136,8 @@ def write_bundle(
         protocols=protocols, solvers=settings.solvers, problems=settings.problems
     )
     target = Path(output_directory)
-    contents: dict[str, bytes] = {"runs.csv": to_csv(runs_table(analysed)).encode("utf-8")}
+    runs = runs_table(analysed, settings.timeout_score)
+    contents: dict[str, bytes] = {"runs.csv": to_csv(runs).encode("utf-8")}
     records: list[dict[str, Any]] = []
     limitations: list[tuple[str, Limitation]] = []
     sections: list[str] = []

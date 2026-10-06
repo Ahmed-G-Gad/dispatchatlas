@@ -22,7 +22,7 @@ from dispatchatlas.analysis.stats.corrections import CORRECTIONS, Correction
 from dispatchatlas.analysis.stats.ranks import Sense, check_sense
 from dispatchatlas.core.errors import ConfigError
 
-__all__ = ["AnalysisConfig", "CellStatistic", "Omnibus", "ReferenceRule"]
+__all__ = ["AnalysisConfig", "CellStatistic", "Omnibus", "ReferenceRule", "TimeoutScore"]
 
 type CellStatistic = Literal["mean", "median"]
 """How the replicates of one solver on one problem become one value."""
@@ -32,6 +32,9 @@ type Omnibus = Literal["iman-davenport", "friedman"]
 
 type ReferenceRule = Literal["margin", "ishibuchi"]
 """How a hypervolume reference point is derived from the reference front."""
+
+type TimeoutScore = Literal["worst", "incumbent"]
+"""How a run that was killed at its hard limit is scored."""
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,13 @@ class AnalysisConfig:
             only (see :func:`~dispatchatlas.analysis.comparison.compare_to_baselines`).
         baselines: Names of the baselines of ``focal``, or ``None`` for every
             other analysed solver.
+        timeout_score: How a run that never completed and was killed at its
+            hard limit is scored. ``"worst"`` scores it as the worst value,
+            like any other failure. ``"incumbent"`` scores it by the last
+            incumbent its search had reported, when that incumbent is
+            feasible; the value is the solver's own, with no schedule to
+            check it against. The limitations count these runs under either
+            choice.
     """
 
     protocol: str | None = None
@@ -107,6 +117,7 @@ class AnalysisConfig:
     normalize: bool = True
     focal: str | None = None
     baselines: tuple[str, ...] | None = None
+    timeout_score: TimeoutScore = "worst"
 
     def __post_init__(self) -> None:
         for name in ("protocol", "objective", "reference_source", "focal"):
@@ -136,6 +147,7 @@ class AnalysisConfig:
         _choice(self.correction, "correction", CORRECTIONS)
         _choice(self.omnibus, "omnibus", ("iman-davenport", "friedman"))
         _choice(self.statistic, "statistic", ("mean", "median"))
+        _choice(self.timeout_score, "timeout_score", ("worst", "incumbent"))
         _choice(self.reference_rule, "reference_rule", ("margin", "ishibuchi"))
         parameter = self.reference_parameter
         if isinstance(parameter, bool) or not isinstance(parameter, (int, float)):
@@ -178,6 +190,7 @@ class AnalysisConfig:
             "normalize": self.normalize,
             "focal": self.focal,
             "baselines": None if self.baselines is None else list(self.baselines),
+            "timeout_score": self.timeout_score,
         }
 
 

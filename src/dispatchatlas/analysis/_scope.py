@@ -7,7 +7,7 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from dispatchatlas.analysis.config import AnalysisConfig
+from dispatchatlas.analysis.config import AnalysisConfig, TimeoutScore
 from dispatchatlas.analysis.dataset import Dataset, Run
 from dispatchatlas.analysis.stats.ranks import Sense, check_sense
 from dispatchatlas.core.errors import ConfigError, ModelError
@@ -96,8 +96,14 @@ def worst_value(sense: Sense) -> float:
     return math.inf if sense == "min" else -math.inf
 
 
-def run_scores(runs: Sequence[Run], objective: str, sense: Sense) -> list[float]:
+def run_scores(
+    runs: Sequence[Run], objective: str, sense: Sense, timeout_score: TimeoutScore = "worst"
+) -> list[float]:
     """Return each planned run's value, a run that did not succeed scoring the worst value.
+
+    With ``timeout_score`` ``"incumbent"``, a run killed at its hard limit
+    scores the value of the feasible incumbent it held, if it held one with a
+    value for the objective.
 
     Raises:
         ConfigError: If a succeeded run has no value for the objective.
@@ -106,7 +112,9 @@ def run_scores(runs: Sequence[Run], objective: str, sense: Sense) -> list[float]
     scores = []
     for run in runs:
         if not run.succeeded:
-            scores.append(worst)
+            held = run.incumbent if timeout_score == "incumbent" else None
+            kept = None if held is None else held.objectives.get(objective)
+            scores.append(worst if kept is None else kept)
             continue
         value = run.value(objective)
         if value is None:

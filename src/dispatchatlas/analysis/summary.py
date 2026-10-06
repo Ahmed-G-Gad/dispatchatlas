@@ -6,8 +6,10 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
 1. **Cells.** The replicates of each solver on each problem become one
    *score*, the configured statistic (mean or median) of the planned runs,
    where a run that did not succeed counts as the worst value (infinity for
-   a minimised objective). Descriptive statistics and a bootstrap interval of
-   the mean describe the succeeded runs.
+   a minimised objective). With ``timeout_score`` ``"incumbent"``, a run
+   killed at its hard limit counts by the feasible incumbent it held instead.
+   Descriptive statistics and a bootstrap interval of the mean describe the
+   succeeded runs.
 2. **Reliability.** Each solver's succeeded, infeasible, failed, and missing
    runs, over its planned runs.
 3. **Ranks and omnibus test.** On the *complete blocks*, the problems every
@@ -25,6 +27,7 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    bootstrap interval when no failure makes it infinite, and Cohen's d_z, as
    Carrasco et al. (2020) recommend.
 6. **Limitations.** What qualifies the results: failed or missing runs,
+   runs killed at their hard limit and how they are scored,
    problems left out of the ranks, too few shared problems for the paired
    test to reach significance, cells below a replicate floor, and tests that
    could not run.
@@ -135,7 +138,7 @@ def _cells(scope: Scope, config: AnalysisConfig) -> tuple[CellSummary, ...]:
             runs = dataset.cell(solver.name, problem.id, scope.protocol)
             if not runs:
                 continue
-            scores = run_scores(runs, scope.objective, scope.sense)
+            scores = run_scores(runs, scope.objective, scope.sense, config.timeout_score)
             values = [score for score, run in zip(scores, runs, strict=True) if run.succeeded]
             interval = _interval(values, config) if values else None
             cells.append(
@@ -455,12 +458,33 @@ def _design_limitations(
                 "as failures.",
             )
         )
+    killed = [run for run in scope.dataset.runs if run.killed]
+    holding = sum(
+        1 for run in killed if run.incumbent and scope.objective in run.incumbent.objectives
+    )
+    rescored = holding if config.timeout_score == "incumbent" else 0
     if counts["failed"] or counts["infeasible"]:
+        exception = f", except {rescored} killed runs scored by their incumbent" if rescored else ""
         found.append(
             Limitation(
                 "failures",
                 f"{counts['failed']} runs failed and {counts['infeasible']} completed without a "
-                "feasible schedule; each counts as the worst value.",
+                f"feasible schedule; each counts as the worst value{exception}.",
+            )
+        )
+    if killed:
+        scored = (
+            f"those {holding} are scored by that incumbent, a value their solver reported and "
+            "no schedule confirms, and the others count as the worst value"
+            if rescored
+            else "each counts as the worst value"
+        )
+        found.append(
+            Limitation(
+                "timeouts",
+                f"{len(killed)} runs were killed at their hard limit and never completed, "
+                f"{holding} of them holding a feasible incumbent; with timeout_score "
+                f"'{config.timeout_score}' {scored}.",
             )
         )
     left_out = [problem for problem in problems if problem not in blocks]

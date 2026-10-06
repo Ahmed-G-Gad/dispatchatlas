@@ -19,6 +19,11 @@ The analysis counts the last three as failures and never drops them: success
 rates divide by the planned runs, and value statistics score a failure as the
 worst possible value. Denominators are therefore fixed by the plan, and a
 solver cannot look better by failing on hard problems.
+
+A failed run whose last attempt was killed at its hard limit is a *killed*
+run, and may hold the last incumbent its search had reported. It stays a
+failed run in every count; an analysis that asks for it scores the run by
+that incumbent instead of the worst value.
 """
 
 from __future__ import annotations
@@ -32,7 +37,9 @@ from typing import Literal
 from dispatchatlas.campaigns.config import Protocol
 from dispatchatlas.campaigns.planning import Plan, PlannedProblem
 from dispatchatlas.campaigns.records import (
+    ErrorKind,
     FailureRecord,
+    Incumbent,
     Outcome,
     RunRecord,
     SessionRecord,
@@ -81,6 +88,28 @@ class Run:
     def succeeded(self) -> bool:
         """Whether the run completed with a feasible schedule."""
         return self.status == "succeeded"
+
+    @property
+    def killed(self) -> bool:
+        """Whether the run never completed and its last attempt was killed at its hard limit."""
+        return (
+            self.status == "failed"
+            and bool(self.failures)
+            and self.failures[-1].error.kind is ErrorKind.TIMEOUT
+        )
+
+    @property
+    def incumbent(self) -> Incumbent | None:
+        """The feasible incumbent a killed run held when it was killed, or ``None``.
+
+        The last candidate the run's search had reported, if the search
+        found it feasible. Its values are the solver's own: no schedule
+        exists to check them against.
+        """
+        if not self.killed:
+            return None
+        held = self.failures[-1].last_incumbent
+        return held if held is not None and held.feasible else None
 
     @property
     def outcome(self) -> Outcome | None:

@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from dispatchatlas.analysis.config import TimeoutScore
 from dispatchatlas.analysis.dataset import Dataset
 from dispatchatlas.analysis.deviation import DeviationRow
 from dispatchatlas.analysis.indicators import IndicatorReport
@@ -184,8 +185,20 @@ def to_latex(table: Table) -> str:
 # ------------------------------------------------------------------ builders
 
 
-def runs_table(dataset: Dataset) -> Table:
-    """Return one row per run of the dataset: its facts and every objective value."""
+def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table:
+    """Return one row per run of the dataset: its facts and every objective value.
+
+    A failed run names the kind of its last failed attempt. The column
+    ``scored_by`` says where the score of a run comes from: its ``result``,
+    the ``worst`` value, or, with ``timeout_score`` ``"incumbent"``, the
+    ``incumbent`` a run held when it was killed at its hard limit. The
+    objective columns of such a run hold the values of that incumbent.
+
+    Args:
+        dataset: The runs.
+        timeout_score: How the analysis the table belongs to scores a run
+            that was killed at its hard limit.
+    """
     objectives = dataset.objectives
     columns = (
         Column("run_id", "Run"),
@@ -195,6 +208,8 @@ def runs_table(dataset: Dataset) -> Table:
         Column("replicate", "Replicate", "count"),
         Column("seed", "Seed", "count"),
         Column("status", "Status"),
+        Column("failure", "Failure"),
+        Column("scored_by", "Scored by"),
         Column("stop_reason", "Stop reason"),
         Column("evaluations", "Evaluations", "count"),
         Column("iterations", "Iterations", "count"),
@@ -206,6 +221,9 @@ def runs_table(dataset: Dataset) -> Table:
     for run in dataset.runs:
         record = run.record
         outcome = None if record is None else record.outcome
+        held = run.incumbent if timeout_score == "incumbent" else None
+        source = "result" if run.succeeded else ("worst" if held is None else "incumbent")
+        failed = run.status == "failed" and bool(run.failures)
         rows.append(
             (
                 run.run_id,
@@ -215,12 +233,17 @@ def runs_table(dataset: Dataset) -> Table:
                 run.replicate,
                 run.seed,
                 run.status,
+                run.failures[-1].error.kind.value if failed else None,
+                source,
                 None if outcome is None else outcome.stop_reason.value,
                 None if outcome is None else outcome.evaluations,
                 None if outcome is None else outcome.iterations,
                 None if outcome is None else outcome.elapsed,
                 None if record is None else record.provenance.cpu_seconds,
-                *(run.value(name) for name in objectives),
+                *(
+                    run.value(name) if held is None else held.objectives.get(name)
+                    for name in objectives
+                ),
             )
         )
     return Table("runs", f"Runs of campaign {dataset.campaign}", columns, tuple(rows))
@@ -256,10 +279,15 @@ def cells_table(summary: Summary) -> Table:
         )
         for cell in summary.cells
     )
+    kept = (
+        ", or, for a run killed at its hard limit, as the feasible incumbent it held"
+        if summary.config.timeout_score == "incumbent"
+        else ""
+    )
     notes = (
         f"The score is the {summary.config.statistic} of every planned run, a run without a "
-        "feasible result counting as the worst value; the other statistics describe the "
-        "succeeded runs.",
+        f"feasible result counting as the worst value{kept}; the other statistics describe "
+        "the succeeded runs.",
     )
     return Table("cells", _title("Results per problem", summary), columns, rows, notes)
 
