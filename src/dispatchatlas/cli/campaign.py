@@ -41,6 +41,7 @@ from dispatchatlas.cli._common import (
     affinity,
     emit_fields,
     emit_json,
+    emit_table,
     existing_file,
     non_negative_integer,
     seconds,
@@ -83,6 +84,13 @@ def register(commands: Commands) -> None:
         action="store_true",
         help="list every problem and solver pair that is excluded, with the features the "
         "solver does not model, and every caveat, even when no pair remains",
+    )
+    validate.add_argument(
+        "--runs",
+        action="store_true",
+        help="list every planned run with its id, problem, solver, protocol, replicate, and "
+        "seed, as 'campaign run' would write them to plan.json; with --json, 'runs' is then "
+        "that list in place of its length",
     )
     estimated = add_command(
         group,
@@ -194,7 +202,8 @@ def _validate(arguments: argparse.Namespace) -> int:
             emit_json({"compatibility": compatibility.to_dict()})
         raise
     document: dict[str, Any] = planned.to_dict()
-    document["runs"] = len(planned.runs)
+    if not arguments.runs:
+        document["runs"] = len(planned.runs)
     if compatibility is not None:
         document["compatibility"] = compatibility.to_dict()
     if arguments.json:
@@ -207,7 +216,8 @@ def _validate(arguments: argparse.Namespace) -> int:
             ("problems", _counted([item.id for item in planned.problems], "problem")),
             ("solvers", _counted([item.name for item in planned.solvers], "solver")),
             ("protocols", "\n".join(_protocol(item) for item in document["protocols"])),
-            ("replicates", f"{campaign.replicates} per stochastic solver"),
+            ("replicates", _replicates(campaign)),
+            ("seeds", _seeds(campaign)),
             ("runs", len(planned.runs)),
             ("excluded", _count(len(planned.exclusions), "problem and solver pair")),
             ("caveats", "\n".join(_caveat(item) for item in planned.caveats) or "none"),
@@ -215,7 +225,38 @@ def _validate(arguments: argparse.Namespace) -> int:
             ("notes", "\n".join(fairness["notes"]) or "none"),
         ]
     )
+    if arguments.runs:
+        print()
+        emit_table(
+            ("run", "problem", "solver", "protocol", "replicate", "seed"),
+            [
+                (run.run_id, run.problem, run.solver, run.protocol, run.replicate, run.seed)
+                for run in planned.runs
+            ],
+        )
     return 0
+
+
+def _replicates(campaign: Campaign) -> str:
+    """Describe how many replicates each kind of solver of a campaign runs."""
+    timed = (
+        ", and per solver declared deterministic under a time limit"
+        if campaign.replicate_timed
+        else ""
+    )
+    own = "".join(
+        f"\n{solver.name}: {solver.replicates}"
+        for solver in campaign.solvers
+        if solver.replicates is not None
+    )
+    return f"{campaign.replicates} per stochastic solver{timed}{own}"
+
+
+def _seeds(campaign: Campaign) -> str:
+    """Describe what a campaign derives its run seeds from."""
+    if campaign.seed_namespace is None:
+        return f"derived from seed {campaign.seed}"
+    return f"derived from seed {campaign.seed} in namespace {campaign.seed_namespace}"
 
 
 def _print_compatibility(compatibility: Compatibility) -> None:

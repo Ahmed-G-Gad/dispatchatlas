@@ -309,3 +309,69 @@ def test_the_affinity_option_frees_a_campaign_from_its_processors(cli: Cli, tmp_
     assert "affinity" in refused.err
     assert cli("campaign", "replay", directory, "--backend", "sequential").code == 0
     assert cli("campaign", "replay", directory, "--affinity", "inherit").code == 0
+
+
+def test_validate_can_list_the_planned_runs_before_anything_runs(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path)
+    counted = cli("campaign", "validate", config, "--json").json()
+    # Two problems: one run of input order and two of random search on each.
+    assert counted["runs"] == 6
+    listed = cli("campaign", "validate", config, "--runs", "--json")
+    assert listed.code == 0
+    runs = listed.json()["runs"]
+    assert len(runs) == 6
+    assert all(
+        sorted(run) == ["problem", "protocol", "replicate", "run_id", "seed", "solver"]
+        for run in runs
+    )
+    assert len({run["run_id"] for run in runs}) == 6
+    shown = cli("campaign", "validate", config, "--runs")
+    assert shown.code == 0
+    assert "runs        6" in shown.out
+    assert "seeds       derived from seed 7" in shown.out
+    for run in runs:
+        (line,) = [line for line in shown.out.splitlines() if run["run_id"] in line]
+        assert line.split() == [
+            run["run_id"],
+            run["problem"],
+            run["solver"],
+            run["protocol"],
+            str(run["replicate"]),
+            str(run["seed"]),
+        ]
+    plain = cli("campaign", "validate", config)
+    assert not any(run["run_id"] in plain.out for run in runs)
+    # Nothing ran, and the runs listed are the ones a run then plans.
+    output = tmp_path / "runs"
+    assert not output.exists()
+    assert cli("campaign", "run", config, "--output", output, "--json").code == 0
+    stored = json.loads((output / "tiny" / "plan.json").read_text(encoding="utf-8"))
+    assert stored["runs"] == runs
+
+
+def test_validate_states_the_replication_and_the_seed_namespace(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path, solvers='id = "input-order"\nreplicates = 3')
+    text = config.read_text(encoding="utf-8")
+    plain = cli("campaign", "validate", config, "--json").json()
+    config.write_text(
+        text.replace(
+            "replicates = 2", 'replicates = 2\nreplicate_timed = true\nseed_namespace = "study-a"'
+        ).replace("stop = { max_evaluations = 10 }", "stop = { time_limit = 0.5 }"),
+        encoding="utf-8",
+    )
+    result = cli("campaign", "validate", config)
+    assert result.code == 0
+    assert (
+        "replicates  2 per stochastic solver, and per solver declared deterministic under a "
+        "time limit" in result.out
+    )
+    assert "input-order: 3" in result.out
+    assert "seeds       derived from seed 7 in namespace study-a" in result.out
+    assert "runs        6" in result.out
+    document = cli("campaign", "validate", config, "--runs", "--json").json()
+    assert document["replicate_timed"] is True
+    assert document["seed_namespace"] == "study-a"
+    assert document["solvers"][0]["replicates"] == 3
+    assert document["config_hash"] != plain["config_hash"]
+    assert plain["replicate_timed"] is False
+    assert plain["seed_namespace"] is None
