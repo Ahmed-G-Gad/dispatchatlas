@@ -110,8 +110,8 @@ class Measurement:
             executes, itself included. ``None`` for an attempt that was
             never handed over.
         waited_seconds: Seconds from the hand-over of the attempt to its
-            worker until the supervising process learned that the solve had
-            begun. ``None`` when the solve never began, and for the
+            worker's slot until the instant the worker states as the start
+            of the solve. ``None`` when the solve never began, and for the
             sequential backend.
     """
 

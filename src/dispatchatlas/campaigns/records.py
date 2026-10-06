@@ -432,8 +432,8 @@ class Provenance:
             to its worker: itself, the runs already executing, and the runs
             handed over with it. ``None`` when the record does not state it.
         waited_seconds: Seconds from the hand-over of the attempt to its
-            worker until the supervising process learned that the solve had
-            begun. They hold the start of the worker's interpreter and the
+            worker's slot until the instant the worker states as the start
+            of the solve. They hold the start of the worker's interpreter and the
             loading of plugins, for a worker that started for this attempt,
             and the rebuilding of the solver and the problem. ``None`` when
             the solve never began, for the sequential backend, and when the

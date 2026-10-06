@@ -213,18 +213,27 @@ of one campaign.
   plan keeps a note of it in its fairness assessment and stays fair.
 - **Hard time limits.** Stop criteria are cooperative, so the process
   backend gives every run whose protocol sets `time_limit` a hard limit of
-  `timeout_factor * time_limit + grace` seconds, counted from the moment its
-  worker reports that the solve begins. What comes before that moment is not
-  charged to the run: the start of the worker's interpreter and the loading
-  of plugins, for a worker that started for this run, and the rebuilding of
-  the solver and the problem. The provenance of the attempt records it as
-  `waited_seconds`. When the hard limit passes, the supervisor kills the
-  worker and records a timeout, and a fresh worker takes the next run.
+  `timeout_factor * time_limit + grace` seconds, counted from the instant its
+  worker states as the start of the solve. What comes before that instant is
+  not charged to the run: the start of the worker's interpreter and the
+  loading of plugins, for a worker that started for this run, and the
+  rebuilding of the solver and the problem. The provenance of the attempt
+  records it as `waited_seconds`, counted from the hand-over, before a fresh
+  worker exists. When the hard limit passes, the supervisor kills the worker
+  and records a timeout, and a fresh worker takes the next run. The
+  supervisor never waits for a worker to start: a starting worker gets its
+  run when it reports that it is ready, so the limits of the other runs are
+  enforced meanwhile.
 - **Start-up limit.** From the hand-over of a run, its worker has
-  `startup_limit` seconds, 120 by default, to begin the solve. A worker that
-  takes longer is killed, and the attempt is a start-up failure (`startup`):
-  a kind of its own, recoverable, and no timeout of the solver. The limit
+  `startup_limit` seconds, 120 by default, to begin the solve, whatever the
+  size of the problem it is sent. A worker that takes longer, or never
+  starts, is killed, and the attempt is a start-up failure (`startup`): a
+  kind of its own, recoverable, and no timeout of the solver. The limit
   applies to every run of the process backend, with or without a time limit.
+  With `retries = 0` a start-up failure settles its run like any other
+  failure; `--retry-failed` gives the run another attempt, and the
+  [analysis](analyzing.md#runs-failures-and-denominators) counts these runs
+  apart.
 - **What a kill reaches.** A kill ends the worker and every process the
   solver started: on POSIX systems through the worker's process group, on
   Windows through a job object that the supervisor creates for each worker.
@@ -239,15 +248,28 @@ of one campaign.
   worker forwards the incumbents of a solver that runs inside `Search`:
   every objective value, the feasibility, and the evaluations, iteration, and
   elapsed time at which the search found the incumbent. A timeout failure
-  holds the last one as `last_incumbent`. The values are the solver's own:
-  no schedule comes with them, so they are not checked as the result of a
-  completed run is. Reporting costs the search one call per improvement, on
-  the order of a microsecond, and the pipe at most one message every 0.25
-  seconds, however often the solver improves. A solver that does not run
-  inside `Search` reports nothing, and its timeout failure holds no
-  incumbent. The [analysis](analyzing.md#runs-failures-and-denominators) scores a killed
+  holds two of them. `last_incumbent` is the last one the run reported; a
+  solver that searches past its time limit may have found it after the
+  limit. `limit_incumbent` is what the run held when its time limit passed:
+  the last one found within `time_limit` seconds of the start of the solve.
+  The two are equal when the search did not improve after the limit. The
+  values are the solver's own: no schedule comes with them, so they are not
+  checked as the result of a completed run is. An incumbent leaves the
+  worker at once, from the thread of the search, when at least 0.25 seconds
+  have passed since the last report, so it is kept whatever the solver does
+  next. One found sooner after a report waits for the rest of the 0.25
+  seconds, and is missing from the record if the worker is killed before
+  then, or if the solver, right after finding it, enters a call that keeps
+  the interpreter lock until the kill. Reporting costs the search about half
+  a microsecond per improvement and, at most once every 0.25 seconds, one
+  computation of the incumbent's objective values and one message on the
+  pipe, however often the solver improves; the measured run time of a search
+  whose every evaluation improves is the same with and without it, within 2
+  percent. A solver that does not run inside `Search` reports nothing, and
+  its timeout failure holds no incumbent. The
+  [analysis](analyzing.md#runs-failures-and-denominators) scores a killed
   run as the worst value unless its setting `timeout_score` asks for the
-  incumbent.
+  incumbent, and then by `limit_incumbent` alone.
 - **Retries.** A failure is **terminal** when another attempt would fail the
   same way: a typed error of the library, such as an invalid configuration or
   a missing optional dependency, or a hard timeout. Any other exception, a
@@ -288,7 +310,8 @@ indentation, ASCII text, and a final newline.
   hard limit, the processor the worker was pinned to (`cpu`, null when it was
   not pinned), the runs executing when the run was handed to its worker
   (`concurrent`), and the seconds from that hand-over to the start of the
-  solve (`waited_seconds`, null for the sequential backend). A record that
+  solve (`waited_seconds`, null for the sequential backend), which hold the
+  start of a worker that started for the run. A record that
   lacks one of the three reads as null for it.
 - Its **result hash** is the SHA-256 of the outcome without the fields that
   measure wall time, and without the solver-specific extras. Nothing about the
@@ -300,8 +323,10 @@ indentation, ASCII text, and a final newline.
   whether it is terminal or recoverable. It says whether the solve had begun
   when the attempt ended (`solve_started`), and the record of a run killed
   at its hard limit holds the last incumbent its search had reported
-  (`last_incumbent`, null when it had reported none). A record that lacks
-  either field reads as null for it. The `wall_seconds` of an attempt that
+  (`last_incumbent`, null when it had reported none) and the last one it had
+  found within its time limit (`limit_incumbent`, null when it had found
+  none by then). A record that lacks one of the three fields reads as null
+  for it. The `wall_seconds` of an attempt that
   the engine ended count from the start of the solve, or from the hand-over
   when the solve never began.
 - A **session record** (`dispatchatlas.session/1`) holds the execution

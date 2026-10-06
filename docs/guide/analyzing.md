@@ -35,19 +35,32 @@ possible value, infinity for a minimised objective. Denominators are fixed by
 the plan, so a solver cannot look better by failing on hard problems.
 
 A failed run whose last attempt was killed at its hard limit may hold the
-last incumbent its search had reported (see
+incumbent its search had reported when its time limit passed (see
 [What a killed run keeps](campaigns.md#execution)). The setting
 `timeout_score` chooses its score. With `"worst"`, the default, it scores as
 the worst value, like any other failure. With `"incumbent"`, a killed run
-that held a feasible incumbent scores that incumbent's value in the cell
-scores, and so in the ranks, the omnibus and pairwise tests, and the
-comparison with baselines. The run stays a failed run: the success rates,
-the descriptive statistics of a cell, the deviation table, the indicators,
-and the figures count it as before. The value is the solver's own, with no
+that held a feasible incumbent at its time limit scores that incumbent's
+value in the cell scores, and so in the ranks, the omnibus and pairwise
+tests, and the comparison with baselines. Only that incumbent is scored
+(`limit_incumbent` in the failure record): what a search found after the
+time limit, in the seconds before the kill, is never a score, so a solver
+that ignores its time limit is compared on the same seconds as one that
+stops on time. The run stays a failed run: the success rates, the
+descriptive statistics of a cell, the deviation table, the indicators, and
+the figures count it as before. The value is the solver's own, with no
 schedule to check it against. Under either choice the limitations state how
-many runs were killed and how many of them held a feasible incumbent, and
-`runs.csv` names the last failure of every failed run (`failure`) and what
-every run is scored by (`scored_by`: `result`, `incumbent`, or `worst`).
+many runs were killed, how many of them held a feasible incumbent when their
+time limit passed, and how many reported an incumbent after it. `runs.csv`
+names the last failure of every failed run (`failure`) and what every run is
+scored by (`scored_by`: `result`, `incumbent`, or `worst`); the row of a run
+scored by its incumbent holds that incumbent's objective values, and in
+`evaluations` and `elapsed` when its search found it.
+
+A failed run whose last attempt ended at the start-up limit says nothing
+about its solver: its worker did not begin the solve in time. It counts as
+the worst value like any other failure, and a limitation of its own
+(`startup`) states how many runs it concerns. Running the campaign again
+with `--retry-failed` gives them another attempt.
 
 ## The statistical comparison
 
@@ -134,7 +147,7 @@ default:
 | `correction` | `"holm"` | `"none"`, `"bonferroni"`, `"holm"`, `"hochberg"`, `"shaffer"`, or `"finner"` |
 | `omnibus` | `"iman-davenport"` | the test that gates the Nemenyi test, or `"friedman"` |
 | `statistic` | `"mean"` | how replicates become one score; with `"median"`, failures decide the cell only when they reach half of the runs |
-| `timeout_score` | `"worst"` | how a run killed at its hard limit is scored: as the worst value, or with `"incumbent"` by the feasible incumbent it held |
+| `timeout_score` | `"worst"` | how a run killed at its hard limit is scored: as the worst value, or with `"incumbent"` by the feasible incumbent it held when its time limit passed |
 | `replicate_floor` | none | fewest replicates per cell of a stochastic solver; smaller cells are reported, not excluded |
 | `power` | `0.8` | target power of the detectable-effect statement |
 | `references` | none | a reference value per problem, for the relative deviation |
