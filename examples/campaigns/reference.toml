@@ -101,9 +101,13 @@ backend = "process"       # "process": supervised worker processes, with hard
                           # time limits; "sequential": in the calling process
 workers = "auto"          # worker processes, or "auto" for the processors
                           # minus one; must be 1 for the sequential backend
-timeout_factor = 1.5      # kill a run after timeout_factor * time_limit + grace
-                          # seconds; at least 1 (default 1.0)
+timeout_factor = 1.5      # kill a run timeout_factor * time_limit + grace
+                          # seconds after its solve begins; at least 1
+                          # (default 1.0)
 grace = 5.0               # seconds added to the hard limit (default 5.0)
+startup_limit = 120.0     # seconds a worker has, from the hand-over of a run,
+                          # to begin its solve; a slower start is a start-up
+                          # failure, which retries cover (default 120.0)
 retries = 1               # further attempts after a failure that may be
                           # transient (default 0)
 record_schedules = true   # store each run's best schedule in its record; its

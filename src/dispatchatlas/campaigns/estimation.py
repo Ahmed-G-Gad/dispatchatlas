@@ -1,12 +1,13 @@
 """Estimates: how many runs a campaign needs, and how long they can take.
 
-:func:`estimate` plans a campaign without running anything and bounds its
-duration from the protocols. A run whose protocol sets ``time_limit`` takes at
-most its hard limit when the process backend enforces one, and otherwise
-relies on the solver honouring the time limit. Every attempt may take that
-long, and a run gets up to ``1 + retries`` attempts. A run whose protocol
-bounds only evaluations or iterations has no duration bound, so those runs
-are counted apart.
+:func:`estimate` plans a campaign without running anything and bounds the
+duration of its solves from the protocols. The solve of a run whose protocol
+sets ``time_limit`` takes at most its hard limit when the process backend
+enforces one, and otherwise relies on the solver honouring the time limit.
+Every attempt may take that long, and a run gets up to ``1 + retries``
+attempts. The time a worker takes to begin a solve, which the start-up limit
+bounds, is not counted. A run whose protocol bounds only evaluations or
+iterations has no duration bound, so those runs are counted apart.
 """
 
 from __future__ import annotations
@@ -55,9 +56,9 @@ class Estimate:
         timed: Remaining runs whose protocol sets a time limit.
         untimed: Remaining runs without a time limit, whose duration has no bound.
         budget_seconds: Sum of the time limits of the timed runs.
-        worst_case_seconds: Sum of the longest time every attempt of every
-            timed run may take: its hard limit when enforced, else its time
-            limit, times ``1 + retries``.
+        worst_case_seconds: Sum of the longest time the solve of every
+            attempt of every timed run may take: its hard limit when
+            enforced, else its time limit, times ``1 + retries``.
     """
 
     planned: int

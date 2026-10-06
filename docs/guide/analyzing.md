@@ -34,6 +34,21 @@ by the planned runs, and value statistics score a failure as the worst
 possible value, infinity for a minimised objective. Denominators are fixed by
 the plan, so a solver cannot look better by failing on hard problems.
 
+A failed run whose last attempt was killed at its hard limit may hold the
+last incumbent its search had reported (see
+[What a killed run keeps](campaigns.md#execution)). The setting
+`timeout_score` chooses its score. With `"worst"`, the default, it scores as
+the worst value, like any other failure. With `"incumbent"`, a killed run
+that held a feasible incumbent scores that incumbent's value in the cell
+scores, and so in the ranks, the omnibus and pairwise tests, and the
+comparison with baselines. The run stays a failed run: the success rates,
+the descriptive statistics of a cell, the deviation table, the indicators,
+and the figures count it as before. The value is the solver's own, with no
+schedule to check it against. Under either choice the limitations state how
+many runs were killed and how many of them held a feasible incumbent, and
+`runs.csv` names the last failure of every failed run (`failure`) and what
+every run is scored by (`scored_by`: `result`, `incumbent`, or `worst`).
+
 ## The statistical comparison
 
 `summarize` analyses one protocol and one objective, the primary objective
@@ -58,6 +73,7 @@ unless the settings name another:
    stand the paired win share with a bootstrap interval, the mean advantage
    with a bootstrap interval, and Cohen's d_z (Carrasco et al. 2020).
 6. **Limitations.** What qualifies the results: failed or missing runs,
+   runs killed at their hard limit and how they are scored,
    problems left out of the ranks, too few shared problems for a paired test
    to reach significance, cells below a replicate floor, and tests that could
    not run.
@@ -118,6 +134,7 @@ default:
 | `correction` | `"holm"` | `"none"`, `"bonferroni"`, `"holm"`, `"hochberg"`, `"shaffer"`, or `"finner"` |
 | `omnibus` | `"iman-davenport"` | the test that gates the Nemenyi test, or `"friedman"` |
 | `statistic` | `"mean"` | how replicates become one score; with `"median"`, failures decide the cell only when they reach half of the runs |
+| `timeout_score` | `"worst"` | how a run killed at its hard limit is scored: as the worst value, or with `"incumbent"` by the feasible incumbent it held |
 | `replicate_floor` | none | fewest replicates per cell of a stochastic solver; smaller cells are reported, not excluded |
 | `power` | `0.8` | target power of the detectable-effect statement |
 | `references` | none | a reference value per problem, for the relative deviation |

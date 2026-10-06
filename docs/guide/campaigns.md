@@ -145,10 +145,11 @@ work in different solvers.
 ## Estimating
 
 `campaign estimate` counts the runs, by protocol and by solver, and bounds how
-long they can take. A run whose protocol sets `time_limit` takes at most its
-hard limit, and every attempt may take that long. A run bounded only by
-evaluations or iterations has no duration bound, so those runs are counted
-apart. With `--output`, runs already completed there are left out.
+long their solves can take. The solve of a run whose protocol sets
+`time_limit` takes at most its hard limit, and every attempt may take that
+long; the time a worker needs to begin a solve is not counted. A run bounded
+only by evaluations or iterations has no duration bound, so those runs are
+counted apart. With `--output`, runs already completed there are left out.
 
 ## Execution
 
@@ -212,22 +213,55 @@ of one campaign.
   plan keeps a note of it in its fairness assessment and stays fair.
 - **Hard time limits.** Stop criteria are cooperative, so the process
   backend gives every run whose protocol sets `time_limit` a hard limit of
-  `timeout_factor * time_limit + grace` seconds, counted from the moment the
-  run is handed to its worker. When it passes, the supervisor kills the worker
-  and records a timeout, and a fresh worker takes the next run. On POSIX
-  systems the kill reaches every process the solver started.
+  `timeout_factor * time_limit + grace` seconds, counted from the moment its
+  worker reports that the solve begins. What comes before that moment is not
+  charged to the run: the start of the worker's interpreter and the loading
+  of plugins, for a worker that started for this run, and the rebuilding of
+  the solver and the problem. The provenance of the attempt records it as
+  `waited_seconds`. When the hard limit passes, the supervisor kills the
+  worker and records a timeout, and a fresh worker takes the next run.
+- **Start-up limit.** From the hand-over of a run, its worker has
+  `startup_limit` seconds, 120 by default, to begin the solve. A worker that
+  takes longer is killed, and the attempt is a start-up failure (`startup`):
+  a kind of its own, recoverable, and no timeout of the solver. The limit
+  applies to every run of the process backend, with or without a time limit.
+- **What a kill reaches.** A kill ends the worker and every process the
+  solver started: on POSIX systems through the worker's process group, on
+  Windows through a job object that the supervisor creates for each worker.
+  Where Windows refuses the job object, for example on a version without
+  nested jobs when the supervisor is in a job itself, a warning says so and
+  a kill reaches the worker alone. A worker also ends itself when its
+  supervising process is gone, so no worker of a killed session computes
+  beside a resumed one. A worker inside a native extension that keeps the
+  interpreter lock ends when the extension returns; on Windows the job
+  object ends it at once.
+- **What a killed run keeps.** While a run with a hard limit executes, its
+  worker forwards the incumbents of a solver that runs inside `Search`:
+  every objective value, the feasibility, and the evaluations, iteration, and
+  elapsed time at which the search found the incumbent. A timeout failure
+  holds the last one as `last_incumbent`. The values are the solver's own:
+  no schedule comes with them, so they are not checked as the result of a
+  completed run is. Reporting costs the search one call per improvement, on
+  the order of a microsecond, and the pipe at most one message every 0.25
+  seconds, however often the solver improves. A solver that does not run
+  inside `Search` reports nothing, and its timeout failure holds no
+  incumbent. The [analysis](analyzing.md#runs-failures-and-denominators) scores a killed
+  run as the worst value unless its setting `timeout_score` asks for the
+  incumbent.
 - **Retries.** A failure is **terminal** when another attempt would fail the
   same way: a typed error of the library, such as an invalid configuration or
-  a missing optional dependency, or a hard timeout. Any other exception, and a
-  worker that dies, is **recoverable**. A run gets up to `1 + retries`
+  a missing optional dependency, or a hard timeout. Any other exception, a
+  worker that dies, and a worker that does not begin the solve within the
+  start-up limit are **recoverable**. A run gets up to `1 + retries`
   attempts, until a terminal failure or the last attempt settles it.
 - **What each attempt checks.** Every schedule a solver returns is checked
   with `check_schedule`, and every objective is computed again from the
   schedule, so a record never relies on the solver's own claims. The
   measurements cover the solve alone: wall time, CPU time, and on Linux the
   peak resident memory. Each attempt also records the processor its worker
-  was pinned to, and how many runs were executing when it was handed to its
-  worker, itself included.
+  was pinned to, how many runs were executing when it was handed to its
+  worker, itself included, and how long it then waited for its solve to
+  begin.
 
 ## Storage layout
 
@@ -252,15 +286,24 @@ indentation, ASCII text, and a final newline.
   end]` rows, unless `record_schedules` is false; and the provenance of the
   attempt: session, attempt number, worker, times, CPU seconds, peak memory,
   hard limit, the processor the worker was pinned to (`cpu`, null when it was
-  not pinned), and the runs executing when the run was handed to its worker
-  (`concurrent`). A record that states neither reads as null for both.
+  not pinned), the runs executing when the run was handed to its worker
+  (`concurrent`), and the seconds from that hand-over to the start of the
+  solve (`waited_seconds`, null for the sequential backend). A record that
+  lacks one of the three reads as null for it.
 - Its **result hash** is the SHA-256 of the outcome without the fields that
   measure wall time, and without the solver-specific extras. Nothing about the
   machine or the session enters it, so a replay on any machine compares
   results directly, and a record edited after it was written fails the
   comparison with its hash.
-- A **failure record** (`dispatchatlas.failure/1`) holds the error, its kind,
-  and whether it is terminal or recoverable.
+- A **failure record** (`dispatchatlas.failure/1`) holds the error, its kind
+  (`exception`, `timeout`, `startup`, `worker-exit`, or `transfer`), and
+  whether it is terminal or recoverable. It says whether the solve had begun
+  when the attempt ended (`solve_started`), and the record of a run killed
+  at its hard limit holds the last incumbent its search had reported
+  (`last_incumbent`, null when it had reported none). A record that lacks
+  either field reads as null for it. The `wall_seconds` of an attempt that
+  the engine ended count from the start of the solve, or from the hand-over
+  when the solve never began.
 - A **session record** (`dispatchatlas.session/1`) holds the execution
   settings, the counts, and the environment: Python, the operating system and
   machine, the processor and memory, the indices of the processors the

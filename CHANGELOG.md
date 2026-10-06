@@ -65,6 +65,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `campaign run` and `campaign replay` take `--affinity`; and the sequential
   backend, which has no workers, accepts neither a pinning nor a
   `threads_per_worker` other than 1.
+- The hard limit of a run counts from the moment its worker reports that the
+  solve begins. Until then the run is under the execution key
+  `startup_limit`, 120 seconds by default, whose expiry is a recoverable
+  failure of the kind `startup`, and the provenance of an attempt states the
+  wait as `waited_seconds`. A run killed at its hard limit keeps the last
+  incumbent its search reported, as `last_incumbent` in its failure record,
+  which also says whether the solve had begun (`solve_started`). The analysis
+  setting `timeout_score` scores such a run as the worst value or by that
+  incumbent; the runs table says what every run is scored by, and the
+  limitations count the killed runs. A kill ends every process the solver
+  started, on Windows through a job object for each worker, and a worker ends
+  itself when its supervising process is gone.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
