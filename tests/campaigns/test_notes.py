@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import replace
@@ -10,12 +11,15 @@ from typing import Any
 
 import pytest
 
+from dispatchatlas.analysis import load_dataset
+from dispatchatlas.analysis.tables import runs_table
 from dispatchatlas.campaigns import (
     Campaign,
     Protocol,
     SolverSpec,
     Verdict,
     plan,
+    read_plan,
     read_runs,
     replay,
     run,
@@ -29,6 +33,7 @@ from dispatchatlas.campaigns.execution import (
     observe,
 )
 from dispatchatlas.campaigns.records import ProblemRef, Provenance, RunRecord
+from dispatchatlas.campaigns.store import run_path
 from dispatchatlas.core import SerializationError, Solver, StopCriteria, StopReason, problem_digest
 from dispatchatlas.core.solver import TracePoint
 from dispatchatlas.solvers import default_registry
@@ -169,6 +174,26 @@ def test_records_without_notes_still_load() -> None:
         document["notes"] = malformed
         with pytest.raises(SerializationError, match="note"):
             RunRecord.from_dict(document)
+
+
+def test_a_directory_whose_records_lack_notes_resumes_analyses_and_replays(tmp_path: Path) -> None:
+    campaign = tiny_campaign(replicates=1)
+    summary = run(campaign, tmp_path, registry=REGISTRY)
+    for item in read_plan(summary.directory).runs:
+        path = run_path(summary.directory, item.solver, item.problem, item.replicate, item.protocol)
+        document = json.loads(path.read_text())
+        del document["notes"]
+        path.write_text(json.dumps(document))
+    again = run(campaign, tmp_path, registry=REGISTRY)
+    assert (again.attempted, again.completed) == (0, summary.completed)
+    records = read_runs(summary.directory)
+    assert len(records) == summary.completed
+    assert all(record.notes == () for record in records)
+    assert replay(campaign, tmp_path, registry=REGISTRY).ok
+    table = runs_table(load_dataset(summary.directory))
+    assert len(table.rows) == summary.completed
+    wall = [column.key for column in table.columns].index("wall_seconds")
+    assert all(isinstance(row[wall], float) for row in table.rows)
 
 
 def _document(completion: Completion, **changes: Any) -> dict[str, Any]:
