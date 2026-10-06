@@ -92,8 +92,8 @@ def pinning_refusal() -> str | None:
     if sys.platform == "win32":
         if _windows_mask() is None:
             return (
-                "the processors of this machine form several processor groups, which one "
-                "affinity mask cannot describe"
+                "one affinity mask does not describe this process, as on a machine whose "
+                "processors form several processor groups"
             )
     elif getattr(os, "sched_setaffinity", None) is None:
         return "this platform has no call that confines a process to a processor"
