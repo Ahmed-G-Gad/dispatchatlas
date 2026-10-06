@@ -42,6 +42,8 @@ JSON, `null` stands for an absent optional value.
 | `solvers` | yes | one or more solvers |
 | `protocols` | yes | one or more stopping protocols |
 | `replicates` | no | runs per stochastic solver, problem, and protocol; default 30 |
+| `replicate_timed` | no | `true` gives a solver declared deterministic every replicate under a protocol that sets a time limit; default `false` |
+| `seed_namespace` | no | a name that separates the run seeds of this campaign from those of campaigns with the same `seed`; default none |
 | `objectives` | no | objectives, primary first, that replace those every problem declares |
 | `execution` | no | how to run, see [Execution](#execution) |
 | `metadata` | no | free annotations kept with the results |
@@ -66,20 +68,43 @@ source are the family's own; the others keep their defaults.
 ### Solvers and protocols
 
 A solver entry has an `id` from the solver registry, optional `parameters`,
-and an optional `label`. The label names the entry in results and tables, so
-two settings of one solver can compete in one campaign. Parameters are checked
-against the solver when the campaign is planned.
+an optional `label`, and an optional `replicates`. The label names the entry
+in results and tables, so two settings of one solver can compete in one
+campaign. Parameters are checked against the solver when the campaign is
+planned. `replicates`, an integer of at least 1, is the number of runs of
+this solver per problem and protocol, in place of the count the campaign
+would give it (see [Planning](#planning)).
 
 A protocol has a `name` and a `stop` table with the fields of `StopCriteria`:
-`time_limit`, `max_evaluations`, `max_iterations`, `target`, and `patience`.
-Every protocol must set a time, evaluation, or iteration limit.
+`time_limit`, `max_evaluations`, `max_iterations`, `target`, `patience`, and
+`schedule`. Every protocol must set a time, evaluation, or iteration limit.
+
+`schedule` ends no run. It states which clock a solver's parameter schedule
+follows, such as an exploration rate that falls over the run. Such a solver
+asks how far through its budget the run is, and the answer is the largest
+spent fraction among the limits the setting counts:
+
+| `schedule` | Limits counted | Consequence |
+| --- | --- | --- |
+| `"deterministic"`, the default | the evaluation and iteration limits; the time limit only when it is the only limit | under an evaluation or iteration limit the schedule is the same on every machine and replays exactly, and it stops short of its end when the time limit ends the run first |
+| `"binding"` | every limit that is set | the schedule reaches its end at whichever limit ends the run, and under a time limit its position at a given evaluation depends on the speed and load of the machine, so no run of an iterative solver replays |
+
+With the time limit as the only limit, both settings follow the elapsed time.
+A solver that follows a schedule records in the `extras` of its outcome
+`schedule_clock`, the limit that places the end of the run on the schedule
+(`evaluations`, `iterations`, or `time`), and `schedule_progress`, that place
+between 0 and 1. A value below 1 says the schedule did not reach its end.
 
 ### The config hash
 
 The **config hash** identifies an experiment: the SHA-256 digest of the
 canonical JSON of the fields that determine the results, `seed`, `instances`,
 `solvers`, `protocols`, `replicates`, and `objectives`, as written, so
-reordering a list changes it too. The campaign `id` only names the directory,
+reordering a list changes it too. The optional settings `replicate_timed`,
+`seed_namespace`, a solver's `replicates`, and a protocol's `schedule` enter
+it only when they are set to other than their default, so a campaign file
+that sets none of them has the config hash, the seeds, and the run ids it has
+without them. The campaign `id` only names the directory,
 and `execution` and `metadata` never change a result, so they stay outside
 the hash. The locations of instance files and directories stay outside it
 too: a problem read from a file is identified by the digest of its content,
@@ -90,11 +115,26 @@ identity when its files move, or live elsewhere on another machine.
 
 `campaign validate` reads the file, loads every problem, checks every solver
 id and parameter, and expands the grid problem × solver × protocol ×
-replicate into planned runs, without running any.
+replicate into planned runs, without running any. With `--runs` it lists every
+planned run with its id, problem, solver, protocol, replicate, and seed, the
+ones `campaign run` then writes to `plan.json`; with `--json` as well, `runs`
+is that list in place of the number of runs.
 
 - **Replicates.** A stochastic solver runs `replicates` times per problem and
-  protocol, as replicates 0, 1, and so on. A deterministic solver runs once,
-  as replicate 0.
+  protocol, as replicates 0, 1, and so on. A solver declared deterministic
+  runs once, as replicate 0. Where a time limit ends its run, though, the
+  result depends on the speed and load of the machine, and one run does not
+  show by how much. With `replicate_timed = true`, such a solver runs every
+  replicate under each protocol that sets a time limit, and still once under
+  the others. A solver that ignores the time limit then repeats one result.
+  Without the key, the plan notes the solvers it concerns (see
+  [Fair comparison](#fair-comparison)).
+- **A solver's own count.** A solver entry with `replicates` runs that many
+  times under every protocol, whatever it declares. It is the way to give
+  several runs to a solver that is declared deterministic and is not under
+  its parameters, such as an exact solver with several threads, and to give
+  one run to a solver that ignores the clock in a campaign with
+  `replicate_timed`.
 - **Run ids.** `run-` and the first 16 hexadecimal digits of the SHA-256 of
   the config hash, the problem id and digest, the solver id, label, and
   parameters, the protocol name, and the replicate. Equal campaigns give
@@ -119,6 +159,19 @@ first replicate of every solver on a problem shares one seed, the second
 another, and so on. Adding, removing, or reordering solvers never changes a
 seed, so a campaign can grow a solver without rerunning the others.
 
+Two campaigns with the same `seed` give the same seed to a problem they
+share. To keep their random streams apart, as for a tuning study and the
+comparison that follows it, give each a `seed_namespace`. The root of the
+derivation is then
+
+```text
+derive_seed(seed, "namespace:" + seed_namespace)
+```
+
+in place of `seed`, so two campaigns that differ only in namespace share no
+run seed, and each stays paired within itself. The namespace is part of the
+config hash. Without one, every seed is the one above.
+
 ## Fair comparison
 
 Solvers are compared fairly when, under each protocol, every one of them runs
@@ -140,8 +193,30 @@ stop criteria: `equal-wall-clock` (`time_limit`), `equal-evaluations`
 algorithms: it does not depend on the machine, and runs stopped by it replay
 exactly. Wall-clock budgets depend on the speed and load of the machine, and
 runs they stop cannot be replayed; neither can any run of an iterative
-solver under a protocol whose only bound is its time limit. An iteration
-means a different amount of work in different solvers.
+solver under a protocol whose only bound is its time limit, or whose
+`schedule` is `"binding"` beside a time limit. An iteration means a different
+amount of work in different solvers.
+
+The assessment also carries **notes**: facts that break none of these rules
+and that a reader of the comparison needs. The planner logs each as a
+warning, `campaign validate` prints them, `plan.json` stores them, and the
+analysis reports those of the analysed protocol as limitations. Both concern
+protocols with a time limit: solvers whose `threads` differ (see
+[Execution](#execution)), and solvers declared deterministic that run once
+although the campaign has more replicates, unless the solver entry states its
+own `replicates`.
+
+A fair plan does not make the runs comparable by itself. Under one protocol, a
+solver that stops for lack of improvement spends less than the budget another
+uses up to its time limit, and a solver that honours no deadline spends more.
+`dispatchatlas.campaigns.fairness.assess_outcomes(plan, records)` compares the
+records of the completed runs with the plan, protocol by protocol: how many
+runs of each iterative solver ended for each stop reason, whether those
+reasons diverge, and which solvers' runs took more wall time than the time
+limit allows. A divergence qualifies a comparison and does not refuse it,
+since a reached target or a proof of optimality is a legitimate end. The
+analysis reports both as limitations (see
+[Analyzing campaigns](analyzing.md)).
 
 ## Estimating
 
@@ -354,8 +429,9 @@ of one campaign.
 ```text
 <output>/<campaign id>/
     campaign.json      the campaign document, its base directory, and its config hash
-    plan.json          the plan, with the parities and the fairness assessment
+    plan.json          the plan, with the parities, the fairness assessment, and its digest
     sessions/<n>.json  one record per invocation of the runner, with its environment
+                       and the runs that left or entered the plan
     runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
     failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
     .lock              held while a runner works on the campaign
@@ -414,7 +490,12 @@ indentation, ASCII text, and a final newline.
   variable in the launching environment (`threads`, null when unset), the
   versions of DispatchAtlas, NumPy, and the installed backends, and the git
   commit when the source or the working directory is a checkout. It records
-  no host or user name.
+  no host or user name. It also holds `plan_digest`, the digest of the run
+  ids of the plan the session executed, which `plan.json` states as
+  `runs_digest`, and `plan_left` and `plan_entered`, the runs by which that
+  plan differs from the one the directory held before under the same config
+  hash (see [Resuming](#resuming)). A record without these fields reads as
+  one that states no digest and no change.
 
 `read_campaign`, `read_plan`, `read_runs`, `read_failures`, and
 `read_sessions` read these files back as typed records.
@@ -439,6 +520,15 @@ therefore loses at most the runs that were in progress.
 - A directory that holds results of another configuration is refused;
   `--fresh` discards its records first. Give a changed experiment a new `id`
   to keep both.
+- The plan is built again in every session, and it follows more than the
+  campaign file: the metadata the registered solvers declare, the content of
+  the problems, and the library that plans. When the new plan differs from
+  the one the directory holds under the same config hash, the runner warns
+  with the number of runs that left the plan and that entered it and names
+  the first of each, and the session record stores all of them in
+  `plan_left` and `plan_entered`, beside the `plan_digest` of the new plan.
+  The records of runs that left stay in the directory and are no longer
+  read. Two sessions with equal `plan_digest` executed the same set of runs.
 
 ## Replaying
 
@@ -453,7 +543,8 @@ every run of an iterative solver under a protocol whose only bound is its
 time limit, whatever stopped it: without an evaluation or iteration limit a
 search places itself on its schedule by the elapsed time, so a run that
 stopped at a target or for lack of improvement also depended on the
-machine. A solver that is not iterative, such as a priority rule, follows
+machine. The same holds under any time limit when the protocol's `schedule`
+is `"binding"`. A solver that is not iterative, such as a priority rule, follows
 no schedule, and its completed run is replayed under any protocol. `--run`
 replays selected runs only, and the exit code is 1 when a run does not
 reproduce.

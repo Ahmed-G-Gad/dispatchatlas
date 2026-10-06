@@ -112,6 +112,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clock (`clock`), and count the failed runs by solver and kind of error,
   with what each kind means. A run of an iterative solver under a protocol
   whose only bound is its time limit is not replayed, whatever stopped it.
+- Plans replicate what depends on the clock. The campaign key
+  `replicate_timed` gives a solver declared deterministic every replicate
+  under a protocol that sets a time limit, and a solver entry may carry its
+  own `replicates`. Without the key, the plan notes the solvers declared
+  deterministic that run once under a time limit. The campaign key
+  `seed_namespace` separates the run seeds of campaigns that share a seed.
+  The stop criteria state in the field `schedule` which clock a parameter
+  schedule follows, `"deterministic"` or `"binding"`, and a solver that
+  follows one records `schedule_clock` and `schedule_progress` in the extras
+  of its result; under a time limit with `"binding"`, a run of an iterative
+  solver is not replayed. Each of these settings enters the config hash only
+  when it is set to other than its default, so a campaign file without them
+  keeps its config hash, seeds, and run ids.
+- `dispatchatlas.campaigns.fairness.assess_outcomes` compares the completed
+  runs of a campaign with its plan: for each protocol, the stop reasons of
+  the iterative solvers' runs, whether they diverge, and the solvers whose
+  runs took more wall time than the time limit allows. The analysis reports
+  divergent stop reasons (`stop-reasons`) and the notes of the plan on the
+  analysed protocol (`plan`) as limitations.
+- `campaign validate --runs` lists every planned run with its id and seed
+  before anything runs. A plan written over one of the same config hash
+  names, in a warning, the runs that left it and the runs that entered it,
+  and the session record keeps them (`plan_left`, `plan_entered`) with the
+  digest of the plan's run ids (`plan_digest`), which `plan.json` states as
+  `runs_digest`.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

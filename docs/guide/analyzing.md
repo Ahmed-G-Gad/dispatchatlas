@@ -131,6 +131,29 @@ set-up has the whole time limit for its search, so the time limit and the
 elapsed times of the two groups may not measure the same thing. A directory
 whose records all state it, or none, has no such limitation.
 
+### The plan's notes and the stop reasons
+
+Two more limitations come from the fairness assessment of the campaign (see
+[Fair comparison](campaigns.md#fair-comparison)). Each `plan` limitation is a
+note of the plan on the analysed protocol and solvers: solvers whose `threads`
+differ under a time limit, and solvers declared deterministic that run once
+under a time limit although the campaign has more replicates. The result of
+such a run depends on the machine wherever the time limit ends it, and its
+single run cannot show the spread that the replicates of the other solvers
+show; `replicate_timed = true` in the campaign file gives it every replicate.
+
+`stop-reasons` appears when the completed runs of the iterative solvers ended
+for more than one reason under the analysed protocol, and counts each
+solver's runs by reason, for example `hill-climbing 14 stagnation, 6
+time-limit; random-search 20 time-limit`. A run that stopped for lack of
+improvement did not use the time or the evaluations that a run stopped at its
+limit used, so the protocol did not bound the two alike. The patience of a
+protocol counts iterations, which each solver defines, and exact solvers
+ignore it. The runs are compared as they are. The `budget` counts and these
+come from one function,
+`dispatchatlas.campaigns.fairness.assess_outcomes(plan, records)`, which
+returns them for every protocol of a campaign.
+
 ## The statistical comparison
 
 `summarize` analyses one protocol and one objective, the primary objective
@@ -157,6 +180,8 @@ unless the settings name another:
 6. **Limitations.** What qualifies the results: failed or missing runs,
    with the failed ones by solver and kind of error,
    runs killed at their hard limit and how they are scored,
+   what the plan notes on the protocol, stop reasons that differ among the
+   runs of the iterative solvers,
    completed runs whose wall time passed their time limit, the processor
    share and the concurrency the runs of a timed protocol executed under,
    problems left out of the ranks, too few shared problems for a paired test

@@ -86,6 +86,10 @@ A `SolveResult` holds:
 | `target` | once a feasible schedule reaches that value of the primary objective or better |
 | `patience` | after that many iterations without improvement |
 
+A sixth field, `schedule`, ends no run: it states which clock a parameter
+schedule follows, `"deterministic"` by default or `"binding"` (see
+[Determinism and seeds](#determinism-and-seeds)).
+
 **Iterative** solvers, those that run until a criterion fires, need at least
 one of the three limits `time_limit`, `max_evaluations`, and `max_iterations`,
 and raise `SolverError` without one. Each of them works with any single one of
@@ -175,8 +179,17 @@ random state. Hence:
 - Deterministic solvers ignore the seed.
 - Solvers whose parameters follow a schedule over the run, such as a falling
   inertia weight or a shrinking population, read `Search.progress()`: the
-  fraction of the binding limit spent. When an evaluation or iteration limit
-  is set, the time limit plays no part in it, so the schedule replays exactly.
+  fraction of the binding limit spent. Which limits count is the `schedule`
+  field of the stop criteria. With `"deterministic"`, the default, the time
+  limit plays no part when an evaluation or iteration limit is set, so the
+  schedule replays exactly, and it stops short of its end when the time limit
+  ends the run first. With `"binding"`, every set limit counts: the schedule
+  reaches its end at whichever limit ends the run, and under a time limit the
+  run depends on the machine. With the time limit as the only limit, both
+  follow the elapsed time. Such a solver records in the `extras` of its
+  result `schedule_clock`, the limit that places the end of the run on the
+  schedule (`evaluations`, `iterations`, or `time`), and `schedule_progress`,
+  that place between 0 and 1.
 - `cp-sat` is deterministic with its default single worker and without a time
   limit.
 

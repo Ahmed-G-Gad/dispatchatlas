@@ -9,15 +9,18 @@ separately, how to execute it:
 - ``protocols``: named stop criteria. Every solver runs under every protocol
   with the same criteria, so each protocol is one fair comparison;
 - ``replicates``: runs per stochastic solver, problem, and protocol.
-  Deterministic solvers run once;
-- ``seed``: the root of every run seed;
+  Deterministic solvers run once, unless ``replicate_timed`` gives them every
+  replicate under a time limit or their entry states its own count;
+- ``seed``: the root of every run seed, and ``seed_namespace``, an optional
+  name that separates the seeds of campaigns that share a root;
 - ``objectives``: objectives that replace those the problems declare, if given;
 - ``execution`` and ``metadata``: how to execute, and free annotations.
 
 The **config hash** identifies an experiment. It is the SHA-256 digest of the
 canonical JSON of :meth:`Campaign.identity`: the fields ``seed``,
 ``instances``, ``solvers``, ``protocols``, ``replicates``, and ``objectives``
-as written, so reordering a list also changes it. Three things stay outside
+as written, so reordering a list also changes it, and each optional setting
+that is set to other than its default. Three things stay outside
 it. The campaign ``id`` only names where the results are stored.
 ``execution`` and ``metadata`` do not change what a run computes. And the
 locations of instance files and directories are left out of ``instances``:
