@@ -30,6 +30,9 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    with the failed ones by solver and kind of error,
    runs whose worker did not begin the solve in time,
    runs killed at their hard limit and how they are scored,
+   what the plan notes on the protocol, such as solvers declared
+   deterministic that run once under a time limit,
+   stop reasons that differ among the runs of the iterative solvers,
    completed runs whose wall time passed the time limit of the protocol,
    the processor share and the concurrency the runs of a protocol with a
    time limit executed under,
@@ -80,6 +83,8 @@ from dispatchatlas.analysis.stats.nonparametric import (
 )
 from dispatchatlas.analysis.stats.power import attainable_floor
 from dispatchatlas.analysis.stats.ranks import Sense, oriented_ranks, rank_block, ties
+from dispatchatlas.campaigns import fairness
+from dispatchatlas.campaigns.fairness import ProtocolOutcomes
 from dispatchatlas.core.errors import ConfigError
 
 __all__ = ["summarize"]
@@ -514,7 +519,12 @@ def _design_limitations(
                 "runs reported an incumbent after their time limit, which no score uses.",
             )
         )
-    found.extend(_time_limitations(scope, config))
+    records = [run.record for run in scope.dataset.runs if run.record is not None]
+    outcomes = fairness.assess_outcomes(
+        scope.dataset.plan, records, overrun_tolerance=config.overrun_tolerance
+    ).protocol(scope.protocol)
+    found.extend(_fairness_limitations(scope, outcomes))
+    found.extend(_time_limitations(scope, config, outcomes))
     left_out = [problem for problem in problems if problem not in blocks]
     if left_out and len(scope.dataset.solvers) > 1:
         found.append(
@@ -604,11 +614,48 @@ def _failure_kinds(dataset: Dataset) -> tuple[str, str]:
     return breakdown, f"What each kind means: {meanings}."
 
 
-def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
+def _fairness_limitations(scope: Scope, outcomes: ProtocolOutcomes) -> list[Limitation]:
+    """Report what the plan notes on the protocol and how its runs ended.
+
+    Each ``plan`` limitation is a note of the plan's fairness assessment on
+    the analysed protocol and solvers, such as solvers declared deterministic
+    that run once under a time limit. The ``stop-reasons`` limitation counts,
+    for each iterative solver, the completed runs by the reason they ended
+    for, when those reasons differ within the protocol.
+    """
+    found: list[Limitation] = []
+    selected = [entry.name for entry in scope.dataset.solvers]
+    protocol = scope.dataset.protocol(scope.protocol)
+    found.extend(
+        Limitation("plan", note[0].upper() + note[1:] + ".")
+        for note in fairness.notes(scope.dataset.plan, protocol, selected)
+    )
+    if outcomes.divergent:
+        counted = "; ".join(
+            f"{name} " + ", ".join(f"{count} {reason}" for reason, count in reasons.items())
+            for name, reasons in outcomes.stop_reasons.items()
+        )
+        found.append(
+            Limitation(
+                "stop-reasons",
+                f"Under protocol {scope.protocol}, the completed runs of the iterative solvers "
+                f"ended for different reasons: {counted}. Runs that ended for different "
+                "reasons did not spend the same budget, in one solver or across several, so "
+                "the protocol did not bound them alike; their results are compared as they "
+                "are.",
+            )
+        )
+    return found
+
+
+def _time_limitations(
+    scope: Scope, config: AnalysisConfig, outcomes: ProtocolOutcomes
+) -> list[Limitation]:
     """Compare the completed runs of a protocol with a time limit against that limit.
 
     The ``budget`` limitation names the solvers whose completed runs took
-    more wall time than the limit allows with ``overrun_tolerance``. The
+    more wall time than the limit allows with ``overrun_tolerance``, as the
+    assessment of the outcomes counts them. The
     ``clock`` limitation counts the completed runs whose records state that
     the solver's clock started at the start of the attempt, when only some
     of them do. The
@@ -623,20 +670,10 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
     if limit is None or not completed:
         return []
     found: list[Limitation] = []
-    allowed = limit * (1.0 + config.overrun_tolerance)
-    late: list[str] = []
-    for entry in scope.dataset.solvers:
-        walls = [
-            run.record.provenance.wall_seconds
-            for run in completed
-            if run.solver == entry.name and run.record is not None
-        ]
-        over = [wall for wall in walls if wall > allowed]
-        if over:
-            late.append(
-                f"{entry.name} in {len(over)} of {len(walls)} "
-                f"(up to {max(over) / limit:.3g} times the limit)"
-            )
+    late = [
+        f"{name} in {item.over} of {item.runs} (up to {item.worst:.3g} times the limit)"
+        for name, item in outcomes.overruns.items()
+    ]
     if late:
         found.append(
             Limitation(

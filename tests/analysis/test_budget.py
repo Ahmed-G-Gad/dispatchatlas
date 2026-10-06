@@ -110,7 +110,8 @@ def _timed(
             )
             record = replace(record, protocol=protocol, provenance=provenance)
         runs.append(replace(item, record=record))
-    return replace(dataset, runs=tuple(runs), protocols=(protocol,))
+    plan = replace(dataset.plan, protocols=(protocol,))
+    return replace(dataset, plan=plan, runs=tuple(runs), protocols=(protocol,))
 
 
 CELLS = {"a": {"p1": [5.0, 5.0], "p2": [5.0, 5.0]}, "b": {"p1": [6.0, 6.0], "p2": [6.0, 6.0]}}
