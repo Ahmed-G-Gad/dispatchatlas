@@ -17,6 +17,9 @@ The families follow common conventions, which these helpers implement:
   :func:`check_per_item`.
 - **Integers computed from floats** tolerate rounding error:
   :func:`floor_tolerant`, :func:`ceil_tolerant`, and :func:`round_half_up`.
+- **Readers onto a continuum platform** choose the nodes that may run tasks
+  from the same ``tiers`` argument and refuse the same values:
+  :func:`eligible_nodes`.
 
 The module is private to :mod:`dispatchatlas.benchmarks`. Its names have no
 leading underscore because the modules of the package import them.
@@ -27,11 +30,14 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dispatchatlas.core.errors import ModelError
-from dispatchatlas.core.model import Scalar
+from dispatchatlas.core.model import Resource, Scalar
 from dispatchatlas.core.objectives import is_registered
+
+if TYPE_CHECKING:
+    from dispatchatlas.benchmarks.continuum.platform import Platform
 
 __all__ = [
     "DUE_DATE_OBJECTIVES",
@@ -46,6 +52,7 @@ __all__ = [
     "check_optional_positive",
     "check_per_item",
     "check_seed",
+    "eligible_nodes",
     "floor_tolerant",
     "format_tag",
     "instance_id",
@@ -267,6 +274,55 @@ def check_objectives(
         )
         raise ValueError(f"objectives {needing} need due dates; {remedy}")
     return result
+
+
+def eligible_nodes(platform: Platform, tiers: object) -> tuple[Resource, ...]:
+    """Return the nodes of a continuum platform that may run the tasks of a reader.
+
+    A reader gives every task one mode per returned node, and each mode holds
+    one core of its node.
+
+    Args:
+        platform: The platform.
+        tiers: The tiers whose nodes may run tasks: a sequence of tier names
+            other than a string, each tier once and each with a node. ``None``
+            stands for every tier of the platform except ``"device"``.
+
+    Returns:
+        The nodes, tier by tier in the order of ``tiers``, or in the order of
+        the platform for ``None``.
+
+    Raises:
+        ValueError: If ``tiers`` is a string, is not a sequence of strings,
+            repeats a name, or names a tier without a node; if no node is
+            left; or if a node has less than one core.
+    """
+    if tiers is None:
+        chosen = [tier for tier in platform.tiers if tier != "device"]
+        if not chosen:
+            raise ValueError("the platform has no node in tiers other than 'device'")
+    else:
+        if (
+            isinstance(tiers, str | bytes | bytearray)
+            or not isinstance(tiers, Sequence)
+            or not all(isinstance(tier, str) for tier in tiers)
+        ):
+            hint = "; write one tier as a list of one name" if isinstance(tiers, str) else ""
+            raise ValueError(f"tiers must be a sequence of tier names, got {tiers!r}{hint}")
+        chosen = list(tiers)
+        if len(set(chosen)) != len(chosen):
+            raise ValueError(f"tiers repeat a name: {chosen}")
+        empty = [tier for tier in chosen if not platform.nodes(tier)]
+        if empty or not chosen:
+            raise ValueError(f"the platform has no node in tiers {empty}")
+    nodes = tuple(node for tier in chosen for node in platform.nodes(tier))
+    for node in nodes:
+        if node.capacity < 1.0:
+            raise ValueError(
+                f"node {node.id!r} has capacity {node.capacity:g}, less than the one core "
+                "a task holds"
+            )
+    return nodes
 
 
 # ------------------------------------------------------------------ builder data

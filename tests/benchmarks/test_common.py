@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -19,6 +20,7 @@ from dispatchatlas.benchmarks._common import (
     check_optional_positive,
     check_per_item,
     check_seed,
+    eligible_nodes,
     floor_tolerant,
     format_tag,
     instance_id,
@@ -26,8 +28,10 @@ from dispatchatlas.benchmarks._common import (
     numbered_ids,
     round_half_up,
 )
+from dispatchatlas.benchmarks.continuum import three_tier_platform
+from dispatchatlas.benchmarks.continuum.platform import Platform
 from dispatchatlas.benchmarks.registry import FamilyInfo
-from dispatchatlas.core import ModelError
+from dispatchatlas.core import ModelError, Network, Resource
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,69 @@ def test_objective_check():
             check_objectives(value)
     with pytest.raises(ValueError, match="repeat"):
         check_objectives(("makespan", "makespan"))
+
+
+def test_eligible_nodes_follow_the_tiers_and_leave_out_the_devices_by_default():
+    platform = three_tier_platform(devices=2, edge=2, fog=1, cloud=1)
+    assert [node.id for node in eligible_nodes(platform, None)] == [
+        "edge-0",
+        "edge-1",
+        "fog-0",
+        "cloud-0",
+    ]
+    assert [node.id for node in eligible_nodes(platform, ["cloud", "edge"])] == [
+        "cloud-0",
+        "edge-0",
+        "edge-1",
+    ]
+    assert [node.id for node in eligible_nodes(platform, ("device",))] == ["device-0", "device-1"]
+    assert [node.id for node in eligible_nodes(platform, deque(["fog"]))] == ["fog-0"]
+    assert eligible_nodes(platform, ("fog", "cloud")) == platform.nodes("fog") + platform.nodes(
+        "cloud"
+    )
+
+
+@pytest.mark.parametrize(
+    ("tiers", "message"),
+    [
+        ("cloud", "tiers must be a sequence of tier names, got 'cloud'; write one tier as a list"),
+        (b"cloud", "tiers must be a sequence of tier names, got b'cloud'$"),
+        (bytearray(b""), "tiers must be a sequence of tier names"),
+        (3, "tiers must be a sequence of tier names, got 3$"),
+        ({"cloud"}, "tiers must be a sequence of tier names"),
+        ({"cloud": 1}, "tiers must be a sequence of tier names"),
+        ({"cloud": 1}.keys(), "tiers must be a sequence of tier names"),
+        (iter(["cloud"]), "tiers must be a sequence of tier names"),
+        (("cloud", 3), "tiers must be a sequence of tier names"),
+        (("cloud", None), "tiers must be a sequence of tier names"),
+        (("cloud", ["fog"]), "tiers must be a sequence of tier names"),
+        (("cloud", "cloud"), r"tiers repeat a name: \['cloud', 'cloud'\]"),
+        (["fog", "cloud", "fog"], "tiers repeat a name"),
+        ((), r"the platform has no node in tiers \[\]$"),
+        (("orbit",), r"the platform has no node in tiers \['orbit'\]"),
+        (("cloud", "orbit", "fog", "sea"), r"the platform has no node in tiers \['orbit', 'sea'\]"),
+        (("Cloud",), r"the platform has no node in tiers \['Cloud'\]"),
+    ],
+)
+def test_eligible_nodes_refuse_tiers_that_are_not_distinct_names_of_tiers_with_nodes(
+    tiers, message
+):
+    platform = three_tier_platform(devices=1, edge=1, fog=1, cloud=1)
+    with pytest.raises(ValueError, match=message):
+        eligible_nodes(platform, tiers)
+
+
+def test_eligible_nodes_refuse_platforms_that_cannot_run_a_task():
+    with pytest.raises(ValueError, match=r"no node in tiers \['fog'\]"):
+        eligible_nodes(three_tier_platform(fog=0), ("edge", "fog"))
+    with pytest.raises(ValueError, match="the platform has no node in tiers other than 'device'"):
+        eligible_nodes(three_tier_platform(edge=0, fog=0, cloud=0), None)
+    assert len(eligible_nodes(three_tier_platform(edge=0, fog=0, cloud=0), ("device",))) == 4
+    nodes = (Resource("a-0", tier="a"), Resource("b-0", capacity=0.5, tier="b"))
+    platform = Platform(nodes, Network())
+    with pytest.raises(ValueError, match=r"node 'b-0' has capacity 0\.5, less than the one core"):
+        eligible_nodes(platform, None)
+    assert eligible_nodes(platform, ("a",)) == nodes[:1]
 
 
 def test_numbered_ids_share_one_width():

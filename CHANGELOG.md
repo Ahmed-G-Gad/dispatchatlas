@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Benchmark families for shop, parallel-machine, project, task-graph, and
   edge-fog-cloud continuum problems; Taillard's suites rebuilt from their
   published seeds; readers for OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
-  DAX files; instance catalogs with SHA-256 manifests; and descriptive
+  DAX files; a streaming reader for the batch jobs of the Alibaba 2018 cluster
+  trace, which decodes each job's task graph and reports every job it skips
+  with a reason; instance catalogs with SHA-256 manifests; and descriptive
   instance features.
 - `read_wfcommons` reads WfFormat 1.4, 1.5, and 1.6 instances onto a continuum
   platform. A problem read from a file is named after the file, without its

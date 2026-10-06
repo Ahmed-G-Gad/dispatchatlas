@@ -1,6 +1,14 @@
-# Sources of the continuum model, the workflow generators, and the WfCommons and Pegasus DAX readers.
+# Sources of the continuum model, the workflow generators, and the readers of WfCommons
+# instances, Pegasus DAX files, and the Alibaba 2018 cluster trace.
 # The random task-graph generator of the workflow family is topcuoglu2002performance,
 # defined in solvers-rules.toml.
+
+[alibaba2018cluster]
+authors = "Alibaba Group"
+year = 2018
+title = "Alibaba Cluster Trace Program: cluster-trace-v2018"
+venue = "GitHub repository alibaba/clusterdata"
+url = "https://github.com/alibaba/clusterdata"
 
 [bharathi2008characterization]
 authors = "S. Bharathi, A. Chervenak, E. Deelman, G. Mehta, M.-H. Su and K. Vahi"
@@ -30,6 +38,13 @@ title = "Power provisioning for a warehouse-sized computer"
 venue = "Proceedings of the 34th Annual International Symposium on Computer Architecture (ISCA), 13-23"
 doi = "10.1145/1250662.1250665"
 
+[guo2019limits]
+authors = "J. Guo, Z. Chang, S. Wang, H. Ding, Y. Feng, L. Mao and Y. Bao"
+year = 2019
+title = "Who limits the resource efficiency of my datacenter: An analysis of Alibaba datacenter traces"
+venue = "Proceedings of the International Symposium on Quality of Service (IWQoS), 1-10"
+doi = "10.1145/3326285.3329074"
+
 [gupta2017ifogsim]
 authors = "H. Gupta, A. Vahid Dastjerdi, S. K. Ghosh and R. Buyya"
 year = 2017
@@ -57,3 +72,10 @@ year = 2017
 title = "A survey on mobile edge computing: The communication perspective"
 venue = "IEEE Communications Surveys & Tutorials 19(4):2322-2358"
 doi = "10.1109/COMST.2017.2745201"
+
+[tian2019characterizing]
+authors = "H. Tian, Y. Zheng and W. Wang"
+year = 2019
+title = "Characterizing and synthesizing task dependencies of data-parallel jobs in Alibaba Cloud"
+venue = "Proceedings of the ACM Symposium on Cloud Computing (SoCC), 139-151"
+doi = "10.1145/3357223.3362710"

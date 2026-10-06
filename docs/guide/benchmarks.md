@@ -87,16 +87,25 @@ request = Application("a0", "device-0", release=0.0, work=(2.0,), upload=(1.5,),
 problem = build_problem("one-request", platform, [request], due_factor=2.0)
 ```
 
-`read_wfcommons` maps a recorded execution of a real scientific workflow, in
-the WfCommons format (Coleman et al. 2022), onto such a platform. A problem
-read from a file takes the file name without its extension as its id, and a
-parsed document takes its instance `name`. Either way the `name` is kept in
-the problem's metadata, and `problem_id` sets another id:
+### Workloads read onto a platform
+
+Three readers map workloads that others publish onto such a platform. Each
+turns a task of the workload into a task with one mode per eligible node,
+which holds one core of that node for `work / speed` seconds. `tiers` names
+the tiers whose nodes are eligible, every tier except the devices by default.
+
+`read_wfcommons` reads a recorded execution of a real scientific workflow in
+the WfCommons format (Coleman et al. 2022). The recorded runtime of a task is
+its work, and every parent-child pair becomes a dependency that carries the
+bytes of the files the parent writes and the child reads. A problem read from
+a file takes the file name without its extension as its id, and a parsed
+document takes its instance `name`. Either way the `name` is kept in the
+problem's metadata, and `problem_id` sets another id:
 
 ```python
-from dispatchatlas.benchmarks import read_wfcommons
+from dispatchatlas.benchmarks import read_wfcommons, three_tier_platform
 
-recorded = read_wfcommons("workflow-run-001.json", platform)
+recorded = read_wfcommons("workflow-run-001.json", three_tier_platform())
 print(recorded.id)  # workflow-run-001
 ```
 
@@ -104,20 +113,72 @@ Instances of one collection can share a `name`, and then only the file names
 tell them apart. A document that contradicts itself is refused, for example
 one that lists a task or an execution entry twice.
 
-`read_pegasus_dax` does the same for a Pegasus DAX file (Deelman et al. 2015),
-the XML format of the synthetic Montage, CyberShake, Epigenomics, LIGO
-Inspiral, and SIPHT workflows of Bharathi et al. (2008) and Juve et al. (2013).
-Every job becomes a task whose `runtime` is its work, and every parent-child
-pair becomes a dependency that carries the sizes the parent gives the files it
-writes and the child reads. A file that is not UTF-8 text, or that has a
-document type or entity declaration, a negative runtime, or a negative size, is
-refused:
+`read_pegasus_dax` reads a Pegasus DAX file (Deelman et al. 2015), the XML
+format of the synthetic Montage, CyberShake, Epigenomics, LIGO Inspiral, and
+SIPHT workflows of Bharathi et al. (2008) and Juve et al. (2013). Every job
+becomes a task whose `runtime` is its work, and every parent-child pair
+becomes a dependency that carries the sizes the parent gives the files it
+writes and the child reads. The problem takes the file name without its
+extension as its id, unless `problem_id` sets another. A file that is not
+UTF-8 text, or that has a document type or entity declaration, a negative
+runtime, or a negative size, is refused:
 
 ```python
 from dispatchatlas.benchmarks import read_pegasus_dax, three_tier_platform
 
 montage = read_pegasus_dax("Montage_25.xml", three_tier_platform())
+print(montage.id)  # Montage_25
 ```
+
+`iter_alibaba_batch` reads the batch jobs of the Alibaba 2018 cluster trace
+(Alibaba Group 2018; Guo et al. 2019), from the table
+`batch_task.csv` that you download from the trace's repository. It reads the
+table as a stream, one job at a time, so the table never has to fit in memory.
+It decodes the task graph of each job from its task names (Tian, Zheng and
+Wang 2019) and yields one problem per job:
+
+```python
+from collections import Counter
+
+from dispatchatlas.benchmarks import iter_alibaba_batch, three_tier_platform
+
+skipped = Counter()
+jobs = iter_alibaba_batch(
+    "batch_task.csv",
+    three_tier_platform(),
+    min_tasks=5,
+    max_tasks=50,
+    on_skip=lambda job, reason: skipped.update([reason]),
+)
+for problem in jobs:
+    print(problem.id, problem.size, problem.metadata["arrival"])
+print(skipped)
+```
+
+`work` chooses how the work of a task is derived from its recorded times. By
+default it is the task's recorded span, `end_time - start_time`, and with
+`work="core_seconds"` the core-seconds its instances request over that span.
+The span is not a run time: the trace gives most dependent tasks the start
+time of the tasks they depend on, so their span includes the time they
+waited, and both rules overstate their work, twofold at the median along the
+longest path of a job with dependencies. `work="after_dependencies"` takes
+only the part of the span after the tasks a task depends on have ended, which
+is an upper bound of its run time, and skips a job whose times contradict a
+dependency:
+
+```python
+jobs = iter_alibaba_batch("batch_task.csv", three_tier_platform(), work="after_dependencies")
+```
+
+The trace records no data volumes, so every dependency carries the same
+`edge_data`. A job is never completed with invented values: it is skipped
+whole when one of its tasks did not terminate, lacks a start or end time, or
+has a name whose dependencies cannot be decoded, and `on_skip` receives the
+job name and a reason code, so the skipped jobs can be counted. The reader
+relies on the rows of a job being consecutive, as they are in the trace, and
+each problem takes the name of its job as its id. A path stays open until the
+iteration ends or the returned generator is closed. The
+[reference of the module](../api/benchmarks.md) states every rule.
 
 ## Taillard's instances
 

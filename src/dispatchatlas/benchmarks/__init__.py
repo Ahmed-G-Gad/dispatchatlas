@@ -14,10 +14,16 @@ Rebuild a published instance, or read one from a file::
 The submodules hold the rest: :mod:`~dispatchatlas.benchmarks.suites` (reference
 suites and their known bounds), :mod:`~dispatchatlas.benchmarks.catalog` (named
 instance sets written to disk with checksums),
-:mod:`~dispatchatlas.benchmarks.characterize` (instance features), and
-:mod:`~dispatchatlas.benchmarks.continuum` (edge-fog-cloud platforms).
+:mod:`~dispatchatlas.benchmarks.characterize` (instance features),
+:mod:`~dispatchatlas.benchmarks.continuum` (edge-fog-cloud platforms), and the
+readers that map published workloads onto such a platform:
+:mod:`~dispatchatlas.benchmarks.wfcommons` (WfCommons workflow instances),
+:mod:`~dispatchatlas.benchmarks.pegasus` (Pegasus DAX workflow files), and
+:mod:`~dispatchatlas.benchmarks.alibaba` (the batch jobs of the Alibaba 2018
+cluster trace).
 """
 
+from dispatchatlas.benchmarks.alibaba import iter_alibaba_batch, parse_alibaba_task_name
 from dispatchatlas.benchmarks.catalog import build_catalog, catalogs, load_directory, materialize
 from dispatchatlas.benchmarks.characterize import features
 from dispatchatlas.benchmarks.continuum import three_tier_platform
@@ -49,10 +55,12 @@ __all__ = [
     "default_registry",
     "features",
     "generate",
+    "iter_alibaba_batch",
     "load_directory",
     "load_instance",
     "load_plugins",
     "materialize",
+    "parse_alibaba_task_name",
     "read_pegasus_dax",
     "read_wfcommons",
     "taillard_flow_shop",

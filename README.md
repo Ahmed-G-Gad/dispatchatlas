@@ -118,7 +118,8 @@ explains its options with `--help`.
   offline from their published seeds, and the OR-Library job and flow shops,
   Brandimarte's flexible job shops, and PSPLIB J30 to J120, read from the files
   you download. Readers for the OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
-  DAX formats; instance catalogs written to disk with SHA-256 manifests;
+  DAX formats, and a streaming reader for the batch jobs of the Alibaba 2018
+  cluster trace; instance catalogs written to disk with SHA-256 manifests;
   descriptive features of every instance.
 - **72 solvers**: dispatching rules and list heuristics such as HEFT;
   constructive heuristics such as NEH and beam search; local search from hill

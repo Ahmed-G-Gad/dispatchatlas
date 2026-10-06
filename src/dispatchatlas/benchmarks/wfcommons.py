@@ -75,7 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from dispatchatlas.benchmarks._common import check_number, check_objectives
+from dispatchatlas.benchmarks._common import check_number, check_objectives, eligible_nodes
 from dispatchatlas.benchmarks.continuum.platform import Platform
 from dispatchatlas.core.errors import ConfigError, ModelError, SerializationError
 from dispatchatlas.core.model import Dependency, Problem, Resource, Task
@@ -115,9 +115,9 @@ def read_wfcommons(
             a mapping may be of any type registered with :mod:`numbers`, such
             as NumPy scalars.
         platform: Nodes and network the workflow runs on.
-        tiers: Tiers whose nodes may run tasks, as a sequence that names each
-            tier once. Defaults to every tier of the platform except
-            ``"device"``.
+        tiers: Tiers whose nodes may run tasks, as a sequence of names other
+            than a string, each tier once and each with a node. Defaults to
+            every tier of the platform except ``"device"``.
         problem_id: Id of the problem, a non-empty string without surrounding
             spaces. Defaults to the file name without its extension when
             ``source`` is a path, and to the instance ``name`` when it is a
@@ -128,7 +128,8 @@ def read_wfcommons(
             and a ``name`` that is absent or leaves nothing to
             ``"wfcommons"``. The ``name`` is kept in the metadata of the
             problem, under ``"name"``.
-        objectives: One objective name or several, primary first.
+        objectives: One objective name or several, primary first. The problem
+            has no due dates, so an objective that needs them is refused.
         bytes_per_unit: Bytes per data unit of the platform's bandwidths.
 
     Returns:
@@ -137,15 +138,16 @@ def read_wfcommons(
     Raises:
         SerializationError: If the document is not a supported WfFormat
             instance or its content is inconsistent.
-        ConfigError: If an objective is unknown or repeated, ``tiers`` is a
-            single string, repeats a tier, or holds no node of the platform,
+        ConfigError: If an objective is unknown, repeated, or needs due
+            dates, ``tiers`` is a string, repeats a tier, or names a tier
+            without a node, a node has less than one core,
             ``bytes_per_unit`` is not a positive number, ``problem_id`` is
             not a non-empty string without surrounding spaces, ``platform``
             is not a platform, or ``source`` is neither a mapping nor a path.
         OSError: If the file cannot be read.
     """
     try:
-        names = check_objectives(objectives)
+        names = check_objectives(objectives, due_dates=False)
         unit = check_number("bytes_per_unit", bytes_per_unit, positive=True)
         _check_arguments(platform, tiers, problem_id)
     except ValueError as error:
@@ -394,11 +396,10 @@ def _shared_bytes(parent: _Row, child: _Row, sizes: Mapping[str, int]) -> int:
 
 
 def _nodes(platform: Platform, tiers: Sequence[str] | None) -> tuple[Resource, ...]:
-    chosen = [tier for tier in platform.tiers if tier != "device"] if tiers is None else tiers
-    nodes = tuple(node for tier in chosen for node in platform.nodes(tier))
-    if not nodes:
-        raise ConfigError(f"the platform has no node in tiers {list(chosen)}")
-    return nodes
+    try:
+        return eligible_nodes(platform, tiers)
+    except ValueError as error:
+        raise ConfigError(f"invalid arguments for read_wfcommons: {error}") from error
 
 
 def _slug(text: str) -> str:
