@@ -341,6 +341,9 @@ class SolverEntry:
         stochastic: Whether its results depend on the seed.
         iterative: Whether it runs until a stop criterion fires.
         multi_objective: Whether it optimises every objective at once.
+        threads: The value of its ``threads`` parameter, the default when the
+            campaign sets none. ``None`` for a solver without such a
+            parameter and for an entry that does not state it.
     """
 
     name: str
@@ -351,6 +354,7 @@ class SolverEntry:
     stochastic: bool
     iterative: bool
     multi_objective: bool
+    threads: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the entry as a JSON-ready dictionary."""
@@ -363,6 +367,7 @@ class SolverEntry:
             "stochastic": self.stochastic,
             "iterative": self.iterative,
             "multi_objective": self.multi_objective,
+            "threads": self.threads,
         }
 
     @classmethod
@@ -378,6 +383,7 @@ class SolverEntry:
             stochastic=fields.boolean("stochastic"),
             iterative=fields.boolean("iterative"),
             multi_objective=fields.boolean("multi_objective"),
+            threads=fields.absent_or_integer("threads"),
         )
 
 

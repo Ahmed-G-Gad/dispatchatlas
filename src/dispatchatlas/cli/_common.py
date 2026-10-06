@@ -49,6 +49,7 @@ __all__ = [
     "add_command",
     "add_group",
     "add_problem_arguments",
+    "affinity",
     "assignment",
     "emit_fields",
     "emit_json",
@@ -316,6 +317,18 @@ def positive_number(argument: str) -> float:
     if value <= 0.0:
         raise argparse.ArgumentTypeError(f"must be above 0, got {argument!r}")
     return value
+
+
+def affinity(argument: str) -> str | tuple[int, ...]:
+    """Parse where workers run: ``inherit``, ``pin``, or processor indices such as ``0,2,4``."""
+    if argument in ("inherit", "pin"):
+        return argument
+    try:
+        return tuple(non_negative_integer(item) for item in argument.split(","))
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"must be 'inherit', 'pin', or processor indices such as 0,2,4, got {argument!r}"
+        ) from None
 
 
 def workers(argument: str) -> int | str:

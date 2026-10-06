@@ -508,9 +508,11 @@ def _solver_entry(spec: SolverSpec, registry: SolverRegistry) -> SolverEntry:
     """Check a solver specification against the registry and describe it."""
     try:
         info = registry.info(spec.id)
-        registry.create(spec.id, **spec.arguments())
+        threads = getattr(registry.create(spec.id, **spec.arguments()), "threads", None)
     except ConfigError as error:
         raise ConfigError(f"solver {spec.name!r}: {error}") from error
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        threads = None
     return SolverEntry(
         name=spec.name,
         id=spec.id,
@@ -520,6 +522,7 @@ def _solver_entry(spec: SolverSpec, registry: SolverRegistry) -> SolverEntry:
         stochastic=info.stochastic,
         iterative=info.iterative,
         multi_objective=info.multi_objective,
+        threads=threads,
     )
 
 

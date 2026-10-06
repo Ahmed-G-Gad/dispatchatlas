@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from dispatchatlas.campaigns.config import THREAD_VARIABLES
-from dispatchatlas.campaigns.processors import allowed_cpus
+from dispatchatlas.campaigns.processors import affinity_cpus, available_cpus
 
 __all__ = ["PACKAGES", "capture_environment", "git_state"]
 
@@ -45,7 +45,10 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
         ``cpu``, ``threads``, ``memory_bytes``, ``packages``, and ``git``.
         ``cpu`` holds the processor ``model``, the ``logical`` processors of
         the machine, and the processors the process may use: their indices
-        as ``allowed`` and their number as ``available``. ``threads`` holds
+        as ``allowed`` and their number as ``available``. When the operating
+        system does not tell which processors the process is confined to,
+        ``allowed`` is ``None`` and ``available`` counts every processor of
+        the machine. ``threads`` holds
         the value of every variable of
         :data:`~dispatchatlas.campaigns.config.THREAD_VARIABLES` in the
         environment of the process, ``None`` when it is not set; worker
@@ -61,7 +64,7 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
     working = git_state(Path.cwd() if directory is None else Path(directory))
     if working is not None:
         git["working_directory"] = working
-    allowed = allowed_cpus()
+    confined = affinity_cpus()
     return {
         "python": {
             "version": platform.python_version(),
@@ -76,8 +79,8 @@ def capture_environment(directory: str | Path | None = None) -> dict[str, Any]:
         "cpu": {
             "model": _cpu_model(),
             "logical": os.cpu_count(),
-            "available": len(allowed),
-            "allowed": list(allowed),
+            "available": available_cpus(),
+            "allowed": None if confined is None else list(confined),
         },
         "threads": {name: os.environ.get(name) for name in THREAD_VARIABLES},
         "memory_bytes": _memory_bytes(),

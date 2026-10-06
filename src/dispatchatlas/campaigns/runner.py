@@ -23,6 +23,7 @@ runs, and a summary at the end.
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -32,11 +33,16 @@ from typing import Any
 
 from dispatchatlas.benchmarks.registry import FamilyRegistry
 from dispatchatlas.campaigns.backends import backend_for
-from dispatchatlas.campaigns.config import Campaign, Execution, available_cpus
+from dispatchatlas.campaigns.config import (
+    THREAD_VARIABLES,
+    Campaign,
+    Execution,
+    available_cpus,
+)
 from dispatchatlas.campaigns.environment import capture_environment
 from dispatchatlas.campaigns.execution import Completion, Result, Task, utc_now
 from dispatchatlas.campaigns.planning import PlannedRun, Prepared, prepare
-from dispatchatlas.campaigns.processors import describe_cpus
+from dispatchatlas.campaigns.processors import affinity_cpus, describe_cpus
 from dispatchatlas.campaigns.records import (
     FailureRecord,
     ProblemRef,
@@ -108,6 +114,7 @@ def run(
     max_runs: int | None = None,
     backend: str | None = None,
     workers: int | str | None = None,
+    affinity: str | Sequence[int] | None = None,
 ) -> RunSummary:
     """Run a campaign, resuming from the results its directory already holds.
 
@@ -122,20 +129,32 @@ def run(
         max_runs: Attempt at most this many pending runs in this session.
         backend: Override of the campaign's execution backend.
         workers: Override of the campaign's worker count, or ``"auto"``.
+        affinity: Override of the campaign's ``affinity``: ``"inherit"``,
+            ``"pin"``, or processor indices.
 
     Returns:
         The summary of the session.
 
     Raises:
         ConfigError: If the campaign cannot be planned, its directory holds
-            results of another configuration, or another runner is using it.
+            results of another configuration, another runner is using it, or
+            runs are pending and its workers cannot be pinned as ``affinity``
+            asks: the platform cannot pin a process, the workers outnumber
+            their processors, or a listed processor is not one this process
+            may use. A campaign refused for its pinning loses no record, also
+            with ``fresh``, and a new one leaves no directory.
         KeyboardInterrupt: When interrupted. Records written so far are kept
             and the session is marked interrupted.
     """
-    execution = overridden(campaign.execution, backend, workers)
+    execution = overridden(campaign.execution, backend, workers, affinity)
     prepared = prepare(campaign, registry=registry, families=families)
     plan = prepared.plan
+    count = execution.worker_count()
     store = Store(campaign_directory(root, campaign.id))
+    if fresh or not store.directory.exists():
+        # Every run is pending, so a refusal comes before records are discarded
+        # or a directory is created.
+        execution.worker_cpus(count)
     with store.locked():
         store.open(campaign, fresh=fresh)
         store.write_plan(plan)
@@ -143,8 +162,7 @@ def run(
         pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
         if max_runs is not None:
             pending = pending[: max(0, max_runs)]
-        count = execution.worker_count()
-        cpus = execution.worker_cpus(count)
+        cpus = execution.worker_cpus(count) if pending else None
         chosen = backend_for(
             execution.backend, count, cpus=cpus, threads=execution.threads_per_worker
         )
@@ -161,7 +179,7 @@ def run(
             environment=capture_environment(),
         )
         store.write_session(record)
-        _warn_about_timing(prepared, execution, count)
+        _warn_about_timing(prepared, execution, count, cpus)
         if cpus is not None:
             _LOG.info(
                 "campaign %s: workers pinned to processor(s) %s", campaign.id, describe_cpus(cpus)
@@ -257,10 +275,25 @@ def tasks_for(
     return tasks
 
 
-def overridden(base: Execution, backend: str | None, workers: int | str | None) -> Execution:
-    """Return execution settings with a caller's backend and worker overrides applied.
+def overridden(
+    base: Execution,
+    backend: str | None,
+    workers: int | str | None,
+    affinity: str | Sequence[int] | None = None,
+) -> Execution:
+    """Return execution settings with a caller's overrides applied.
 
-    Choosing the sequential backend without a worker count implies one worker.
+    Choosing the sequential backend, which has no worker processes, sets what
+    only worker processes have to its default: ``affinity`` to ``"inherit"``,
+    ``threads_per_worker`` to 1, and, without a worker count, ``workers``
+    to 1.
+
+    Args:
+        base: The campaign's settings.
+        backend: Another backend, or ``None`` to keep the campaign's.
+        workers: Another worker count or ``"auto"``, or ``None``.
+        affinity: Another ``affinity``: ``"inherit"``, ``"pin"``, or
+            processor indices; or ``None``.
 
     Raises:
         ConfigError: If the resulting settings are invalid.
@@ -268,10 +301,14 @@ def overridden(base: Execution, backend: str | None, workers: int | str | None) 
     changes: dict[str, Any] = {}
     if backend is not None:
         changes["backend"] = backend
-        if backend == "sequential" and workers is None:
-            changes["workers"] = 1
+        if backend == "sequential":
+            changes.update(affinity="inherit", threads_per_worker=1)
+            if workers is None:
+                changes["workers"] = 1
     if workers is not None:
         changes["workers"] = workers
+    if affinity is not None:
+        changes["affinity"] = affinity if isinstance(affinity, str) else tuple(affinity)
     return replace(base, **changes) if changes else base
 
 
@@ -412,19 +449,58 @@ class _Books:
         )
 
 
-def _warn_about_timing(prepared: Prepared, execution: Execution, workers: int) -> None:
-    """Warn when wall-clock budgets cannot be enforced or are not equal between runs."""
+def _warn_about_timing(
+    prepared: Prepared, execution: Execution, workers: int, cpus: Sequence[int] | None = None
+) -> None:
+    """Warn when wall-clock budgets cannot be enforced or do not buy equal processor time.
+
+    Args:
+        prepared: The prepared plan.
+        execution: The execution settings in force.
+        workers: Number of workers.
+        cpus: The processor each worker is pinned to, or ``None`` when the
+            workers share the processors this process may use.
+    """
     timed = [protocol.name for protocol in prepared.campaign.protocols if protocol.stop.time_limit]
     if not timed:
         return
+    names = ", ".join(timed)
     if execution.backend == "sequential":
         _LOG.warning(
             "protocols %s set time limits, which the sequential backend cannot enforce; "
             "solvers must honour them",
-            ", ".join(timed),
+            names,
         )
+        unset = [name for name in THREAD_VARIABLES if not os.environ.get(name)]
+        if unset:
+            _LOG.warning(
+                "protocols %s set time limits and the sequential backend runs in this "
+                "process, where %s set(s) no thread limit, so a numerical library may use "
+                "every processor; set the variable(s) before Python starts, or use the "
+                "process backend",
+                names,
+                ", ".join(unset),
+            )
     threads = _threads_per_worker(prepared, execution)
+    if cpus is not None:
+        if threads > 1:
+            _LOG.warning(
+                "%d pinned worker(s) run up to %d thread(s) each on one processor apiece, so "
+                "the threads of a run share it within the wall-clock budgets of protocols %s",
+                workers,
+                threads,
+                names,
+            )
+        return
     processors = available_cpus()
+    if affinity_cpus() is None:
+        _LOG.warning(
+            "the processors this process may use cannot be read, so all %d of the machine "
+            "are counted; if the process is confined to fewer, the wall-clock budgets of "
+            "protocols %s buy less processor time than the worker count suggests",
+            processors,
+            names,
+        )
     if workers * threads > processors:
         _LOG.warning(
             "%d worker(s) with up to %d thread(s) each share %d processor(s), so the "
@@ -432,18 +508,14 @@ def _warn_about_timing(prepared: Prepared, execution: Execution, workers: int) -
             workers,
             threads,
             processors,
-            ", ".join(timed),
+            names,
         )
 
 
 def _threads_per_worker(prepared: Prepared, execution: Execution) -> int:
     """Return the most threads one worker may run: its thread limit or a solver's ``threads``."""
-    largest = execution.threads_per_worker if execution.backend == "process" else 1
-    for spec in prepared.campaign.solvers:
-        threads = getattr(prepared.registry.create(spec.id, **spec.arguments()), "threads", 1)
-        if isinstance(threads, int) and not isinstance(threads, bool):
-            largest = max(largest, threads)
-    return largest
+    declared = [entry.threads or 1 for entry in prepared.plan.solvers]
+    return max([execution.threads_per_worker, *declared])
 
 
 def _duration(seconds: float) -> str:

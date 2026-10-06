@@ -25,8 +25,10 @@ different amount of work in different solvers.
 The assessment also carries **notes**: facts that break none of these rules
 but that a reader of a comparison needs. A protocol with a time limit that
 compares solvers whose ``threads`` parameters differ is noted, because equal
-wall-clock budgets then buy unequal processor time; a solver whose parameters
-set no ``threads`` counts as one thread. A note never refuses a plan.
+wall-clock budgets then buy unequal processor time. Each solver counts with
+the value its plan entry records, which is the one its instance holds, the
+default included; a solver without such a parameter counts as one thread. A
+note never refuses a plan.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dispatchatlas.campaigns.planning import Plan
+    from dispatchatlas.campaigns.records import SolverEntry
     from dispatchatlas.core.solver import StopCriteria
 
 __all__ = [
@@ -172,7 +175,7 @@ def assess(plan: Plan) -> Fairness:
         issues.append(_listed("problems and replicates with several seeds", unpaired))
 
     notes: list[str] = []
-    threads = {solver.name: _threads(solver.parameters) for solver in plan.solvers}
+    threads = {solver.name: _threads(solver) for solver in plan.solvers}
     if len(set(threads.values())) > 1:
         counts = ", ".join(f"{name}: {count}" for name, count in threads.items())
         notes.extend(
@@ -192,9 +195,16 @@ def assess(plan: Plan) -> Fairness:
     )
 
 
-def _threads(parameters: Mapping[str, Any]) -> int:
-    """Return the ``threads`` parameter a campaign sets on a solver, or 1 when it sets none."""
-    value = parameters.get("threads", 1)
+def _threads(solver: SolverEntry) -> int:
+    """Return the threads a solver of a plan may run.
+
+    An entry that records no ``threads``, for a solver without the parameter
+    or in a plan stored without the field, counts with the ``threads`` its
+    parameters set, or 1.
+    """
+    if solver.threads is not None:
+        return solver.threads
+    value = solver.parameters.get("threads", 1)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return 1
     return value

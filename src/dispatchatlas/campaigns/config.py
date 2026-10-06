@@ -498,15 +498,18 @@ class Execution:
         affinity: The processors the worker processes run on. ``"inherit"``
             leaves every worker on the processors the calling process may
             use. ``"pin"`` confines worker ``k`` to the ``k``-th of those
-            processors, in index order. A list of processor indices confines
-            worker ``k`` to its ``k``-th entry. A pinned campaign needs the
-            process backend and a processor of its own for every worker.
+            processors, in index order, whichever cores they belong to. A
+            list of processor indices confines worker ``k`` to its ``k``-th
+            entry. A pinned campaign needs the process backend and a
+            processor of its own for every worker.
         threads_per_worker: Threads the numerical libraries of a worker
             process may use. Every variable of :data:`THREAD_VARIABLES` is
             set to it in the environment a worker starts with, for any
             number of workers and whatever the calling environment holds.
-            The sequential backend runs in the calling process and leaves
-            its environment as it is.
+            The sequential backend has no worker processes and leaves the
+            environment of the calling process as it is, so it accepts only
+            the default, which then states nothing about that process: set
+            the variables before Python starts to limit such a run.
     """
 
     backend: str = "process"
@@ -547,6 +550,12 @@ class Execution:
                 "engine does not change; use affinity 'inherit', or backend 'process'"
             )
         _check_integer(self.threads_per_worker, "threads_per_worker", 1)
+        if self.backend == "sequential" and self.threads_per_worker != 1:
+            raise ConfigError(
+                "the sequential backend runs in the calling process, whose thread limits the "
+                "engine does not change; leave threads_per_worker at 1 and set "
+                f"{', '.join(THREAD_VARIABLES)} before Python starts, or use backend 'process'"
+            )
 
     @property
     def max_attempts(self) -> int:

@@ -38,6 +38,7 @@ from dispatchatlas.cli._common import (
     Commands,
     add_command,
     add_group,
+    affinity,
     emit_fields,
     emit_json,
     existing_file,
@@ -110,6 +111,7 @@ def register(commands: Commands) -> None:
     running.add_argument("config", metavar="CONFIG", help="campaign file (.toml or .json)")
     running.add_argument("--output", metavar="DIR", required=True, help="output directory")
     _add_execution(running)
+    _add_affinity(running)
     running.add_argument(
         "--fresh",
         action="store_true",
@@ -147,6 +149,7 @@ def register(commands: Commands) -> None:
         help="replay this run only; repeat for several (default: every completed run)",
     )
     _add_execution(replayed)
+    _add_affinity(replayed)
 
 
 def _add_execution(parser: argparse.ArgumentParser) -> None:
@@ -162,6 +165,17 @@ def _add_execution(parser: argparse.ArgumentParser) -> None:
         choices=BACKENDS,
         help="run in worker processes, or one at a time in this process "
         "(default: the campaign's setting)",
+    )
+
+
+def _add_affinity(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--affinity",
+        type=affinity,
+        metavar="WHERE",
+        help="processors of the workers: 'inherit' for those of this process, 'pin' for one "
+        "of them each, or indices such as 0,2,4 (default: the campaign's setting; "
+        "--backend sequential implies 'inherit')",
     )
 
 
@@ -330,6 +344,7 @@ def _run(arguments: argparse.Namespace) -> int:
         max_runs=arguments.max_runs,
         backend=arguments.backend,
         workers=arguments.workers,
+        affinity=arguments.affinity,
     )
     if arguments.json:
         emit_json(_run_document(summary))
@@ -397,6 +412,7 @@ def _replay(arguments: argparse.Namespace) -> int:
         runs=arguments.run,
         backend=arguments.backend,
         workers=arguments.workers,
+        affinity=arguments.affinity,
     )
     if arguments.json:
         emit_json(_replay_document(report))

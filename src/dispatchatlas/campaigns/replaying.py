@@ -129,6 +129,7 @@ def replay(
     families: FamilyRegistry | None = None,
     backend: str | None = None,
     workers: int | str | None = None,
+    affinity: str | Sequence[int] | None = None,
 ) -> ReplayReport:
     """Re-execute completed runs and compare their results with the records.
 
@@ -141,15 +142,19 @@ def replay(
             and plugins.
         backend: Override of the campaign's execution backend.
         workers: Override of the campaign's worker count, or ``"auto"``.
+        affinity: Override of the campaign's ``affinity``: ``"inherit"``,
+            ``"pin"``, or processor indices.
 
     Returns:
         The verdict on every selected run.
 
     Raises:
         ConfigError: If the directory holds another configuration, has no
-            results, or a requested run id is not in the plan.
+            results, a requested run id is not in the plan, or runs are to
+            be replayed and the workers cannot be pinned as ``affinity``
+            asks.
     """
-    execution = overridden(campaign.execution, backend, workers)
+    execution = overridden(campaign.execution, backend, workers, affinity)
     prepared = prepare(campaign, registry=registry, families=families)
     plan = prepared.plan
     directory = campaign_directory(root, campaign.id)
@@ -181,7 +186,7 @@ def replay(
     chosen = backend_for(
         execution.backend,
         count,
-        cpus=execution.worker_cpus(count),
+        cpus=execution.worker_cpus(count) if queue else None,
         threads=execution.threads_per_worker,
     )
     with contextlib.closing(chosen.run(queue)) as results:

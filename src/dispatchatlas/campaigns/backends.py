@@ -23,8 +23,10 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
   pools of numerical libraries limited: the variables of
   :data:`~dispatchatlas.campaigns.config.THREAD_VARIABLES` are in the
   environment the worker process is created with, so no import in the
-  worker comes before them. A worker can also be pinned to one processor,
-  which the supervisor does as soon as the process exists.
+  worker comes before them. A worker can also be pinned to one processor:
+  the supervisor creates it while confined to that processor itself, so the
+  worker and every thread it starts run there, and the worker reports its
+  processors when it is ready, which the supervisor checks.
 
 Every result states how many runs were executing when its attempt was handed
 over (``concurrent``), and the processor its worker is pinned to (``cpu``).
@@ -37,6 +39,7 @@ import multiprocessing
 import os
 import pickle
 import signal
+import sys
 import time
 from collections import OrderedDict, deque
 from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -56,7 +59,7 @@ from dispatchatlas.campaigns.execution import (
     exception_error,
     utc_now,
 )
-from dispatchatlas.campaigns.processors import pin_process
+from dispatchatlas.campaigns.processors import affinity_cpus, confined, describe_cpus
 from dispatchatlas.campaigns.records import Category, ErrorKind
 from dispatchatlas.campaigns.timeout import detach, kill
 from dispatchatlas.core.errors import ConfigError
@@ -145,7 +148,7 @@ class ProcessBackend:
             ConfigError: If worker processes keep exiting before they start,
                 for example because a script starts a campaign without an
                 ``if __name__ == "__main__":`` guard, or a worker cannot be
-                pinned to its processor.
+                created on its processor or reports other processors.
         """
         count = min(self.workers, len(queue))
         if count == 0:
@@ -160,6 +163,8 @@ class ProcessBackend:
         failed_starts = 0
         finished = False
         try:
+            if self.cpus is not None:
+                _start_helpers()
             for slot in slots:
                 slot.start()
             while True:
@@ -247,7 +252,7 @@ def _worker_main(connection: Connection, name: str) -> None:
     _load_installed_plugins()
     held: list[Any] = []  # [digest, problem] of the problem this worker keeps
     try:
-        connection.send(("ready", os.getpid()))
+        connection.send(("ready", affinity_cpus()))
         while (message := connection.recv()) is not None:
             result = _serve(message, name, held)
             try:
@@ -328,6 +333,24 @@ def _stamped(result: Result, cpu: int | None, concurrent: int | None) -> Result:
     """Return a result whose measurement states its processor and concurrent runs."""
     measurement = replace(result.measurement, cpu=cpu, concurrent=concurrent)
     return replace(result, measurement=measurement)
+
+
+def _start_helpers() -> None:
+    """Start the helper process of ``multiprocessing`` before any worker is placed.
+
+    On POSIX systems the first process a program spawns also starts a
+    resource tracker, which would inherit the processor of the first pinned
+    worker if it started with it.
+    """
+    if sys.platform != "win32":
+        from multiprocessing import resource_tracker  # noqa: PLC0415 - POSIX only
+
+        resource_tracker.ensure_running()
+
+
+def _placed(cpu: int | None) -> contextlib.AbstractContextManager[None]:
+    """Return the context a worker is created in: confined to ``cpu``, or as the caller is."""
+    return contextlib.nullcontext() if cpu is None else confined(cpu)
 
 
 @contextlib.contextmanager
@@ -426,8 +449,12 @@ class _Slot:
     def start(self) -> None:
         """Start a worker process for this slot, with its thread limits and on its processor.
 
+        The process is created while the supervisor holds the thread limits
+        in its environment and, for a pinned slot, is confined to the slot's
+        processor, so the worker has both before its interpreter starts.
+
         Raises:
-            ConfigError: If the worker cannot be pinned to its processor.
+            ConfigError: If the worker cannot be created on its processor.
         """
         parent, child = self._context.Pipe(duplex=True)
         process = self._context.Process(
@@ -435,18 +462,16 @@ class _Slot:
             args=(child, self.name),
             name=f"dispatchatlas-{self.name}",
         )
-        with _exported(self._environment):
-            process.start()
+        try:
+            with _exported(self._environment), _placed(self.cpu):
+                process.start()
+        except ConfigError:
+            parent.close()
+            child.close()
+            raise
         child.close()
         self._process, self._connection = process, parent
         self._held, self._ready = None, False
-        if self.cpu is not None:
-            assert process.pid is not None, "a started process has an id"
-            try:
-                pin_process(process.pid, self.cpu)
-            except ConfigError:
-                self.close(graceful=False)
-                raise
 
     def hand(self, task: Task, documents: _Documents) -> Failure | None:
         """Send a task to the worker, or return the failure of a task that cannot be sent.
@@ -500,6 +525,10 @@ class _Slot:
             The result of the task; ``None`` when only a start-up message
             arrived; a recoverable failure when the worker died during the
             task; or :data:`_NOT_STARTED` when it died before it started.
+
+        Raises:
+            ConfigError: If a pinned worker reports that it may run on other
+                processors than the slot's.
         """
         closed = False
         try:
@@ -507,6 +536,11 @@ class _Slot:
                 kind, payload = self.connection.recv()
                 if kind == "ready":
                     self._ready = True
+                    if self.cpu is not None and payload not in (None, (self.cpu,)):
+                        raise ConfigError(
+                            f"{self.name} was created on processor {self.cpu} but reports "
+                            f"that it may run on processor(s) {describe_cpus(payload)}"
+                        )
                     continue
                 result = _stamped(payload, self.cpu, self.concurrent)
                 if isinstance(result, Failure) and result.error.kind is ErrorKind.TRANSFER:
