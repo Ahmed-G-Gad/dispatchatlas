@@ -249,6 +249,18 @@ class Plan:
     def _runs(self) -> Mapping[str, PlannedRun]:
         return {run.run_id: run for run in self.runs}
 
+    @cached_property
+    def runs_digest(self) -> str:
+        """SHA-256 hex digest of the canonical JSON of the sorted run ids.
+
+        Two plans have the same digest exactly when they hold the same runs,
+        in whatever order. A run id covers the config hash, the problem and
+        its content, the solver and its parameters, the protocol, and the
+        replicate, so the digest tells apart two plans of one campaign file
+        whose runs differ.
+        """
+        return digest(sorted(self._runs))
+
     def run(self, run_id: str) -> PlannedRun:
         """Return the run with the given id.
 
@@ -313,14 +325,15 @@ class Plan:
         """Return the plan as a JSON-ready document.
 
         Besides the plan's fields, the document lists every protocol's
-        parities and the fair-comparison assessment, derived from the plan
-        for readers of the file.
+        parities, the fair-comparison assessment, and :attr:`runs_digest`,
+        derived from the plan for readers of the file.
         """
         assessment = fairness.assess(self)
         return {
             "schema": PLAN_SCHEMA,
             "campaign": self.campaign,
             "config_hash": self.config_hash,
+            "runs_digest": self.runs_digest,
             "seed": self.seed,
             "seed_namespace": self.seed_namespace,
             "replicates": self.replicates,

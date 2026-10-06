@@ -157,7 +157,7 @@ def run(
         execution.worker_cpus(count)
     with store.locked():
         store.open(campaign, fresh=fresh)
-        store.write_plan(plan)
+        change = store.write_plan(plan)
         ledger = store.ledger(plan)
         pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
         if max_runs is not None:
@@ -181,6 +181,9 @@ def run(
             execution=execution,
             workers=count,
             environment=capture_environment(),
+            plan_digest=plan.runs_digest,
+            plan_left=change.left,
+            plan_entered=change.entered,
         )
         store.write_session(record)
         _warn_about_timing(prepared, execution, count, cpus)

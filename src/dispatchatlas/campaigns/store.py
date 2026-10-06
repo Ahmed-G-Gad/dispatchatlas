@@ -5,7 +5,8 @@ Layout under an output root::
     <root>/<campaign id>/
         campaign.json      the campaign document, its base directory, its config hash
         plan.json          the plan, with parities and the fairness assessment
-        sessions/<n>.json  one session record per invocation of the runner
+        sessions/<n>.json  one session record per invocation of the runner, with the
+                           digest of its plan and the runs that left or entered it
         runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
         failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
         .lock              locked while a runner works on the campaign
@@ -39,6 +40,7 @@ from dispatchatlas.campaigns.io import campaign_from_dict, campaign_to_dict
 from dispatchatlas.campaigns.planning import Plan, PlannedRun
 from dispatchatlas.campaigns.records import (
     FailureRecord,
+    PlanChange,
     RunRecord,
     SessionRecord,
     settled,
@@ -74,6 +76,9 @@ SESSIONS = "sessions"
 RUNS = "runs"
 FAILURES = "failures"
 _LOCK = ".lock"
+
+_SHOWN = 3
+"""Runs a warning about a changed plan names before it counts the rest."""
 
 _LOG = get_logger(__name__)
 
@@ -328,9 +333,23 @@ class Store:
             },
         )
 
-    def write_plan(self, plan: Plan) -> None:
-        """Write ``plan.json``, warning about problems that changed since the last plan."""
+    def write_plan(self, plan: Plan) -> PlanChange:
+        """Write ``plan.json`` and report how it differs from the plan it replaces.
+
+        A plan can change while the campaign file, and so the config hash,
+        stays the same: the plan also follows the metadata the registered
+        solvers declare, the content of the problems, and the library that
+        plans. When the directory holds a plan of the same config hash, a
+        warning names the problems whose content changed, and one names the
+        runs that left the plan and the runs that entered it. The records of
+        runs that left stay in the directory and are no longer read.
+
+        Returns:
+            The runs that left and entered. Empty when the directory holds
+            no plan, one that cannot be read, or one of another config hash.
+        """
         path = self.directory / PLAN_FILE
+        change = PlanChange()
         if path.is_file():
             try:
                 previous = read_plan(self.directory)
@@ -344,7 +363,27 @@ class Store:
                             "problem %s changed since the last session; its runs will run again",
                             problem.id,
                         )
+                left = [run for run in previous.runs if not plan.has_run(run.run_id)]
+                entered = [run for run in plan.runs if not previous.has_run(run.run_id)]
+                change = PlanChange(
+                    tuple(run.to_dict() for run in left),
+                    tuple(run.to_dict() for run in entered),
+                )
+                if change:
+                    _LOG.warning(
+                        "the plan of campaign %s changed under config hash %s: %d run(s) left "
+                        "it and %d entered it%s%s; the campaign file is the same, so the "
+                        "solvers' metadata, the problems, or the library changed; records of "
+                        "runs that left stay in the directory and are no longer read",
+                        plan.campaign,
+                        plan.config_hash[:12],
+                        len(left),
+                        len(entered),
+                        _named("; left", left),
+                        _named("; entered", entered),
+                    )
         atomic_write_json(path, plan.to_dict())
+        return change
 
     def ledger(self, plan: Plan) -> Ledger:
         """Read which runs of a plan are complete and which attempts failed.
@@ -457,6 +496,19 @@ def _parse[T](path: Path, build: Callable[[object], T]) -> T:
         return build(_read(path))
     except SerializationError as error:
         raise SerializationError(f"{path}: {error}") from error
+
+
+def _named(heading: str, runs: list[PlannedRun]) -> str:
+    """Name the first runs of a list after ``heading``, or return an empty string."""
+    if not runs:
+        return ""
+    shown = ", ".join(
+        f"{run.run_id} ({run.solver} on {run.problem} under {run.protocol}, "
+        f"replicate {run.replicate})"
+        for run in runs[:_SHOWN]
+    )
+    more = f" and {len(runs) - _SHOWN} more" if len(runs) > _SHOWN else ""
+    return f"{heading}: {shown}{more}"
 
 
 def _foreign(found_id: str, found_hash: str, run_id: str, config_hash: str) -> str:
