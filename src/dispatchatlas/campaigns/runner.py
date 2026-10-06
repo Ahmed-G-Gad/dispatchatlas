@@ -365,6 +365,7 @@ class _Books:
             cpu=measured.cpu,
             concurrent=measured.concurrent,
             waited_seconds=measured.waited_seconds,
+            shared_clock=measured.shared_clock,
         )
         identity: dict[str, Any] = {
             "run_id": planned.run_id,

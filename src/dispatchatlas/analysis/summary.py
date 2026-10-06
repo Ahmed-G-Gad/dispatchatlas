@@ -609,6 +609,9 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
 
     The ``budget`` limitation names the solvers whose completed runs took
     more wall time than the limit allows with ``overrun_tolerance``. The
+    ``clock`` limitation counts the completed runs whose records state that
+    the solver's clock started at the start of the attempt, when only some
+    of them do. The
     ``timing`` limitation states under which load the completed runs that
     lasted at least half of the time limit executed: the spread of their
     processor share and of the number of runs executing at once. Shorter
@@ -643,6 +646,22 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
                 f"{config.overrun_tolerance:g} allows: " + "; ".join(late) + ". These runs "
                 "searched for longer than the protocol states, and their results are compared "
                 "as they are.",
+            )
+        )
+    shared = sum(
+        1 for run in completed if run.record is not None and run.record.provenance.shared_clock
+    )
+    if 0 < shared < len(completed):
+        found.append(
+            Limitation(
+                "clock",
+                f"Under protocol {scope.protocol}, {shared} of the {len(completed)} completed "
+                "runs state that the clock of their solver started with the engine's, at the "
+                f"start of the attempt, and {len(completed) - shared} do not state where it "
+                "started. A solver whose clock starts later, after its set-up, has the whole "
+                "time limit for its search and reports an elapsed time without that set-up, so "
+                "the time limit and the elapsed times of the two groups may not measure the "
+                "same thing.",
             )
         )
     # A run that ended long before the limit was not bounded by the clock, and

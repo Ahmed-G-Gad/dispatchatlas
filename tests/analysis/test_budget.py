@@ -202,6 +202,45 @@ def test_the_timing_limitation_of_a_protocol_with_another_bound_does_not_call_th
     assert timing.message.startswith("Protocol p gives every run the same wall-clock time, so")
 
 
+def _clocked(dataset: Dataset, stated: Sequence[bool | None]) -> Dataset:
+    """Give the completed runs, in turn, the listed statements about their solver's clock."""
+    marks = iter(stated)
+    runs = []
+    for item in dataset.runs:
+        record = item.record
+        if record is not None:
+            provenance = replace(record.provenance, shared_clock=next(marks))
+            record = replace(record, provenance=provenance)
+        runs.append(replace(item, record=record))
+    return replace(dataset, runs=tuple(runs))
+
+
+def test_the_clock_limitation_reports_records_that_do_not_all_state_a_shared_clock() -> None:
+    walls = {"a": [1.0] * 4, "b": [1.0] * 4}
+    timed = _timed(make_dataset(CELLS), walls)
+    mixed = summarize(_clocked(timed, [True, True, True, None, None, False, True, True]))
+    (clock,) = [item for item in mixed.limitations if item.topic == "clock"]
+    assert clock.message.startswith(
+        "Under protocol p, 5 of the 8 completed runs state that the clock of their solver "
+        "started with the engine's, at the start of the attempt, and 3 do not state where it "
+        "started."
+    )
+    # Records that agree, all stating it or none, leave nothing to report.
+    for stated in ([True] * 8, [None] * 8):
+        agreed = summarize(_clocked(timed, stated))
+        assert "clock" not in {item.topic for item in agreed.limitations}
+    # Without a time limit no clock bounds a run.
+    untimed = summarize(_clocked(make_dataset(CELLS), [True] * 4 + [None] * 4))
+    assert "clock" not in {item.topic for item in untimed.limitations}
+
+
+def test_a_campaign_states_the_shared_clock_of_every_completed_run(late_campaign: Dataset) -> None:
+    records = [run.record for run in late_campaign.runs if run.record is not None]
+    assert len(records) == 4
+    assert all(record.provenance.shared_clock is True for record in records)
+    assert "clock" not in {item.topic for item in summarize(late_campaign).limitations}
+
+
 def _failed(
     dataset: Dataset, kinds: Mapping[str, Sequence[ErrorKind]], first: ErrorKind | None = None
 ) -> Dataset:

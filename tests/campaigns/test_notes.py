@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from dispatchatlas.analysis import load_dataset
+from dispatchatlas.analysis import load_dataset, summarize
 from dispatchatlas.analysis.tables import runs_table
 from dispatchatlas.campaigns import (
     Campaign,
@@ -283,17 +283,43 @@ def test_a_directory_whose_records_lack_notes_resumes_analyses_and_replays(tmp_p
         path = run_path(summary.directory, item.solver, item.problem, item.replicate, item.protocol)
         document = json.loads(path.read_text())
         del document["notes"]
+        del document["provenance"]["shared_clock"]
         path.write_text(json.dumps(document))
     again = run(campaign, tmp_path, registry=REGISTRY)
     assert (again.attempted, again.completed) == (0, summary.completed)
     records = read_runs(summary.directory)
     assert len(records) == summary.completed
     assert all(record.notes == () for record in records)
+    assert all(record.provenance.shared_clock is None for record in records)
     assert replay(campaign, tmp_path, registry=REGISTRY).ok
     table = runs_table(load_dataset(summary.directory))
     assert len(table.rows) == summary.completed
     wall = [column.key for column in table.columns].index("wall_seconds")
     assert all(isinstance(row[wall], float) for row in table.rows)
+
+
+def test_a_directory_resumed_over_records_that_state_no_clock_is_reported(tmp_path: Path) -> None:
+    protocol = Protocol("clock", StopCriteria(time_limit=5.0, max_evaluations=15))
+    first = tiny_campaign(solvers=(SolverSpec("input-order"),), protocols=(protocol,), replicates=1)
+    summary = run(first, tmp_path, registry=REGISTRY)
+    for item in read_plan(summary.directory).runs:
+        path = run_path(summary.directory, item.solver, item.problem, item.replicate, item.protocol)
+        document = json.loads(path.read_text())
+        assert document["provenance"]["shared_clock"] is True
+        del document["provenance"]["shared_clock"]
+        path.write_text(json.dumps(document))
+    stated = summarize(load_dataset(summary.directory))
+    assert "clock" not in {item.topic for item in stated.limitations}
+    # The same directory holds, beside those records, runs this engine timed.
+    records = read_runs(summary.directory)
+    path = run_path(summary.directory, "input-order", records[0].problem.id, 0, "clock")
+    document = json.loads(path.read_text())
+    document["provenance"]["shared_clock"] = True
+    path.write_text(json.dumps(document))
+    mixed = summarize(load_dataset(summary.directory))
+    (clock,) = [item for item in mixed.limitations if item.topic == "clock"]
+    assert "1 of the 2 completed runs state that the clock of their solver" in clock.message
+    assert "and 1 do not state where it started" in clock.message
 
 
 def _document(completion: Completion, **changes: Any) -> dict[str, Any]:

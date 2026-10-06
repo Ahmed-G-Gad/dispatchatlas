@@ -172,6 +172,10 @@ class Measurement:
             worker's slot until the instant the worker states as the start
             of the solve. ``None`` when the solve never began, and for the
             sequential backend.
+        shared_clock: ``True`` when the solver was called with its clocks
+            starting at the instant ``wall_seconds`` counts from, as
+            :func:`attempt` calls it. ``None`` for an attempt that did not
+            reach that call or that the engine ended.
     """
 
     started: str
@@ -184,6 +188,7 @@ class Measurement:
     cpu: int | None = None
     concurrent: int | None = None
     waited_seconds: float | None = None
+    shared_clock: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -622,6 +627,7 @@ def _measurement(
         peak_rss_bytes=_peak_rss() if measured else None,
         worker=worker,
         hard_limit=hard_limit,
+        shared_clock=True,
     )
 
 

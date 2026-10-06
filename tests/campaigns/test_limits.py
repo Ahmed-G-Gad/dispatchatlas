@@ -130,13 +130,14 @@ def test_failure_records_without_the_new_fields_still_load() -> None:
     del document["solve_started"]
     del document["last_incumbent"]
     del document["limit_incumbent"]
-    for key in ("waited_seconds", "cpu", "concurrent"):
+    for key in ("waited_seconds", "cpu", "concurrent", "shared_clock"):
         del document["provenance"][key]
     loaded = FailureRecord.from_dict(document)
     assert loaded.solve_started is None
     assert loaded.last_incumbent is None
     assert loaded.limit_incumbent is None
     assert loaded.provenance.waited_seconds is None
+    assert loaded.provenance.shared_clock is None
     earlier = _failure().to_dict()
     del earlier["limit_incumbent"]
     assert FailureRecord.from_dict(earlier) == _failure(limit_incumbent=None)

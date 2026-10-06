@@ -438,9 +438,15 @@ class Provenance:
             worker's slot until the instant the worker states as the start
             of the solve. They hold the start of the worker's interpreter and the
             loading of plugins, for a worker that started for this attempt,
-            and the rebuilding of the solver and the problem. ``None`` when
-            the solve never began, for the sequential backend, and when the
-            record does not state it.
+            the rebuilding of the solver and the problem, and the
+            preparation of the solver. ``None`` when the solve never began,
+            for the sequential backend, and when the record does not state
+            it.
+        shared_clock: Whether the clocks of the solver started at the
+            instant ``wall_seconds`` counts from, so that the elapsed time
+            of the outcome, the times of its trace, and the time limit
+            count from the start of the attempt. ``None`` when the record
+            does not state it, as for an attempt the engine ended.
     """
 
     attempt: int
@@ -455,6 +461,7 @@ class Provenance:
     cpu: int | None = None
     concurrent: int | None = None
     waited_seconds: float | None = None
+    shared_clock: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the provenance as a JSON-ready dictionary."""
@@ -471,14 +478,15 @@ class Provenance:
             "cpu": self.cpu,
             "concurrent": self.concurrent,
             "waited_seconds": self.waited_seconds,
+            "shared_clock": self.shared_clock,
         }
 
     @classmethod
     def from_dict(cls, document: object) -> Provenance:
         """Build provenance from :meth:`to_dict` output.
 
-        The fields ``cpu``, ``concurrent``, and ``waited_seconds`` may be
-        absent, and are then ``None``.
+        The fields ``cpu``, ``concurrent``, ``waited_seconds``, and
+        ``shared_clock`` may be absent, and are then ``None``.
         """
         fields = _Fields(document, "a provenance block")
         rss = fields.raw("peak_rss_bytes")
@@ -495,6 +503,7 @@ class Provenance:
             cpu=fields.absent_or_integer("cpu"),
             concurrent=fields.absent_or_integer("concurrent"),
             waited_seconds=fields.absent_or_number("waited_seconds"),
+            shared_clock=fields.absent_or_boolean("shared_clock"),
         )
 
 
