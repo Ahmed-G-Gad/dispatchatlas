@@ -69,13 +69,18 @@ import json
 import math
 import numbers
 import os
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from dispatchatlas.benchmarks._common import check_number, check_objectives, eligible_nodes
+from dispatchatlas.benchmarks._common import (
+    check_number,
+    check_objectives,
+    check_problem_id,
+    default_problem_id,
+    eligible_nodes,
+)
 from dispatchatlas.benchmarks.continuum.platform import Platform
 from dispatchatlas.core.errors import ConfigError, ModelError, SerializationError
 from dispatchatlas.core.model import Dependency, Problem, Resource, Task
@@ -149,10 +154,10 @@ def read_wfcommons(
     try:
         names = check_objectives(objectives, due_dates=False)
         unit = check_number("bytes_per_unit", bytes_per_unit, positive=True)
-        _check_arguments(platform, tiers, problem_id)
+        chosen = check_problem_id(problem_id)
+        nodes = eligible_nodes(platform, tiers)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for read_wfcommons: {error}") from error
-    nodes = _nodes(platform, tiers)
     document, stem = _load(source)
     version = document.get("schemaVersion")
     if version not in SCHEMA_VERSIONS:
@@ -164,7 +169,7 @@ def read_wfcommons(
     edges = _edges(rows)
     name = document.get("name")
     label = name if isinstance(name, str) else ""
-    identifier = problem_id if problem_id is not None else stem or _slug(label) or "wfcommons"
+    identifier = chosen if chosen is not None else default_problem_id((stem, label), "wfcommons")
     by_key = {row.key: row for row in rows}
     tasks = tuple(_task(row, platform, nodes, identifier) for row in rows)
     dependencies = tuple(
@@ -187,27 +192,8 @@ def read_wfcommons(
         raise SerializationError(f"WfFormat instance {identifier!r} is invalid: {error}") from error
 
 
-def _check_arguments(platform: object, tiers: object, problem_id: object) -> None:
-    """Check the platform, the tiers, and the problem id, refusing them with ``ValueError``."""
-    if not isinstance(platform, Platform):
-        raise ValueError(f"platform must be a Platform, got {type(platform).__name__}")
-    if tiers is not None:
-        if isinstance(tiers, str) or not isinstance(tiers, Sequence):
-            raise ValueError(f"tiers must be a sequence of tier names, got {tiers!r}")
-        if not all(isinstance(tier, str) for tier in tiers):
-            raise ValueError(f"tiers must be a sequence of tier names, got {list(tiers)}")
-        if len(set(tiers)) != len(tiers):
-            raise ValueError(f"tiers repeat a name: {list(tiers)}")
-    if problem_id is not None and (
-        not isinstance(problem_id, str) or not problem_id or problem_id != problem_id.strip()
-    ):
-        raise ValueError(
-            f"problem_id must be a non-empty string without surrounding spaces, got {problem_id!r}"
-        )
-
-
 def _load(source: object) -> tuple[Mapping[str, Any], str]:
-    """Return the document and, for a file, the id that its name gives."""
+    """Return the document and, for a file, its name without extension, else an empty string."""
     if isinstance(source, Mapping):
         return source, ""
     if not isinstance(source, (str, os.PathLike)):
@@ -230,7 +216,7 @@ def _load(source: object) -> tuple[Mapping[str, Any], str]:
         ) from error
     except ValueError as error:
         raise SerializationError(f"invalid JSON in {path}: {error}") from error
-    return _mapping(document, "document"), _slug(path.stem)
+    return _mapping(document, "document"), path.stem
 
 
 def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -393,18 +379,6 @@ def _shared_bytes(parent: _Row, child: _Row, sizes: Mapping[str, int]) -> int:
             )
         total += sizes[name]
     return total
-
-
-def _nodes(platform: Platform, tiers: Sequence[str] | None) -> tuple[Resource, ...]:
-    try:
-        return eligible_nodes(platform, tiers)
-    except ValueError as error:
-        raise ConfigError(f"invalid arguments for read_wfcommons: {error}") from error
-
-
-def _slug(text: str) -> str:
-    """Return ``text`` as an id that starts with a letter or digit, empty if nothing is left."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).lstrip("-._").rstrip("-.")
 
 
 def _mapping(value: object, where: str) -> Mapping[str, Any]:

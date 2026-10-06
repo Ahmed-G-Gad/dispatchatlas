@@ -94,6 +94,14 @@ turns a task of the workload into a task with one mode per eligible node,
 which holds one core of that node for `work / speed` seconds. `tiers` names
 the tiers whose nodes are eligible, every tier except the devices by default.
 
+The three readers check their arguments in one way. `tiers` is a sequence
+such as a list, never a single string, that names each tier once, and every
+tier it names has a node. The problems have no due dates, so an objective
+that needs them is refused. A value that is refused raises `ConfigError`. A
+number in a source is written in ASCII digits with an optional minus sign,
+fraction, and exponent: `nan`, `inf`, `1_000`, and `+1.5` are not numbers to
+any of the readers.
+
 `read_wfcommons` reads a recorded execution of a real scientific workflow in
 the WfCommons format (Coleman et al. 2022). The recorded runtime of a task is
 its work, and every parent-child pair becomes a dependency that carries the
@@ -118,10 +126,11 @@ format of the synthetic Montage, CyberShake, Epigenomics, LIGO Inspiral, and
 SIPHT workflows of Bharathi et al. (2008) and Juve et al. (2013). Every job
 becomes a task whose `runtime` is its work, and every parent-child pair
 becomes a dependency that carries the sizes the parent gives the files it
-writes and the child reads. The problem takes the file name without its
-extension as its id, unless `problem_id` sets another. A file that is not
-UTF-8 text, or that has a document type or entity declaration, a negative
-runtime, or a negative size, is refused:
+writes and the child reads. The problem is named as `read_wfcommons` names
+one read from a file: after the file, or else after the `name` of the
+workflow, unless `problem_id` sets another id. A file that is not UTF-8 text,
+or that has a document type or entity declaration, a negative runtime, or a
+negative size, is refused:
 
 ```python
 from dispatchatlas.benchmarks import read_pegasus_dax, three_tier_platform
@@ -131,11 +140,11 @@ print(montage.id)  # Montage_25
 ```
 
 `iter_alibaba_batch` reads the batch jobs of the Alibaba 2018 cluster trace
-(Alibaba Group 2018; Guo et al. 2019), from the table
-`batch_task.csv` that you download from the trace's repository. It reads the
-table as a stream, one job at a time, so the table never has to fit in memory.
-It decodes the task graph of each job from its task names (Tian, Zheng and
-Wang 2019) and yields one problem per job:
+(Alibaba Group 2018; Guo et al. 2019), from the table `batch_task.csv` that
+you download from the trace's repository. It reads the table as a stream, one
+job at a time, so the table never has to fit in memory. It decodes the task
+graph of each job from its task names (Tian, Zheng and Wang 2019) and yields
+one problem per job:
 
 ```python
 from collections import Counter

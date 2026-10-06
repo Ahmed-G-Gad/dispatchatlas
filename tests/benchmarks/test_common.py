@@ -1,8 +1,9 @@
-"""The helpers the built-in families share."""
+"""The helpers the built-in families and readers share."""
 
 from __future__ import annotations
 
 import math
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import ClassVar
@@ -19,18 +20,23 @@ from dispatchatlas.benchmarks._common import (
     check_objectives,
     check_optional_positive,
     check_per_item,
+    check_problem_id,
     check_seed,
+    decimal_number,
+    default_problem_id,
     eligible_nodes,
     floor_tolerant,
     format_tag,
+    id_from_name,
     instance_id,
     instance_metadata,
     numbered_ids,
     round_half_up,
 )
-from dispatchatlas.benchmarks.continuum import three_tier_platform
+from dispatchatlas.benchmarks.continuum import NodeSpec, three_tier_platform
 from dispatchatlas.benchmarks.continuum.platform import Platform
 from dispatchatlas.benchmarks.registry import FamilyInfo
+from dispatchatlas.campaigns.config import check_name
 from dispatchatlas.core import ModelError, Network, Resource
 
 
@@ -134,6 +140,28 @@ def test_number_check_returns_floats():
         check_optional_positive("x", 0.0)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [10**400, -(10**400), 10**5000],
+    ids=["401 digits", "negative", "5001 digits"],
+)
+def test_number_check_refuses_an_integer_too_large_for_a_float(value):
+    # float() raises OverflowError for these, and an integer of more than 4300 digits
+    # cannot be written in a message either.
+    message = "^x must be a finite number, got an integer too large for a float$"
+    with pytest.raises(ValueError, match=message):
+        check_number("x", value)
+    with pytest.raises(ValueError, match=message):
+        check_number("x", value, minimum=-math.inf, maximum=1.0, positive=True)
+    with pytest.raises(ValueError, match=message):
+        check_optional_positive("x", value)
+    with pytest.raises(ValueError, match=r"^speed must be a finite number, got an integer too"):
+        NodeSpec(speed=value)
+    # The largest integers a float holds are still read.
+    assert check_number("x", 2**1023) == 2.0**1023
+    assert check_number("x", 10**308) == 1e308
+
+
 def test_objective_check():
     assert check_objectives("makespan") == ("makespan",)
     assert check_objectives(["makespan", "total_tardiness"]) == ("makespan", "total_tardiness")
@@ -209,6 +237,188 @@ def test_eligible_nodes_refuse_platforms_that_cannot_run_a_task():
     with pytest.raises(ValueError, match=r"node 'b-0' has capacity 0\.5, less than the one core"):
         eligible_nodes(platform, None)
     assert eligible_nodes(platform, ("a",)) == nodes[:1]
+
+
+@pytest.mark.parametrize("platform", [None, "cloud", 3, {}, three_tier_platform().resources])
+def test_eligible_nodes_refuse_what_is_not_a_platform(platform):
+    message = f"^platform must be a Platform, got {type(platform).__name__}$"
+    for tiers in (None, ("cloud",), "cloud"):
+        with pytest.raises(ValueError, match=message):
+            eligible_nodes(platform, tiers)
+
+
+def test_a_problem_id_is_kept_as_given_or_refused():
+    assert check_problem_id(None) is None
+    assert check_problem_id("run-1") == "run-1"
+    # An id the caller gives is not rewritten.
+    assert check_problem_id("_a b/c.") == "_a b/c."
+    for value in ("", " ", " x", "x ", "x\n", "\t", 7, 0, False, b"x", ["x"], ("x",)):
+        with pytest.raises(ValueError, match=r"^problem_id must be a non-empty string without"):
+            check_problem_id(value)
+    with pytest.raises(ValueError, match=r"surrounding spaces, got ''$"):
+        check_problem_id("")
+
+
+@pytest.mark.parametrize(
+    ("name", "identifier"),
+    [
+        ("Montage_25", "Montage_25"),
+        ("a.b-c_d", "a.b-c_d"),
+        ("my flow (1)", "my-flow-1"),
+        ("Map Reduce/1", "Map-Reduce-1"),
+        ("a\nb\t\tc", "a-b-c"),
+        ("_private run", "private-run"),
+        ("..hidden", "hidden"),
+        ("-._x_.-", "x_"),
+        ("caf\N{LATIN SMALL LETTER E WITH ACUTE}", "caf"),
+        ("na\N{LATIN SMALL LETTER I WITH DIAERESIS}ve run", "na-ve-run"),
+        ("\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT TWO}", ""),
+        ("", ""),
+        ("   ", ""),
+        ("///", ""),
+        ("_", ""),
+        ("-.-", ""),
+    ],
+)
+def test_an_id_made_from_a_name_can_name_a_file(name, identifier):
+    assert id_from_name(name) == identifier
+    if identifier:
+        assert check_name(identifier, "problem id") == identifier
+        assert id_from_name(identifier) == identifier
+        assert check_problem_id(identifier) == identifier
+
+
+def test_a_default_problem_id_comes_from_the_first_name_that_leaves_one():
+    assert default_problem_id(("run 01 (b)", "Shared Name"), "fallback") == "run-01-b"
+    assert default_problem_id(("---", "Shared Name"), "fallback") == "Shared-Name"
+    assert default_problem_id(("", "_shared"), "fallback") == "shared"
+    assert default_problem_id(("", "///"), "fallback") == "fallback"
+    assert default_problem_id((), "fallback") == "fallback"
+    assert default_problem_id(iter(["_", "b c"]), "fallback") == "b-c"
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ("0", 0.0),
+        ("12", 12.0),
+        ("007", 7.0),
+        ("-12", -12.0),
+        ("0.5", 0.5),
+        (".5", 0.5),
+        ("5.", 5.0),
+        ("-.5", -0.5),
+        ("1e3", 1000.0),
+        ("1E3", 1000.0),
+        ("1e+3", 1000.0),
+        ("1e-3", 0.001),
+        ("2.05e1", 20.5),
+        (".25e+6", 250000.0),
+        ("1.7e308", 1.7e308),
+        ("4.9e-324", 5e-324),
+        ("1e-400", 0.0),
+    ],
+)
+def test_decimal_numbers_are_read(text, value):
+    number = decimal_number(text)
+    assert isinstance(number, float)
+    assert number == value
+    assert number == float(text)
+
+
+@pytest.mark.parametrize("text", ["-0", "-0.0", "-.0", "-0e5", "-1e-400"])
+def test_a_negative_zero_is_read_as_zero(text):
+    assert str(float(text)) == "-0.0"
+    assert str(decimal_number(text)) == "0.0"
+
+
+def test_a_decimal_number_too_large_for_a_float_is_an_infinity():
+    assert decimal_number("1e999") == math.inf
+    assert decimal_number("-1e999") == -math.inf
+    assert decimal_number("9" * 400) == math.inf
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        " ",
+        "+1",
+        "+.5",
+        "+1e3",
+        " 1",
+        "1 ",
+        "1\n",
+        "\t1",
+        "1 000",
+        "nan",
+        "NaN",
+        "-nan",
+        "inf",
+        "-inf",
+        "Infinity",
+        "1_000",
+        "1__0",
+        "_1",
+        "1_",
+        "1e1_0",
+        "1,5",
+        "1.2.3",
+        "1e",
+        "e5",
+        "1e+",
+        "1e5.0",
+        "1e2e3",
+        "--1",
+        "-+1",
+        "1-",
+        "-",
+        ".",
+        "-.",
+        "0x10",
+        "1f",
+        "1d0",
+        "1/2",
+        "one",
+        "\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT TWO}",
+        "\N{FULLWIDTH DIGIT TWO}0",
+        "1e\N{FULLWIDTH DIGIT FIVE}",
+        "\N{DEVANAGARI DIGIT NINE}",
+        "\N{SUPERSCRIPT TWO}",
+        "1\N{NO-BREAK SPACE}",
+        "\N{MINUS SIGN}1",
+    ],
+)
+def test_other_texts_are_not_decimal_numbers(text):
+    with pytest.raises(ValueError, match=r"^not a decimal number$"):
+        decimal_number(text)
+
+
+def test_long_texts_are_read_or_refused_in_time_proportional_to_their_length():
+    digits = "9" * 200_000
+    refused = [
+        f"{digits}x",
+        f"1.{digits}x",
+        f".{digits}x",
+        f"1e{digits}x",
+        f"1e-{digits}x",
+        f"{digits}e",
+        "-" * 200_000,
+        "1" + "e1" * 100_000,
+        "1" + "." * 200_000,
+        "+" + digits,
+    ]
+    started = time.perf_counter()
+    for text in refused:
+        # The message does not repeat the text.
+        with pytest.raises(ValueError, match=r"^not a decimal number$"):
+            decimal_number(text)
+    assert decimal_number(digits) == math.inf
+    assert decimal_number(f"1.{digits}") == 2.0
+    assert decimal_number(f"1e-{digits}") == 0.0
+    assert decimal_number("0." + "0" * 200_000 + "1") == 0.0
+    # Each text takes milliseconds; a check that backtracks would take minutes.
+    assert time.perf_counter() - started < 30.0
 
 
 def test_numbered_ids_share_one_width():

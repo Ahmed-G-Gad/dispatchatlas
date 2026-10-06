@@ -23,13 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trace, which decodes each job's task graph and reports every job it skips
   with a reason; instance catalogs with SHA-256 manifests; and descriptive
   instance features.
-- `read_wfcommons` reads WfFormat 1.4, 1.5, and 1.6 instances onto a continuum
-  platform. A problem read from a file is named after the file, without its
-  extension, a parsed document after its instance name, and the instance name
-  is kept in the problem's metadata. A document that contradicts itself is
-  refused: a task or an execution entry listed twice, an execution entry for
-  a task the specification does not list, or a file in which a JSON object
-  repeats a key.
+- Three of the readers map a workload onto a continuum platform:
+  `read_wfcommons` for WfFormat 1.4, 1.5, and 1.6 instances,
+  `read_pegasus_dax` for Pegasus DAX files, and `iter_alibaba_batch` for the
+  Alibaba trace. They choose nodes from the same `tiers` argument and refuse
+  the same values of it, refuse an objective that needs due dates, and read
+  numbers written in ASCII digits with an optional minus sign, fraction, and
+  exponent. A problem read from one file is named after the file, without its
+  extension, and an empty `problem_id` is refused.
+- `read_wfcommons` names a parsed document after its instance name and keeps
+  the instance name in the problem's metadata. A document that contradicts
+  itself is refused: a task or an execution entry listed twice, an execution
+  entry for a task the specification does not list, or a file in which a JSON
+  object repeats a key.
 - Solvers from dispatching rules, list scheduling, and constructive
   heuristics to local search, population and swarm methods, multi-objective
   evolutionary algorithms, learning methods, hyper-heuristics, exact CP-SAT,

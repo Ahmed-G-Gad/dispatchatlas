@@ -161,6 +161,7 @@ from dispatchatlas.benchmarks._common import (
     check_int,
     check_number,
     check_objectives,
+    decimal_number,
     eligible_nodes,
 )
 from dispatchatlas.benchmarks.continuum.platform import Platform
@@ -227,9 +228,6 @@ _REMEMBERED_JOBS = 1024
 
 _INTEGER_DIGITS = 18
 """Most digits of an integer field; every such integer fits in 64 bits."""
-
-_NUMBER_CHARACTERS = "0123456789.eE+-"
-"""The characters of a decimal number."""
 
 _SHOWN = 40
 """Most characters of a malformed field that an error message repeats."""
@@ -418,8 +416,6 @@ def iter_alibaba_batch(
         data = check_number("edge_data", edge_data)
         _check_callback(on_skip)
         _check_source(source)
-        if not isinstance(platform, Platform):
-            raise ValueError(f"platform must be a Platform, got {type(platform).__name__}")
         nodes = eligible_nodes(platform, tiers)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for iter_alibaba_batch: {error}") from error
@@ -530,17 +526,17 @@ def _number(text: str) -> float | None:
     """Return a decimal field as a number, or ``None`` when it is empty.
 
     Raises:
-        ValueError: If the field is not a finite decimal number in ASCII
-            digits with an optional minus sign, fraction, and exponent.
+        ValueError: If the field is not a finite decimal number in the form
+            that :func:`~dispatchatlas.benchmarks._common.decimal_number`
+            reads: ASCII digits with an optional minus sign, fraction, and
+            exponent.
     """
     if not text:
         return None
-    if text.strip(_NUMBER_CHARACTERS) or text[0] == "+":
-        raise ValueError(text)
-    value = float(text)
+    value = decimal_number(text)
     if not math.isfinite(value):
         raise ValueError(text)
-    return value + 0.0
+    return value
 
 
 def _plain(text: str) -> bool:

@@ -52,11 +52,13 @@ another reads adds none by itself, and a dependency between two jobs that
 share no file carries no data. Each parent-child pair is counted once.
 
 Runtimes and sizes are never invented or corrected. They are finite decimal
-numbers in ASCII digits, with an optional sign, fraction, and exponent, and
-may have white space around them. A job without a runtime, or with a negative
-one, is refused, as is a negative size. Zero runtimes are accepted. A runtime
-too large to give a finite duration on a node, and files too large to give a
-dependency a finite amount of data, are refused as well.
+numbers in ASCII digits, with an optional minus sign, fraction, and exponent,
+and may have the white space of XML around them. No other form is read, such
+as ``nan``, ``inf``, ``1_000``, a plus sign in front of the number, or digits
+outside ASCII. A job without a runtime, or with a negative one, is refused, as
+is a negative size. Zero runtimes are accepted. A runtime too large to give a
+finite duration on a node, and files too large to give a dependency a finite
+amount of data, are refused as well.
 
 The file must be UTF-8 text, with or without a byte-order mark. A file that
 contains a NUL character is refused: XML allows none, a file in UTF-16 or
@@ -83,7 +85,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from dispatchatlas.benchmarks._common import check_number, check_objectives
+from dispatchatlas.benchmarks._common import (
+    check_number,
+    check_objectives,
+    check_problem_id,
+    decimal_number,
+    default_problem_id,
+    eligible_nodes,
+)
 from dispatchatlas.benchmarks.continuum.platform import Platform
 from dispatchatlas.core.errors import ConfigError, ModelError, SerializationError
 from dispatchatlas.core.model import Dependency, Problem, Resource, Task
@@ -95,13 +104,6 @@ DAX_NAMESPACE = "http://pegasus.isi.edu/schema/DAX"
 
 _DECLARATION = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 """A document type or entity declaration, in any letter case."""
-
-_NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII)
-"""A decimal number in ASCII digits, with an optional exponent.
-
-Each digit can be matched by one part of the pattern only, so refusing a text
-takes time proportional to its length.
-"""
 
 _SPACES = " \t\r\n"
 """The white space of XML, which may surround a number."""
@@ -165,14 +167,20 @@ def read_pegasus_dax(
     Args:
         source: Path of the DAX file.
         platform: Nodes and network the workflow runs on.
-        tiers: Tiers whose nodes may run tasks. Defaults to every tier of the
-            platform except ``"device"``.
-        problem_id: Id of the problem. Defaults to the file name without its
-            extension, with characters outside letters, digits, ``.``, ``_``,
-            and ``-`` replaced, or else the ``name`` of the ``adag`` element
-            treated the same way. The file name comes first because many
-            files can share one ``adag`` name.
-        objectives: One objective name or several, primary first.
+        tiers: Tiers whose nodes may run tasks, as a sequence of names other
+            than a string, each tier once and each with a node. Defaults to
+            every tier of the platform except ``"device"``.
+        problem_id: Id of the problem, a non-empty string without surrounding
+            spaces. Defaults to the file name without its extension, and to
+            the ``name`` of the ``adag`` element when the file name leaves
+            nothing. In either default, characters outside letters, digits,
+            ``.``, ``_``, and ``-`` are replaced by ``-`` and leading
+            punctuation is dropped, so that the id starts with a letter or
+            digit. The file name comes first because many files can share one
+            ``adag`` name. A ``name`` that is absent or leaves nothing gives
+            way to ``"pegasus-dax"``.
+        objectives: One objective name or several, primary first. The problem
+            has no due dates, so an objective that needs them is refused.
         bytes_per_unit: Bytes per data unit of the platform's bandwidths.
 
     Returns:
@@ -183,26 +191,22 @@ def read_pegasus_dax(
             accepts, its content is inconsistent, or a runtime or the files
             of a dependency are too large for a finite duration or amount of
             data.
-        ConfigError: If an objective is unknown or repeated, no node of
-            ``tiers`` exists, ``bytes_per_unit`` is not a positive number, or
-            ``problem_id`` is not a non-empty string without surrounding
-            spaces.
+        ConfigError: If an objective is unknown, repeated, or needs due
+            dates, ``tiers`` is a string, repeats a tier, or names a tier
+            without a node, a node has less than one core,
+            ``bytes_per_unit`` is not a positive number, ``problem_id`` is
+            not a non-empty string without surrounding spaces, or
+            ``platform`` is not a platform.
         OSError: If the file cannot be read.
     """
     try:
-        names = check_objectives(objectives)
+        names = check_objectives(objectives, due_dates=False)
         check_number("bytes_per_unit", bytes_per_unit, positive=True)
+        identifier = check_problem_id(problem_id)
+        path = Path(source)
+        nodes = eligible_nodes(platform, tiers)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for read_pegasus_dax: {error}") from error
-    if problem_id is not None and (
-        not isinstance(problem_id, str) or not problem_id or problem_id != problem_id.strip()
-    ):
-        raise ConfigError(
-            "invalid arguments for read_pegasus_dax: problem_id must be a non-empty string "
-            f"without surrounding spaces, got {problem_id!r}"
-        )
-    path = Path(source)
-    nodes = _nodes(platform, tiers)
     try:
         root = _parse(_decode(path.read_bytes()))
         jobs = _jobs(root)
@@ -211,7 +215,8 @@ def read_pegasus_dax(
             for before, after in _edges(root, jobs)
         )
         name = root.get("name") or ""
-        identifier = problem_id or _slug(path.stem) or _slug(name) or "pegasus-dax"
+        if identifier is None:
+            identifier = default_problem_id((path.stem, name), "pegasus-dax")
         tasks = tuple(_task(job, platform, nodes, identifier) for job in jobs.values())
     except SerializationError as error:
         raise SerializationError(f"{path}: {error}") from error
@@ -388,18 +393,6 @@ def _task(job: _Job, platform: Platform, nodes: Sequence[Resource], group: str) 
         ) from error
 
 
-def _nodes(platform: Platform, tiers: Sequence[str] | None) -> tuple[Resource, ...]:
-    chosen = [tier for tier in platform.tiers if tier != "device"] if tiers is None else tiers
-    nodes = tuple(node for tier in chosen for node in platform.nodes(tier))
-    if not nodes:
-        raise ConfigError(f"the platform has no node in tiers {list(chosen)}")
-    return nodes
-
-
-def _slug(text: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")
-
-
 def _local(element: ET.Element) -> str:
     """Return the name of a DAX element, or an empty string for any other element."""
     tag = element.tag
@@ -430,16 +423,17 @@ def _reference(element: ET.Element, position: Mapping[str, int], where: str) -> 
 def _number(text: str, what: str) -> float:
     """Return the finite, non-negative decimal number written in ``text``.
 
-    The number is written in ASCII digits. XML white space around it is
-    allowed, and a negative zero is returned as zero.
+    The number has the form that
+    :func:`~dispatchatlas.benchmarks._common.decimal_number` reads. XML white
+    space around it is allowed, and a negative zero is returned as zero.
     """
-    stripped = text.strip(_SPACES)
-    if not _NUMBER.fullmatch(stripped):
-        raise SerializationError(f"{what} must be a number, found {_shown(text)}")
-    value = float(stripped)
+    try:
+        value = decimal_number(text.strip(_SPACES))
+    except ValueError:
+        raise SerializationError(f"{what} must be a number, found {_shown(text)}") from None
     if not math.isfinite(value) or value < 0.0:
         raise SerializationError(f"{what} must be finite and non-negative, found {_shown(text)}")
-    return value + 0.0
+    return value
 
 
 def _shown(text: str) -> str:

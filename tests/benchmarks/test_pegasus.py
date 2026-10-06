@@ -194,6 +194,8 @@ def test_problems_are_named_after_files_then_after_the_workflow(tmp_path):
     spaced = write(tmp_path, DOCUMENT, "my flow (1).dax")
     assert read_pegasus_dax(str(spaced), PLATFORM).id == "my-flow-1"
     assert read_pegasus_dax(spaced, PLATFORM, problem_id="chosen").id == "chosen"
+    # Leading punctuation is dropped, so that the id starts with a letter or digit.
+    assert read_pegasus_dax(write(tmp_path, DOCUMENT, "_draft (2).xml"), PLATFORM).id == "draft-2"
     assert read_pegasus_dax(write(tmp_path, DOCUMENT, "---.xml"), PLATFORM).id == "map-reduce"
     nameless = changed(('name="map reduce" ', ""))
     problem = read_pegasus_dax(write(tmp_path, nameless, "---.xml"), PLATFORM)
@@ -450,6 +452,13 @@ MALFORMED = [
     ([('runtime="20.5"', 'runtime="inf"')], "runtime of job 'ID00001' must be a number"),
     ([('runtime="20.5"', 'runtime="20,5"')], "runtime of job 'ID00001' must be a number"),
     ([('runtime="20.5"', 'runtime="2_0"')], "runtime of job 'ID00001' must be a number"),
+    # A plus sign in front of a number is refused, as the other readers refuse it.
+    ([('runtime="20.5"', 'runtime="+20.5"')], "runtime of job 'ID00001' must be a number"),
+    ([('runtime="20.5"', 'runtime=" +2.05e1 "')], "runtime of job 'ID00001' must be a number"),
+    (
+        [('link="input" size="2000000"', 'link="input" size="+2000000"')],
+        "size of file 'chunk_a' of job 'ID00001' must be a number, found '+2000000'",
+    ),
     # Digits outside ASCII: Arabic-Indic, full-width, and Devanagari.
     (
         [('runtime="20.5"', 'runtime="\N{ARABIC-INDIC DIGIT TWO}\N{ARABIC-INDIC DIGIT ZERO}"')],

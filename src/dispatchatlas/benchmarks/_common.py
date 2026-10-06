@@ -1,6 +1,7 @@
-"""Helpers shared by the built-in benchmark families.
+"""Helpers shared by the built-in benchmark families and readers.
 
-The families follow common conventions, which these helpers implement:
+The families and the readers follow common conventions, which these helpers
+implement:
 
 - **Parameters** are checked in ``__post_init__`` and refused with
   :class:`ValueError`, which the family registry reports as a
@@ -17,9 +18,13 @@ The families follow common conventions, which these helpers implement:
   :func:`check_per_item`.
 - **Integers computed from floats** tolerate rounding error:
   :func:`floor_tolerant`, :func:`ceil_tolerant`, and :func:`round_half_up`.
-- **Readers onto a continuum platform** choose the nodes that may run tasks
-  from the same ``tiers`` argument and refuse the same values:
-  :func:`eligible_nodes`.
+- **Readers onto a continuum platform** answer the questions they share in
+  one way. They choose the nodes that may run tasks from the same ``tiers``
+  argument and refuse the same values: :func:`eligible_nodes`. They check an
+  id the caller gives a problem, and otherwise derive one from the names the
+  source gives it: :func:`check_problem_id`, :func:`default_problem_id`, and
+  :func:`id_from_name`. They read a number written as text by one grammar:
+  :func:`decimal_number`.
 
 The module is private to :mod:`dispatchatlas.benchmarks`. Its names have no
 leading underscore because the modules of the package import them.
@@ -29,15 +34,13 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from dispatchatlas.core.errors import ModelError
 from dispatchatlas.core.model import Resource, Scalar
 from dispatchatlas.core.objectives import is_registered
-
-if TYPE_CHECKING:
-    from dispatchatlas.benchmarks.continuum.platform import Platform
 
 __all__ = [
     "DUE_DATE_OBJECTIVES",
@@ -51,10 +54,14 @@ __all__ = [
     "check_objectives",
     "check_optional_positive",
     "check_per_item",
+    "check_problem_id",
     "check_seed",
+    "decimal_number",
+    "default_problem_id",
     "eligible_nodes",
     "floor_tolerant",
     "format_tag",
+    "id_from_name",
     "instance_id",
     "instance_metadata",
     "numbered_ids",
@@ -212,11 +219,17 @@ def check_number(
 
     Raises:
         ValueError: If ``value`` is not a number, is a ``bool``, is not
-            finite, or lies outside the bounds.
+            finite, is an integer too large for a float, or lies outside the
+            bounds.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a number, got {value!r}")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise ValueError(
+            f"{name} must be a finite number, got an integer too large for a float"
+        ) from None
     if not math.isfinite(number):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
     if number < minimum or (maximum is not None and number > maximum):
@@ -276,14 +289,24 @@ def check_objectives(
     return result
 
 
-def eligible_nodes(platform: Platform, tiers: object) -> tuple[Resource, ...]:
+# ------------------------------------------------------------------ readers
+
+_UNSAFE_IN_ID = re.compile(r"[^A-Za-z0-9._-]+")
+"""A run of characters that an id derived from a name does not keep."""
+
+_DECIMAL_CHARACTERS = "0123456789.eE+-"
+"""The characters a decimal number is written in."""
+
+
+def eligible_nodes(platform: object, tiers: object) -> tuple[Resource, ...]:
     """Return the nodes of a continuum platform that may run the tasks of a reader.
 
     A reader gives every task one mode per returned node, and each mode holds
     one core of its node.
 
     Args:
-        platform: The platform.
+        platform: The platform, a
+            :class:`~dispatchatlas.benchmarks.continuum.platform.Platform`.
         tiers: The tiers whose nodes may run tasks: a sequence of tier names
             other than a string, each tier once and each with a node. ``None``
             stands for every tier of the platform except ``"device"``.
@@ -293,10 +316,15 @@ def eligible_nodes(platform: Platform, tiers: object) -> tuple[Resource, ...]:
         the platform for ``None``.
 
     Raises:
-        ValueError: If ``tiers`` is a string, is not a sequence of strings,
-            repeats a name, or names a tier without a node; if no node is
-            left; or if a node has less than one core.
+        ValueError: If ``platform`` is not a platform; if ``tiers`` is a
+            string, is not a sequence of strings, repeats a name, or names a
+            tier without a node; if no node is left; or if a node has less
+            than one core.
     """
+    from dispatchatlas.benchmarks.continuum.platform import Platform  # noqa: PLC0415 - circular
+
+    if not isinstance(platform, Platform):
+        raise ValueError(f"platform must be a Platform, got {type(platform).__name__}")
     if tiers is None:
         chosen = [tier for tier in platform.tiers if tier != "device"]
         if not chosen:
@@ -323,6 +351,82 @@ def eligible_nodes(platform: Platform, tiers: object) -> tuple[Resource, ...]:
                 "a task holds"
             )
     return nodes
+
+
+def check_problem_id(value: object) -> str | None:
+    """Return the id a caller gives a problem, or ``None`` when the caller gives none.
+
+    Raises:
+        ValueError: If ``value`` is neither ``None`` nor a non-empty string
+            without surrounding spaces. An empty string is refused, never
+            replaced by a default id.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(
+            f"problem_id must be a non-empty string without surrounding spaces, got {value!r}"
+        )
+    return value
+
+
+def id_from_name(name: str) -> str:
+    """Return ``name`` as an id that starts with a letter or digit, empty if nothing is left.
+
+    Every run of characters other than ASCII letters, ASCII digits, ``.``,
+    ``_``, and ``-`` becomes one ``-``. Then ``-``, ``.``, and ``_`` are
+    dropped from the start, and ``-`` and ``.`` from the end. An id of this
+    form can name a file, as the result store of a campaign requires of a
+    problem id.
+    """
+    return _UNSAFE_IN_ID.sub("-", name).lstrip("-._").rstrip("-.")
+
+
+def default_problem_id(names: Iterable[str], fallback: str) -> str:
+    """Return the id of a problem whose caller gives it none.
+
+    Args:
+        names: The names the source gives the problem, the preferred one
+            first. A reader of one problem per file lists the file name
+            without its extension and then the name written in the file, so
+            that files which share a written name get ids of their own.
+        fallback: The id when no name leaves one.
+
+    Returns:
+        The id :func:`id_from_name` makes of the first name that leaves one,
+        or ``fallback``.
+    """
+    for name in names:
+        identifier = id_from_name(name)
+        if identifier:
+            return identifier
+    return fallback
+
+
+def decimal_number(text: str) -> float:
+    """Return the decimal number written in ``text``.
+
+    The number is written in ASCII digits with an optional minus sign, an
+    optional fraction, and an optional exponent, as ``-12``, ``0.5``, ``.5``,
+    ``5.``, and ``1e-3`` are. No other text is a number: not ``nan`` or
+    ``inf``, and not a number with a plus sign in front, an underscore
+    between its digits, white space around it, or digits outside ASCII. The
+    form is checked without backtracking, in time proportional to the length
+    of the text.
+
+    Returns:
+        The number, a negative zero as zero. A number too large for a float
+        is returned as an infinity, for the caller to refuse.
+
+    Raises:
+        ValueError: If ``text`` is not such a number.
+    """
+    if not text or text.strip(_DECIMAL_CHARACTERS) or text[0] == "+":
+        raise ValueError("not a decimal number")
+    try:
+        return float(text) + 0.0
+    except ValueError:
+        raise ValueError("not a decimal number") from None
 
 
 # ------------------------------------------------------------------ builder data
