@@ -21,7 +21,7 @@ from dispatchatlas.solvers.learning.temporal_difference import Agent, Target
 from dispatchatlas.solvers.operators import random_modes, random_topological_order
 from dispatchatlas.solvers.rules import RandomSearch
 from dispatchatlas.solvers.scheduling import Decoded, Decoder
-from dispatchatlas.solvers.search import Exhausted, Search
+from dispatchatlas.solvers.search import Exhausted, Improvement, Search, listening
 from tests.helpers import chain_problem, random_problem
 
 
@@ -551,3 +551,53 @@ def test_learning_agents_report_the_schedule_their_policy_built(target: Target) 
     result = solve(problem, f"{target}-dispatching", max_evaluations=1)
     assert result.schedule == built.schedule(problem)
     assert result.evaluations == 1
+
+
+def test_a_listener_receives_every_new_incumbent() -> None:
+    problem = random_problem(5)
+    received: list[Improvement] = []
+    with listening(received.append):
+        search = Search(problem, StopCriteria(max_evaluations=200), 4, _info())
+    _sample(search)
+    result = search.result()
+    points = tuple(item.point for item in received)
+    assert len(points) >= 1
+    assert result.trace[: len(points)] == points
+    assert len(result.trace) - len(points) <= 1
+    last = received[-1]
+    assert last.objective == result.objective
+    assert last.objectives() == result.objectives
+    assert last.point.value == result.objectives[result.objective]
+    assert last.point.evaluations <= result.evaluations
+
+
+def test_listening_changes_no_result_and_ends_with_its_block() -> None:
+    problem = random_problem(5)
+    stop = StopCriteria(max_evaluations=120)
+    plain = Search(problem, stop, 9, _info())
+    _sample(plain)
+    received: list[Improvement] = []
+    with listening(received.append):
+        heard = Search(problem, stop, 9, _info())
+        _sample(heard)
+    assert received
+    assert heard.result().objectives == plain.result().objectives
+    assert heard.result().schedule == plain.result().schedule
+    assert heard.evaluations == plain.evaluations
+    count = len(received)
+    later = Search(problem, stop, 9, _info())
+    _sample(later)
+    assert len(received) == count
+
+
+def test_nested_listeners_restore_the_outer_one() -> None:
+    problem = chain_problem()
+    stop = StopCriteria(max_evaluations=5)
+    outer: list[Improvement] = []
+    inner: list[Improvement] = []
+    with listening(outer.append):
+        with listening(inner.append):
+            _sample(Search(problem, stop, 1, _info()))
+        _sample(Search(problem, stop, 1, _info()))
+    assert len(inner) >= 1
+    assert [item.point.value for item in outer] == [item.point.value for item in inner]

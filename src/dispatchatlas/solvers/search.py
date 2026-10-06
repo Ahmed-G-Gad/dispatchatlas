@@ -24,13 +24,19 @@ criterion fires; leaving the ``with`` block swallows it. Constructive solvers
 that build a schedule task by task hand it to :meth:`Search.submit` instead of
 decoding its order again, and schedules that change a parameter over the run
 read :meth:`Search.progress`.
+
+A search created inside :func:`listening` also reports every new incumbent to
+a listener, as an :class:`Improvement`. The campaign engine listens in this
+way to keep what a run had found when the run is killed.
 """
 
 from __future__ import annotations
 
+import contextlib
 import random
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from types import TracebackType
 from typing import TYPE_CHECKING, Self
 
@@ -53,7 +59,7 @@ if TYPE_CHECKING:
     from dispatchatlas.core.solver import SolverInfo
     from dispatchatlas.solvers.scheduling import Decoded
 
-__all__ = ["Candidate", "Exhausted", "Search"]
+__all__ = ["Candidate", "Exhausted", "Improvement", "Listener", "Search", "listening"]
 
 
 class Exhausted(Exception):  # noqa: N818 - it signals an end, not an error
@@ -77,6 +83,66 @@ class Candidate:
         self.score = score
         self.decoded = decoded
         self._vector: tuple[float, ...] | None = None
+
+
+class Improvement:
+    """A new incumbent of a search, as a listener receives it.
+
+    Attributes:
+        point: The trace point the search records for the incumbent: when the
+            search found it, its value of the primary objective, and whether
+            it is feasible.
+    """
+
+    __slots__ = ("_candidate", "_search", "point")
+
+    def __init__(self, search: Search, candidate: Candidate, point: TracePoint) -> None:
+        self._search = search
+        self._candidate = candidate
+        self.point = point
+
+    @property
+    def objective(self) -> str:
+        """Name of the objective the search optimises."""
+        return self._search.evaluator.objective.name
+
+    def objectives(self) -> dict[str, float]:
+        """Return every problem objective of the incumbent, keyed by name.
+
+        The values are computed from the incumbent's decoded schedule when
+        this is called, so a listener that drops an improvement pays nothing
+        for them. The schedule of an evaluated candidate does not change, so
+        the call is valid from another thread while the search goes on.
+        """
+        return self._search.evaluator.values(self._candidate.decoded)
+
+
+type Listener = Callable[[Improvement], None]
+"""What a search calls with each new incumbent."""
+
+_LISTENER: ContextVar[Listener | None] = ContextVar("dispatchatlas-search-listener", default=None)
+
+
+@contextlib.contextmanager
+def listening(listener: Listener) -> Iterator[None]:
+    """Report the new incumbents of the searches created inside the block.
+
+    A :class:`Search` created inside the block, in the thread that entered
+    it, calls ``listener`` each time its incumbent improves, for as long as
+    the search runs. The call is made inside the search and its time counts
+    as the solver's, so a listener returns at once and leaves any work for
+    later, such as :meth:`Improvement.objectives`. An exception it raises
+    ends the solver's run. A solver that does not run inside a
+    :class:`Search` reports nothing.
+
+    Args:
+        listener: Called with every :class:`Improvement`.
+    """
+    token = _LISTENER.set(listener)
+    try:
+        yield
+    finally:
+        _LISTENER.reset(token)
 
 
 class Search:
@@ -134,6 +200,7 @@ class Search:
         self._target = (
             None if stop.target is None else self.evaluator.objective.minimized(stop.target)
         )
+        self._listener = _LISTENER.get()
         self._started = time.perf_counter()
 
     # ------------------------------------------------------------ properties
@@ -307,15 +374,16 @@ class Search:
         if self.best is None or score < self.best.score:
             self.best = candidate
             self._last_improvement = self.iterations
-            self._trace.append(
-                TracePoint(
-                    self.elapsed,
-                    self.evaluations,
-                    self.iterations,
-                    self._reported(score),
-                    score.feasible,
-                )
+            point = TracePoint(
+                self.elapsed,
+                self.evaluations,
+                self.iterations,
+                self._reported(score),
+                score.feasible,
             )
+            self._trace.append(point)
+            if self._listener is not None:
+                self._listener(Improvement(self, candidate, point))
         if self._archive_enabled and score.feasible:
             self._update_archive(candidate)
         if (
