@@ -188,6 +188,7 @@ def replay(
         count,
         cpus=execution.worker_cpus(count) if queue else None,
         threads=execution.threads_per_worker,
+        startup_limit=execution.startup_limit,
     )
     with contextlib.closing(chosen.run(queue)) as results:
         for result in results:

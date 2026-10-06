@@ -164,7 +164,11 @@ def run(
             pending = pending[: max(0, max_runs)]
         cpus = execution.worker_cpus(count) if pending else None
         chosen = backend_for(
-            execution.backend, count, cpus=cpus, threads=execution.threads_per_worker
+            execution.backend,
+            count,
+            cpus=cpus,
+            threads=execution.threads_per_worker,
+            startup_limit=execution.startup_limit,
         )
         started, clock = utc_now(), time.perf_counter()
         record = SessionRecord(

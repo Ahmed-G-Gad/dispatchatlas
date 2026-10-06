@@ -144,7 +144,8 @@ def test_the_start_up_limit_is_optional_and_positive() -> None:
     assert Execution().startup_limit == STARTUP_SECONDS == 120.0
     assert Execution(startup_limit=30).startup_limit == 30.0
     assert Execution().to_dict()["startup_limit"] == 120.0
-    for value in (0, -1.0, float("inf"), "60", True):
+    invalid: tuple[Any, ...] = (0, -1.0, float("inf"), "60", True)
+    for value in invalid:
         with pytest.raises(ConfigError, match="startup_limit"):
             Execution(startup_limit=value)
 
