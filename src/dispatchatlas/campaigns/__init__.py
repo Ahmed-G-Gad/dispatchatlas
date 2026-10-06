@@ -19,9 +19,10 @@ The modules, in the order a campaign meets them:
   :mod:`~dispatchatlas.campaigns.fairness`;
 - :mod:`~dispatchatlas.campaigns.estimation`: run counts and time bounds;
 - :mod:`~dispatchatlas.campaigns.runner`, :mod:`~dispatchatlas.campaigns.backends`,
-  :mod:`~dispatchatlas.campaigns.execution`, and
-  :mod:`~dispatchatlas.campaigns.timeout`: execution with retries, hard time
-  limits, and resumption;
+  :mod:`~dispatchatlas.campaigns.execution`,
+  :mod:`~dispatchatlas.campaigns.timeout`, and
+  :mod:`~dispatchatlas.campaigns.processors`: execution with retries, hard time
+  limits, resumption, and the processors the workers run on;
 - :mod:`~dispatchatlas.campaigns.records`, :mod:`~dispatchatlas.campaigns.store`,
   and :mod:`~dispatchatlas.campaigns.environment`: what is written, where, and
   in which environment;
