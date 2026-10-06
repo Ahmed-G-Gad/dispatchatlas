@@ -83,6 +83,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kill ends every process the solver started, on Windows through a job
   object for each worker, and a worker ends itself when its supervising
   process is gone.
+- One clock per run: `dispatchatlas.core.clock` holds the origin of solver
+  clocks, and the engine sets it at the start of every attempt, so the
+  elapsed time and the time limit of every solver in a campaign cover what
+  the solver does before its search starts, such as building an evaluator
+  or a model and importing a backend. A solver called outside a campaign
+  counts from the instant it creates its clock.
+- The engine compares what every completed attempt took with its budget and
+  keeps what it notices in the optional field `notes` of the run record: a
+  wall time beyond the time limit, an elapsed time its own clock
+  contradicts, a trace whose times or evaluation counts are out of order or
+  that ends at another value than the outcome, and an iterative solver that
+  returns no trace, beside the claims of a solver that the checks of its
+  result contradict. The runs table holds `time_limit`, `wall_seconds`,
+  `overrun_seconds`, `cpu_share`, `concurrent`, `cpu`, and `attempts`; the
+  limitations name the solvers whose completed runs passed their time limit
+  by more than the analysis setting `overrun_tolerance` (`budget`), state
+  the processor share and the concurrency the runs of a timed protocol
+  executed under (`timing`), and count the failed runs by solver and kind
+  of error. A run of an iterative solver under a protocol whose only bound
+  is its time limit is not replayed, whatever stopped it.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

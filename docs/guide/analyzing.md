@@ -62,6 +62,43 @@ the worst value like any other failure, and a limitation of its own
 (`startup`) states how many runs it concerns. Running the campaign again
 with `--retry-failed` gives them another attempt.
 
+The `failures` limitation counts the failed runs of each solver by the kind
+of error of their last attempt. An `exception` was raised by the solver or
+by the checks of its result; the engine ended the attempts of every other
+kind (`timeout`, `startup`, `worker-exit`, `transfer`), so the two are told
+apart.
+
+### Realised time against the budget
+
+A time limit is cooperative: a solver checks it between evaluations, a
+heuristic that builds one schedule checks none, and a run that ends late but
+before its hard limit is recorded as an ordinary success (see
+[What the time limit cannot stop](campaigns.md#execution)). The analysis
+therefore compares the wall time the engine measured for every run with the
+time limit of its protocol. `runs.csv` holds, for every run:
+
+| Column | Meaning |
+| --- | --- |
+| `time_limit` | the time limit of the run's protocol, empty without one |
+| `wall_seconds` | the wall time the engine measured for the last attempt of the run, the completing one or the last failed one; `elapsed` is the solver's own report |
+| `overrun_seconds` | `wall_seconds` minus `time_limit`, negative for a run that ended early |
+| `cpu_share` | the processor seconds of the attempt over its wall seconds: below 1 when its process waited for a processor, above 1 when the solver ran threads |
+| `concurrent` | the runs executing when the attempt started, itself included |
+| `cpu` | the processor the attempt's worker was pinned to, empty when it was not pinned |
+| `attempts` | the number of the last attempt of the run |
+
+Two limitations summarise these columns for the analysed protocol when it
+sets a time limit. `budget` names every solver whose completed runs took
+more wall time than `time_limit * (1 + overrun_tolerance)`, with how many of
+its completed runs did and the largest ratio of wall time to limit. Such a
+run searched for longer than the protocol states; it is neither excluded nor
+rescored. `timing` states the load the completed runs executed under: the
+range and median of their processor share, the lowest and highest median
+share of a solver, and the range and median of the number of runs executing
+at once. Under a wall-clock budget a run searches as far as the processor
+time it received allows, so solvers whose shares differ were not given the
+same budget.
+
 ## The statistical comparison
 
 `summarize` analyses one protocol and one objective, the primary objective
@@ -86,7 +123,10 @@ unless the settings name another:
    stand the paired win share with a bootstrap interval, the mean advantage
    with a bootstrap interval, and Cohen's d_z (Carrasco et al. 2020).
 6. **Limitations.** What qualifies the results: failed or missing runs,
+   with the failed ones by solver and kind of error,
    runs killed at their hard limit and how they are scored,
+   completed runs whose wall time passed their time limit, the processor
+   share and the concurrency the runs of a timed protocol executed under,
    problems left out of the ranks, too few shared problems for a paired test
    to reach significance, cells below a replicate floor, and tests that could
    not run.
@@ -148,6 +188,7 @@ default:
 | `omnibus` | `"iman-davenport"` | the test that gates the Nemenyi test, or `"friedman"` |
 | `statistic` | `"mean"` | how replicates become one score; with `"median"`, failures decide the cell only when they reach half of the runs |
 | `timeout_score` | `"worst"` | how a run killed at its hard limit is scored: as the worst value, or with `"incumbent"` by the feasible incumbent it held when its time limit passed |
+| `overrun_tolerance` | `0.05` | share of the time limit by which the wall time of a completed run may pass the limit before the `budget` limitation names it; nothing is excluded |
 | `replicate_floor` | none | fewest replicates per cell of a stochastic solver; smaller cells are reported, not excluded |
 | `power` | `0.8` | target power of the detectable-effect statement |
 | `references` | none | a reference value per problem, for the relative deviation |

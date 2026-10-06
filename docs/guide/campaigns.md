@@ -139,8 +139,9 @@ stop criteria: `equal-wall-clock` (`time_limit`), `equal-evaluations`
 (`target`). Equal evaluations is the budget to prefer for comparing
 algorithms: it does not depend on the machine, and runs stopped by it replay
 exactly. Wall-clock budgets depend on the speed and load of the machine, and
-runs they stop cannot be replayed. An iteration means a different amount of
-work in different solvers.
+runs they stop cannot be replayed; neither can any run of an iterative
+solver under a protocol whose only bound is its time limit. An iteration
+means a different amount of work in different solvers.
 
 ## Estimating
 
@@ -224,6 +225,29 @@ of one campaign.
   supervisor never waits for a worker to start: a starting worker gets its
   run when it reports that it is ready, so the limits of the other runs are
   enforced meanwhile.
+- **One clock per run.** The engine fixes the origin of a run's clock at the
+  start of each attempt, the instant from which it measures the wall time of
+  the attempt, and every solver counts its elapsed time and its time limit
+  from that origin. The `elapsed` of an outcome and the times of its trace
+  are therefore seconds since the start of the attempt, for every solver
+  alike: they include what a solver does before its search starts, such as
+  building its evaluator or its model and importing a backend, and the time
+  limit covers that work too. A solver called directly, outside a campaign,
+  counts from the instant it creates its clock, as
+  [`dispatchatlas.core.clock`](../api/core.md) describes; a solver from a
+  plugin that keeps a clock of its own starts it at `clock_start()` to
+  follow the same origin.
+- **What the time limit cannot stop.** A solver checks its time limit
+  between evaluations and never before its first one, so a run passes the
+  limit by the evaluation in progress and by any work between two checks,
+  and a heuristic that builds one schedule, such as a priority rule or a
+  mapping heuristic, checks no limit at all. The sequential backend has no
+  hard limit, and under the process backend a run that ends late but before
+  its hard limit is an ordinary success. The engine therefore compares the
+  wall time of every completed attempt with the time limit and keeps a note
+  when it passes the limit by more than 5 percent, and the
+  [analysis](analyzing.md#runs-failures-and-denominators) reports these
+  runs.
 - **Start-up limit.** From the hand-over of a run, its worker has
   `startup_limit` seconds, 120 by default, to begin the solve, whatever the
   size of the problem it is sent. A worker that takes longer, or never
@@ -284,6 +308,18 @@ of one campaign.
   was pinned to, how many runs were executing when it was handed to its
   worker, itself included, and how long it then waited for its solve to
   begin.
+- **Notes.** What the engine notices about a completed attempt is logged as
+  a warning and stored in the run record, in `notes`; the run stays an
+  ordinary completed run. A note is kept when the solver reports an
+  objective value its schedule does not give, calls an infeasible schedule
+  feasible, or returns a malformed schedule; when the wall time passes the
+  time limit by more than 5 percent of the limit; when the elapsed time the
+  solver reports differs from the wall time the engine measured by more
+  than 0.05 seconds and by more than 5 percent of that wall time; when the
+  trace holds a negative time, times that decrease, or a time beyond the
+  elapsed time the solver reports; when the evaluation counts of the trace
+  decrease; when the last value of the trace differs from the value of the
+  outcome; and when an iterative solver returns a schedule and no trace.
 
 ## Storage layout
 
@@ -312,7 +348,13 @@ indentation, ASCII text, and a final newline.
   (`concurrent`), and the seconds from that hand-over to the start of the
   solve (`waited_seconds`, null for the sequential backend), which hold the
   start of a worker that started for the run. A record that
-  lacks one of the three reads as null for it.
+  lacks one of the three reads as null for it. The record also holds the
+  `notes` of the engine on the attempt, a list of sentences that is empty
+  when the engine noticed nothing; a record without the field reads as one
+  with no notes. The `elapsed` of the outcome is the solver's report, in
+  seconds since the start of the attempt, and the `wall_seconds` of the
+  provenance is the engine's own measurement from the same instant until
+  the solver returned.
 - Its **result hash** is the SHA-256 of the outcome without the fields that
   measure wall time, and without the solver-specific extras. Nothing about the
   machine or the session enters it, so a replay on any machine compares
@@ -371,7 +413,13 @@ without writing anything. It first checks every record against its own result
 hash, so a record edited after it was written is caught even when its run
 reproduces. Each run gets a verdict: `match`, `mismatch` with the outcome
 fields that differ, `skipped`, or `failed`. Runs stopped by their wall-clock
-limit are skipped, because how far they got depends on the machine. `--run`
+limit are skipped, because how far they got depends on the machine. So is
+every run of an iterative solver under a protocol whose only bound is its
+time limit, whatever stopped it: without an evaluation or iteration limit a
+search places itself on its schedule by the elapsed time, so a run that
+stopped at a target or for lack of improvement also depended on the
+machine. A solver that is not iterative, such as a priority rule, follows
+no schedule, and its completed run is replayed under any protocol. `--run`
 replays selected runs only, and the exit code is 1 when a run does not
 reproduce.
 

@@ -129,6 +129,15 @@ and bounds.
 The time limit is cooperative: a solver checks it itself. Campaigns add a hard
 limit that kills a run that overruns (see [Campaigns](campaigns.md#execution)).
 
+A solver counts its `elapsed` time and its time limit from the instant it
+creates its clock: for an order-based solver, after it has built its
+evaluator; for `cp-sat`, `milp`, and `restricted-neighbourhood-search`, after
+the backend is imported. A caller that wants one origin for every solver sets
+it with `clock_origin` of
+[`dispatchatlas.core.clock`](../api/core.md), and the clocks created inside
+the block start there. A campaign does so at the start of every attempt, so
+in a campaign `elapsed` and the time limit cover everything a solver does.
+
 ## How candidates are compared
 
 Solvers compare schedules by a lexicographic score: first the total overrun
