@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -14,11 +15,11 @@ from dispatchatlas import __version__
 from dispatchatlas.analysis.bundle import write_bundle
 from dispatchatlas.analysis.config import AnalysisConfig
 from dispatchatlas.analysis.dataset import Dataset
-from dispatchatlas.analysis.manifest import sha256
+from dispatchatlas.analysis.manifest import build_manifest, sha256
 from dispatchatlas.campaigns import Protocol
 from dispatchatlas.core import StopCriteria
 from dispatchatlas.core.errors import ConfigError, MissingDependencyError, SerializationError
-from tests.analysis.analysis_data import campaign_dir, run_tiny_campaign
+from tests.analysis.analysis_data import campaign_dir, make_dataset, run_tiny_campaign
 
 __all__ = ["campaign_dir"]
 
@@ -43,6 +44,35 @@ def test_two_bundles_of_one_campaign_are_byte_identical(campaign_dir: Path, tmp_
     }
     assert set(first) == expected
     assert all(b"\r\n" not in data for data in first.values())
+
+
+def test_the_manifest_states_the_optional_campaign_settings_only_when_set() -> None:
+    dataset = make_dataset({"a": {"p1": [1.0, 2.0]}, "b": {"p1": [2.0, 1.0]}})
+    plain = build_manifest(dataset, AnalysisConfig(), [], {}, {"rendered": False})["campaign"]
+    assert plain == {
+        "id": dataset.campaign,
+        "config_hash": dataset.config_hash,
+        "seed": dataset.plan.seed,
+        "replicates": dataset.plan.replicates,
+        "runs_digest": dataset.plan.runs_digest,
+        "runs": dict(dataset.counts()),
+    }
+
+    solvers = tuple(
+        replace(entry, replicates=4) if entry.name == "a" else entry
+        for entry in dataset.plan.solvers
+    )
+    plan = replace(dataset.plan, seed_namespace="comparison", replicate_timed=True, solvers=solvers)
+    stated = build_manifest(
+        replace(dataset, plan=plan), AnalysisConfig(), [], {}, {"rendered": False}
+    )["campaign"]
+    assert stated == {
+        **plain,
+        "seed_namespace": "comparison",
+        "replicate_timed": True,
+        "solver_replicates": {"a": 4},
+    }
+    assert list(stated)[:4] == ["id", "config_hash", "seed", "seed_namespace"]
 
 
 def test_the_manifest_records_digests_config_and_design(campaign_dir: Path, tmp_path: Path) -> None:

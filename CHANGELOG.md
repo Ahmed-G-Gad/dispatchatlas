@@ -148,7 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `plan_reseeded`, `plan_solvers`) with the digest of the plan's run ids and
   seeds (`plan_digest`), which `plan.json` states as `runs_digest`. The
   session record is written before `plan.json` is replaced
-  (`Store.plan_change`, then `Store.write_plan`).
+  (`Store.plan_change`, then `Store.write_plan`). The manifest of an
+  analysis bundle states the `runs_digest` of the analysed plan and, when
+  the campaign sets them, `seed_namespace`, `replicate_timed`, and the
+  solvers' own replicate counts (`solver_replicates`).
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

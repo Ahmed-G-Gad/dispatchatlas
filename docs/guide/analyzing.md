@@ -333,8 +333,11 @@ each family's functions compute its data and draw it separately (see the
     manifest.json             settings, versions, environment, and file digests
 ```
 
-The manifest records the campaign's id, config hash, seed, replicates, and
-run counts by status; the full settings; the DispatchAtlas version and the
+The manifest records the campaign's id, config hash, seed, replicates, the
+digest of the run ids and seeds of the analysed plan (`runs_digest`), and
+run counts by status, and, when the campaign sets them, its `seed_namespace`,
+`replicate_timed`, and the solvers' own replicate counts
+(`solver_replicates`); the full settings; the DispatchAtlas version and the
 environment; for each protocol, the replicates behind each score and the
 problems behind each paired test, with the effect those tests detect; and
 the SHA-256 digest of every other file. It holds no timestamp. The bundle is

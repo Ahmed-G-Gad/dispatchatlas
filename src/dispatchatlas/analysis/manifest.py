@@ -3,7 +3,10 @@
 ``manifest.json`` records what a reader needs to repeat or to judge an
 analysis:
 
-- the campaign: id, config hash, seed, replicates, and run counts by status;
+- the campaign: id, config hash, seed, replicates, the digest of the analysed
+  plan's runs, and run counts by status, and, when the campaign sets them,
+  its seed namespace, its replication under a time limit, and the solvers'
+  own replicate counts;
 - the full :class:`~dispatchatlas.analysis.config.AnalysisConfig`;
 - the DispatchAtlas version and the environment, as
   :func:`~dispatchatlas.campaigns.environment.capture_environment` records it;
@@ -124,19 +127,46 @@ def build_manifest(
         "artifact": MANIFEST_ARTIFACT,
         "version": MANIFEST_VERSION,
         "package": {"name": "dispatchatlas", "version": __version__},
-        "campaign": {
-            "id": dataset.campaign,
-            "config_hash": dataset.config_hash,
-            "seed": dataset.plan.seed,
-            "replicates": dataset.plan.replicates,
-            "runs": dict(dataset.counts()),
-        },
+        "campaign": _campaign(dataset),
         "config": config.to_dict(),
         "analyses": analyses,
         "figures": dict(figures),
         "environment": capture_environment(),
         "files": dict(sorted(files.items())),
     }
+
+
+def _campaign(dataset: Dataset) -> dict[str, Any]:
+    """Return what a manifest states about the campaign of a dataset.
+
+    The seed and the replicates alone do not say which seeds the runs
+    received or how many ran when the campaign sets a seed namespace,
+    replicates solvers declared deterministic under a time limit, or gives a
+    solver its own count. Each of the three is stated when it is set, the
+    rule its place in the config hash follows: ``seed_namespace``,
+    ``replicate_timed``, and ``solver_replicates``, the count of each solver
+    that has its own, by solver name. ``runs_digest`` is the digest of the
+    run ids and seeds of the analysed plan.
+    """
+    plan = dataset.plan
+    record: dict[str, Any] = {
+        "id": dataset.campaign,
+        "config_hash": dataset.config_hash,
+        "seed": plan.seed,
+    }
+    if plan.seed_namespace is not None:
+        record["seed_namespace"] = plan.seed_namespace
+    record["replicates"] = plan.replicates
+    if plan.replicate_timed:
+        record["replicate_timed"] = True
+    counts = {
+        solver.name: solver.replicates for solver in plan.solvers if solver.replicates is not None
+    }
+    if counts:
+        record["solver_replicates"] = counts
+    record["runs_digest"] = plan.runs_digest
+    record["runs"] = dict(dataset.counts())
+    return record
 
 
 def _span(values: list[int]) -> dict[str, int] | None:
