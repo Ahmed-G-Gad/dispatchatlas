@@ -43,6 +43,41 @@ def test_the_origin_ends_with_the_block_when_the_block_raises() -> None:
     assert clock_start() > 0.0
 
 
+@pytest.mark.parametrize("ahead", [5.0, 1e9, float("inf"), float("nan"), float("-inf")])
+def test_an_origin_that_is_not_a_past_reading_of_the_clock_is_refused(ahead: float) -> None:
+    # A reading of another clock, such as time.time(), lies far ahead of perf_counter.
+    with (
+        pytest.raises(ValueError, match="past reading of time.perf_counter"),
+        clock_origin(time.perf_counter() + ahead),
+    ):
+        pass
+    # The refusal leaves no origin behind.
+    before = time.perf_counter()
+    assert clock_start() >= before
+    with clock_origin(time.perf_counter()) as origin:
+        assert clock_start() == origin
+
+
+def test_a_solver_that_budgets_phases_opens_an_origin_for_each() -> None:
+    problem = random_problem(3)
+    phase = StopCriteria(time_limit=0.2)
+    with clock_origin():
+        time.sleep(0.3)
+        # The limit of a search created now ended 0.1 s ago, on the outer origin.
+        spent = RandomSearch().solve(problem, phase, 1)
+        assert spent.stop_reason is StopReason.TIME_LIMIT
+        assert spent.evaluations == 1
+        assert spent.elapsed >= 0.3
+        # A block of its own gives the phase its whole limit, counted from its entry.
+        with clock_origin():
+            own = RandomSearch().solve(problem, phase, 1)
+        assert own.stop_reason is StopReason.TIME_LIMIT
+        assert own.evaluations > 1
+        # Counted from the outer origin, the elapsed time would be 0.5 s or more.
+        assert 0.2 <= own.elapsed < 0.45
+        assert own.trace[0].elapsed < 0.2
+
+
 def test_a_search_counts_its_time_and_its_limit_from_the_origin() -> None:
     problem = random_problem(3)
     stop = StopCriteria(time_limit=5.0, max_evaluations=40)

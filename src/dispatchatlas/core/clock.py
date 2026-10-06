@@ -17,6 +17,7 @@ run starts.
 from __future__ import annotations
 
 import contextlib
+import math
 import time
 from collections.abc import Iterator
 from contextvars import ContextVar
@@ -34,14 +35,31 @@ def clock_origin(origin: float | None = None) -> Iterator[float]:
     block, until the block ends. A block inside another one replaces the
     origin for its own duration.
 
+    A clock created inside the block counts from the origin, not from its own
+    creation, and so does its time limit. A solver that runs several searches
+    in turn, or gives one a share of its time limit, therefore opens a block
+    of its own around each: ``with clock_origin():`` starts the clocks created
+    inside it at the instant it is entered.
+
     Args:
         origin: The instant, as :func:`time.perf_counter` counts. Defaults to
             the instant the block is entered.
 
     Yields:
         The origin.
+
+    Raises:
+        ValueError: If ``origin`` is not a finite number, or is later than the
+            current reading of :func:`time.perf_counter`, as a reading of
+            another clock would be.
     """
-    instant = time.perf_counter() if origin is None else float(origin)
+    now = time.perf_counter()
+    instant = now if origin is None else float(origin)
+    if not math.isfinite(instant) or instant > now:
+        raise ValueError(
+            f"a clock origin must be a past reading of time.perf_counter (now {now!r}), "
+            f"got {origin!r}"
+        )
     token = _ORIGIN.set(instant)
     try:
         yield instant
