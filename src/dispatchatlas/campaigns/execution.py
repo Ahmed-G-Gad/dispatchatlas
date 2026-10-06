@@ -236,6 +236,12 @@ def classify(error: BaseException) -> Category:
 def attempt(task: Task, worker: str = "main") -> Result:
     """Execute one attempt of a run.
 
+    The solver is called inside
+    :func:`~dispatchatlas.core.clock.clock_origin`, whose origin is the
+    instant the wall time of the attempt counts from, so the solver's
+    elapsed time and time limit count from the same instant. A completion
+    carries the notes of :func:`describe` and :func:`observe`.
+
     Exceptions raised by the solver or by the checks of its result become a
     :class:`Failure`. ``KeyboardInterrupt`` and ``SystemExit`` propagate.
 

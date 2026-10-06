@@ -76,7 +76,8 @@ def test_the_budget_limitation_names_the_solver_that_ran_late(late_campaign: Dat
     assert "test-tardy in 2 of 2 (up to " in budget.message
     assert "input-order" not in budget.message
     (timing,) = [item for item in summary.limitations if item.topic == "timing"]
-    assert "Over the 4 completed runs" in timing.message
+    # The two runs of the rule end within microseconds and are left out.
+    assert "Over the 2 completed runs that lasted at least half" in timing.message
     assert "between 1 and 1 runs executed at once" in timing.message
     # A tolerance wide enough for the late runs leaves nothing to name.
     lenient = summarize(late_campaign, AnalysisConfig(overrun_tolerance=100.0))
@@ -157,10 +158,11 @@ def test_the_timing_limitation_reports_the_processor_share_and_the_concurrency()
     (timing,) = [item for item in summary.limitations if item.topic == "timing"]
     assert timing.message == (
         "Protocol p gives every run the same wall-clock time, so a run searches as far as the "
-        "processor time it received in that time allows. Over the 8 completed runs, the "
-        "processor share of a run, its processor seconds over its wall seconds, lies between "
-        "0.50 and 0.98 with median 0.74, and its median per solver between 0.50 (b) and 0.98 "
-        "(a); between 2 and 8 runs executed at once, with median 5."
+        "processor time it received in that time allows. Over the 8 completed runs that lasted "
+        "at least half of the time limit, the processor share of a run, its processor seconds "
+        "over its wall seconds, lies between 0.50 and 0.98 with median 0.74, and its median "
+        "per solver between 0.50 (b) and 0.98 (a); between 2 and 8 runs executed at once, with "
+        "median 5."
     )
     rows = _rows(dataset)
     assert {row["cpu_share"] for row in rows if row["solver"] == "b"} == {0.5}
@@ -168,6 +170,14 @@ def test_the_timing_limitation_reports_the_processor_share_and_the_concurrency()
     # Records that state neither time nor concurrency leave nothing to report.
     silent = summarize(_timed(make_dataset(CELLS), walls))
     assert "timing" not in {item.topic for item in silent.limitations}
+    # A run that ended long before the limit is left out: the clock did not bound it.
+    early = {"a": [1.0, 0.5, 0.49, 0.01], "b": [1.0, 1.0, 1.0, 1.0]}
+    partly = summarize(_timed(make_dataset(CELLS), early, cpu={"a": 0.98, "b": 0.5}))
+    (timing,) = [item for item in partly.limitations if item.topic == "timing"]
+    assert "Over the 6 completed runs that lasted at least half of the time limit" in timing.message
+    none = {"a": [0.01] * 4, "b": [0.02] * 4}
+    quick = summarize(_timed(make_dataset(CELLS), none, cpu={"a": 0.98, "b": 0.5}))
+    assert "timing" not in {item.topic for item in quick.limitations}
 
 
 def _failed(dataset: Dataset, kinds: Mapping[str, Sequence[ErrorKind]]) -> Dataset:

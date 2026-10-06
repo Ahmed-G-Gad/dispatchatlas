@@ -161,7 +161,10 @@ class Run:
 
         A share below 1 means the executing process waited, for a processor
         or otherwise; a share above 1 means the solver ran threads. ``None``
-        when either time was not measured or the wall time is zero.
+        when either time was not measured or the wall time is zero. The
+        processor time of a process advances in steps, of about 16
+        milliseconds on Windows, so the share of a run shorter than a few
+        tenths of a second is coarse.
         """
         executed = self.provenance
         if executed is None or executed.cpu_seconds is None or not executed.wall_seconds > 0.0:

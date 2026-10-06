@@ -581,9 +581,11 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
 
     The ``budget`` limitation names the solvers whose completed runs took
     more wall time than the limit allows with ``overrun_tolerance``. The
-    ``timing`` limitation states under which load the completed runs
-    executed: the spread of their processor share and of the number of runs
-    executing at once.
+    ``timing`` limitation states under which load the completed runs that
+    lasted at least half of the time limit executed: the spread of their
+    processor share and of the number of runs executing at once. Shorter
+    runs are left out of it: the clock did not bound them, and the processor
+    time of a run of a few hundredths of a second is coarser than the run.
     """
     limit = scope.dataset.protocol(scope.protocol).stop.time_limit
     completed = [run for run in scope.dataset.runs if run.record is not None]
@@ -615,10 +617,17 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
                 "as they are.",
             )
         )
+    # A run that ended long before the limit was not bounded by the clock, and
+    # its processor time is too short to measure against its wall time.
+    timed = [
+        run
+        for run in completed
+        if run.record is not None and run.record.provenance.wall_seconds >= limit / 2.0
+    ]
     shares = {
         entry.name: [
             share
-            for run in completed
+            for run in timed
             if run.solver == entry.name and (share := run.cpu_share) is not None
         ]
         for entry in scope.dataset.solvers
@@ -626,7 +635,7 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
     pooled = [share for values in shares.values() for share in values]
     concurrency = [
         run.record.provenance.concurrent
-        for run in completed
+        for run in timed
         if run.record is not None and run.record.provenance.concurrent is not None
     ]
     parts: list[str] = []
@@ -657,7 +666,9 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
                 "timing",
                 f"Protocol {scope.protocol} gives every run the same wall-clock time, so a run "
                 "searches as far as the processor time it received in that time allows. Over "
-                f"the {len(completed)} completed runs, " + "; ".join(parts) + ".",
+                f"the {len(timed)} completed runs that lasted at least half of the time limit, "
+                + "; ".join(parts)
+                + ".",
             )
         )
     return found

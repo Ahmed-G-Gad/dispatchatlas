@@ -92,12 +92,15 @@ sets a time limit. `budget` names every solver whose completed runs took
 more wall time than `time_limit * (1 + overrun_tolerance)`, with how many of
 its completed runs did and the largest ratio of wall time to limit. Such a
 run searched for longer than the protocol states; it is neither excluded nor
-rescored. `timing` states the load the completed runs executed under: the
-range and median of their processor share, the lowest and highest median
-share of a solver, and the range and median of the number of runs executing
-at once. Under a wall-clock budget a run searches as far as the processor
-time it received allows, so solvers whose shares differ were not given the
-same budget.
+rescored. `timing` states the load that the completed runs which lasted at
+least half of the time limit executed under: the range and median of their
+processor share, the lowest and highest median share of a solver, and the
+range and median of the number of runs executing at once. Under a wall-clock
+budget a run searches as far as the processor time it received allows, so
+solvers whose shares differ were not given the same budget. Shorter runs are
+left out: the clock did not bound them, and processor time advances in
+steps, of about 16 milliseconds on Windows, so the `cpu_share` of a run
+shorter than a few tenths of a second is coarse.
 
 ## The statistical comparison
 
