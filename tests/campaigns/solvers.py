@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -27,6 +29,7 @@ from dispatchatlas.campaigns.processors import allowed_cpus
 from dispatchatlas.core import FEATURES, Problem, SolverError, SolveResult, SolverInfo, StopCriteria
 from dispatchatlas.solvers import SolverRegistry, default_registry
 from dispatchatlas.solvers.rules import InputOrder, RandomSearch
+from dispatchatlas.solvers.search import Search
 
 
 def _info(solver_id: str, **options: Any) -> SolverInfo:
@@ -208,6 +211,63 @@ class Unpicklable:
         return InputOrder().solve(problem, stop, seed)
 
 
+@dataclass(frozen=True)
+class SlowArrival:
+    """Input order whose instance takes ``delay`` seconds to rebuild in a worker."""
+
+    delay: float = 1.0
+    info: ClassVar[SolverInfo] = _info("test-slow-arrival", stochastic=False, iterative=False)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        time.sleep(state["delay"])
+        self.__dict__.update(state)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        return InputOrder().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class Stalled:
+    """Evaluates the listed order inside a search, then sleeps whatever its limits.
+
+    Its instance takes ``delay`` seconds to rebuild in a worker.
+    """
+
+    seconds: float = 60.0
+    delay: float = 0.0
+    info: ClassVar[SolverInfo] = _info("test-stalled", stochastic=False)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        time.sleep(state["delay"])
+        self.__dict__.update(state)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        search = Search(problem, stop, seed, self.info)
+        search.evaluate(list(range(problem.size)))
+        time.sleep(self.seconds)
+        return search.result()
+
+
+@dataclass(frozen=True)
+class Nested:
+    """Starts a child process, writes its own pid and the child's to ``marker``, and sleeps."""
+
+    marker: str = ""
+    seconds: float = 60.0
+    info: ClassVar[SolverInfo] = _info("test-nested", stochastic=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        # The interpreter itself, not the launcher a virtual environment may put before it.
+        python = getattr(sys, "_base_executable", None) or sys.executable
+        child = subprocess.Popen([python, "-c", f"import time; time.sleep({self.seconds!r})"])
+        marker = Path(self.marker)
+        partial = marker.with_name(marker.name + ".partial")
+        partial.write_text(f"{os.getpid()} {child.pid}", encoding="ascii")
+        partial.replace(marker)
+        time.sleep(self.seconds)
+        return InputOrder().solve(problem, stop, seed)
+
+
 TEST_SOLVERS = (
     Sleeper,
     Crasher,
@@ -221,6 +281,9 @@ TEST_SOLVERS = (
     FourThreads,
     Tabled,
     Unpicklable,
+    SlowArrival,
+    Stalled,
+    Nested,
 )
 
 
