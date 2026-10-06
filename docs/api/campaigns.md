@@ -8,6 +8,8 @@ Campaign configuration and files, planning, fairness, estimation, execution, rec
 
 ::: dispatchatlas.campaigns.config
 
+::: dispatchatlas.campaigns.processors
+
 ::: dispatchatlas.campaigns.io
 
 ::: dispatchatlas.campaigns.planning

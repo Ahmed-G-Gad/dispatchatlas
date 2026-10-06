@@ -161,10 +161,36 @@ of one campaign.
   behaves alike, and supervised by the calling process. `sequential` runs one
   attempt after another in the calling process; it suits debugging and
   solvers that cannot be sent to another process, but a solver that ignores
-  its time limit, or a crash in native code, stops the campaign. `workers =
-  "auto"` uses the available processors minus one. A Python script that runs
-  a campaign with the process backend must do so under
+  its time limit, or a crash in native code, stops the campaign. A Python
+  script that runs a campaign with the process backend must do so under
   `if __name__ == "__main__":`, since every worker imports the main module.
+- **Processors.** The engine counts the processors its process is allowed to
+  use, not those of the machine: the scheduler affinity on Linux, which
+  `taskset` and containers set, and the process affinity mask on Windows.
+  `workers = "auto"` uses that number minus one. `affinity` chooses where the
+  workers run. `"inherit"`, the default, leaves every worker on all the
+  allowed processors. `"pin"` confines worker `k` to the `k`-th allowed
+  processor, in index order. A list such as `affinity = [2, 4, 6]` confines
+  worker `k` to its `k`-th entry, which lets a campaign use one logical
+  processor of each core. A pinned campaign is refused before it starts when
+  the workers outnumber the processors, when a listed processor is not an
+  allowed one, with the sequential backend, and on a platform that cannot pin
+  a process: macOS, and a Windows machine whose processors form several
+  processor groups.
+- **Threads.** Every worker process starts with the thread pools of
+  numerical libraries limited to `threads_per_worker` threads, 1 by default.
+  The engine sets `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
+  `OPENBLAS_NUM_THREADS`, `BLIS_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, and
+  `NUMEXPR_NUM_THREADS` in the environment each worker is created with, so
+  the limit holds for any number of workers, whatever the launching
+  environment sets, and also when the launching script imports NumPy first.
+  The sequential backend runs in the calling process and leaves its
+  environment alone. A solver's own `threads` parameter is separate. When a
+  protocol sets a time limit and the workers, each with the larger of
+  `threads_per_worker` and the largest `threads` among the solvers, need more
+  processors than are allowed, the runner warns that the budgets differ
+  between runs. When such a protocol compares solvers whose `threads` differ,
+  the plan keeps a note of it in its fairness assessment and stays fair.
 - **Hard time limits.** Stop criteria are cooperative, so the process
   backend gives every run whose protocol sets `time_limit` a hard limit of
   `timeout_factor * time_limit + grace` seconds, counted from the moment the
@@ -180,7 +206,9 @@ of one campaign.
   with `check_schedule`, and every objective is computed again from the
   schedule, so a record never relies on the solver's own claims. The
   measurements cover the solve alone: wall time, CPU time, and on Linux the
-  peak resident memory.
+  peak resident memory. Each attempt also records the processor its worker
+  was pinned to, and how many runs were executing when it was handed to its
+  worker, itself included.
 
 ## Storage layout
 
@@ -204,7 +232,9 @@ indentation, ASCII text, and a final newline.
   elapsed time, trace, and front; the best schedule as `[task, mode, start,
   end]` rows, unless `record_schedules` is false; and the provenance of the
   attempt: session, attempt number, worker, times, CPU seconds, peak memory,
-  and hard limit.
+  hard limit, the processor the worker was pinned to (`cpu`, null when it was
+  not pinned), and the runs executing when the run was handed to its worker
+  (`concurrent`). A record that states neither reads as null for both.
 - Its **result hash** is the SHA-256 of the outcome without the fields that
   measure wall time, and without the solver-specific extras. Nothing about the
   machine or the session enters it, so a replay on any machine compares
@@ -214,9 +244,12 @@ indentation, ASCII text, and a final newline.
   and whether it is terminal or recoverable.
 - A **session record** (`dispatchatlas.session/1`) holds the execution
   settings, the counts, and the environment: Python, the operating system and
-  machine, the processor and memory, the versions of DispatchAtlas, NumPy, and
-  the installed backends, and the git commit when the source or the working
-  directory is a checkout. It records no host or user name.
+  machine, the processor and memory, the indices of the processors the
+  session was allowed to use (`cpu.allowed`), the value of each thread
+  variable in the launching environment (`threads`, null when unset), the
+  versions of DispatchAtlas, NumPy, and the installed backends, and the git
+  commit when the source or the working directory is a checkout. It records
+  no host or user name.
 
 `read_campaign`, `read_plan`, `read_runs`, `read_failures`, and
 `read_sessions` read these files back as typed records.

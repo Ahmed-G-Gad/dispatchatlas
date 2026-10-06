@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Campaigns described in TOML or JSON, with paired seeds, verified fair
   comparisons, worker processes with hard time limits and retries, one record
   per run, resumption, estimates, and replay.
+- Campaigns count the processors their process is allowed to use, on Linux
+  and on Windows, for `workers = "auto"`, for the warning about shared
+  processors, and in the session record, which lists their indices. The
+  execution key `affinity` pins each worker to a processor of its own, and
+  `threads_per_worker` limits the threads of numerical libraries in every
+  worker from the moment its process is created. A run record states the
+  processor its worker was pinned to and how many runs were executing when
+  it was handed over, and a plan notes a time limit that compares solvers
+  with different thread counts.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

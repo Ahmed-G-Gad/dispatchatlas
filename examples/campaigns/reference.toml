@@ -108,6 +108,12 @@ retries = 1               # further attempts after a failure that may be
                           # transient (default 0)
 record_schedules = true   # store each run's best schedule in its record; its
                           # digest is stored either way (default true)
+affinity = "inherit"      # "inherit": the workers run on every processor the
+                          # process may use; "pin": worker k runs on the k-th
+                          # of them; or a list of processor indices, one per
+                          # worker, such as [2, 4, 6] (default "inherit")
+threads_per_worker = 1    # threads the numerical libraries of a worker may
+                          # use (default 1)
 
 # ---------------------------------------------------------------- metadata
 # Free annotations, kept with the results; not part of the config hash.
