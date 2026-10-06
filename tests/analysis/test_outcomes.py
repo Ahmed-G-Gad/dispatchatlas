@@ -10,11 +10,17 @@ import pytest
 from dispatchatlas.analysis import AnalysisConfig, summarize
 from dispatchatlas.analysis.dataset import Dataset
 from dispatchatlas.campaigns import Protocol
+from dispatchatlas.campaigns.execution import (
+    CLOCK_MARGIN_SECONDS,
+    OVERRUN_MARGIN,
+    observe,
+    overran,
+)
 from dispatchatlas.campaigns.fairness import (
-    OVERRUN_TOLERANCE,
     Overrun,
     assess,
     assess_outcomes,
+    conditional_notes,
     notes,
 )
 from dispatchatlas.campaigns.records import RunRecord
@@ -75,7 +81,7 @@ def test_stop_reasons_that_agree_do_not_diverge() -> None:
     dataset = _dataset()
     outcomes = assess_outcomes(dataset.plan, _records(dataset))
     assert outcomes.records == 15
-    assert outcomes.overrun_tolerance == OVERRUN_TOLERANCE
+    assert outcomes.overrun_tolerance == OVERRUN_MARGIN == AnalysisConfig().overrun_tolerance
     protocol = outcomes.protocol("p")
     assert protocol.stop_reasons == {
         "a": {"evaluation-limit": 6},
@@ -181,14 +187,47 @@ def test_overruns_are_counted_against_the_time_limit() -> None:
         "a": Overrun(runs=6, over=2, worst=1.5),
         "fixed": Overrun(runs=3, over=3, worst=2.0),
     }
-    strict = assess_outcomes(dataset.plan, _records(dataset), overrun_tolerance=0.0)
-    assert strict.protocol("p").overruns["a"] == Overrun(runs=6, over=4, worst=1.5)
     loose = assess_outcomes(dataset.plan, _records(dataset), overrun_tolerance=1.0)
     assert loose.protocol("p").overruns == {}
     (budget,) = _limitations(dataset)["budget"]
     assert "a in 2 of 6 (up to 1.5 times the limit)" in budget
     assert "fixed in 3 of 3 (up to 2 times the limit)" in budget
     assert "b in" not in budget
+
+
+def test_the_overrun_tolerance_is_a_share_of_the_limit_above_the_clock_margin() -> None:
+    long = StopCriteria(time_limit=10.0, patience=5)
+    dataset = _dataset(walls={"a": [10.0, 10.2, 15.0]}, stop=long)
+    default = assess_outcomes(dataset.plan, _records(dataset))
+    assert default.protocol("p").overruns == {"a": Overrun(runs=6, over=2, worst=1.5)}
+    strict = assess_outcomes(dataset.plan, _records(dataset), overrun_tolerance=0.0)
+    assert strict.protocol("p").overruns == {"a": Overrun(runs=6, over=4, worst=1.5)}
+    # With no share allowed, a run within the clock margin of its limit is still not over.
+    within = _dataset(walls={"a": [10.0 + CLOCK_MARGIN_SECONDS]}, stop=long)
+    exact = assess_outcomes(within.plan, _records(within), overrun_tolerance=0.0)
+    assert exact.protocol("p").overruns == {}
+
+
+def test_the_assessment_counts_an_overrun_by_the_rule_of_the_engine() -> None:
+    short = StopCriteria(time_limit=0.15, patience=5)
+    dataset = _dataset(walls={"a": [0.19, 0.21]}, stop=short)
+    records = _records(dataset)
+    noted = [
+        record
+        for record in records
+        for note in observe(record.outcome, short, record.provenance.wall_seconds, iterative=True)
+        if note.startswith("the run took")
+    ]
+    assert [record.provenance.wall_seconds for record in noted] == [0.21] * 3
+    outcomes = assess_outcomes(dataset.plan, records)
+    assert outcomes.protocol("p").overruns == {"a": Overrun(runs=6, over=3, worst=0.21 / 0.15)}
+    margin = max(CLOCK_MARGIN_SECONDS, OVERRUN_MARGIN * 0.15)
+    assert overran(0.15 + margin + 0.001, 0.15)
+    assert not overran(0.15 + margin, 0.15)
+    # Above a limit of one second the share is the larger margin.
+    assert overran(10.6, 10.0)
+    assert not overran(10.4, 10.0)
+    assert overran(10.4, 10.0, 0.0)
 
 
 def test_a_protocol_without_a_time_limit_has_no_overrun() -> None:
@@ -213,12 +252,52 @@ def test_the_analysis_reports_the_notes_of_the_plan_as_limitations() -> None:
     protocol = dataset.plan.protocol("p")
     (note,) = notes(dataset.plan, protocol)
     assert assess(dataset.plan).notes == (note,)
-    assert "gives one run per problem to the solvers declared deterministic (fixed)" in note
+    assert "one run per problem to the iterative solvers declared deterministic (fixed)" in note
     (message,) = _limitations(dataset)["plan"]
     assert message == "Protocol" + note.removeprefix("protocol") + "."
     # A selection without the solver has nothing to report.
     assert notes(dataset.plan, protocol, ["a", "b"]) == ()
     assert "plan" not in _limitations(dataset, solvers=("a", "b"))
+
+
+def _not_iterative(dataset: Dataset) -> Dataset:
+    """Declare the deterministic solver not iterative, as a constructive rule is."""
+    solvers = tuple(
+        replace(entry, iterative=entry.name != "fixed") for entry in dataset.plan.solvers
+    )
+    return replace(dataset, plan=replace(dataset.plan, solvers=solvers), solvers=solvers)
+
+
+def test_a_single_run_that_is_not_iterative_is_reported_only_when_the_time_limit_ends_it() -> None:
+    finished = _not_iterative(_dataset({"fixed": [StopReason.COMPLETED]}))
+    protocol = finished.plan.protocol("p")
+    assert notes(finished.plan, protocol) == ()
+    (conditional,) = conditional_notes(finished.plan, protocol)
+    assert "declared deterministic that are not iterative (fixed)" in conditional
+    outcomes = assess_outcomes(finished.plan, _records(finished))
+    assert outcomes.protocol("p").unreplicated == {}
+    assert outcomes.to_dict()["protocols"][0]["unreplicated"] == {}
+    assert "plan" not in _limitations(finished)
+
+    cut = _not_iterative(_dataset({"fixed": [StopReason.TIME_LIMIT, StopReason.COMPLETED]}))
+    outcomes = assess_outcomes(cut.plan, _records(cut))
+    assert outcomes.protocol("p").unreplicated == {"fixed": {"completed": 1, "time-limit": 2}}
+    (message,) = _limitations(cut)["plan"]
+    assert message.startswith(
+        "Under protocol p, the time limit ended completed runs of solvers declared "
+        "deterministic that run once per problem: fixed 1 completed, 2 time-limit."
+    )
+    assert "replicate_timed = true" in message
+    assert "plan" not in _limitations(cut, solvers=("a", "b"))
+
+    # With every replicate, or without a time limit, there is nothing to report.
+    replicated = replace(cut, plan=replace(cut.plan, replicate_timed=True))
+    assert assess_outcomes(replicated.plan, _records(replicated)).protocol("p").unreplicated == {}
+    assert "plan" not in _limitations(replicated)
+    counted = _not_iterative(
+        _dataset({"fixed": [StopReason.TIME_LIMIT]}, stop=StopCriteria(max_evaluations=10))
+    )
+    assert assess_outcomes(counted.plan, _records(counted)).protocol("p").unreplicated == {}
 
 
 def test_a_plan_that_replicates_under_the_time_limit_has_no_such_limitation() -> None:

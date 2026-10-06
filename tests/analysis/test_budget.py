@@ -130,9 +130,15 @@ def test_the_budget_limitation_counts_runs_beyond_the_tolerance_and_states_the_l
         "These runs searched for longer than the protocol states, and their results are "
         "compared as they are."
     )
+    # With no share allowed, the clock margin of the engine still applies: the runs of
+    # 1.04 s and 1.05 s are within 0.05 s of the limit and are not named.
     strict = summarize(dataset, AnalysisConfig(overrun_tolerance=0.0))
     (budget,) = [item for item in strict.limitations if item.topic == "budget"]
-    assert "a in 2 of 4 (up to 1.05 times the limit); b in 3 of 4" in budget.message
+    assert "a in" not in budget.message
+    assert "b in 3 of 4 (up to 4.02 times the limit)" in budget.message
+    wide = summarize(dataset, AnalysisConfig(overrun_tolerance=2.0))
+    (budget,) = [item for item in wide.limitations if item.topic == "budget"]
+    assert "b in 1 of 4 (up to 4.02 times the limit)" in budget.message
     rows = _rows(dataset)
     assert [row["overrun_seconds"] for row in rows if row["solver"] == "b"] == pytest.approx(
         [0.06, 3.02, 0.0, 1.5]

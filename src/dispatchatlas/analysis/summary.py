@@ -618,10 +618,14 @@ def _fairness_limitations(scope: Scope, outcomes: ProtocolOutcomes) -> list[Limi
     """Report what the plan notes on the protocol and how its runs ended.
 
     Each ``plan`` limitation is a note of the plan's fairness assessment on
-    the analysed protocol and solvers, such as solvers declared deterministic
-    that run once under a time limit. The ``stop-reasons`` limitation counts,
-    for each iterative solver, the completed runs by the reason they ended
-    for, when those reasons differ within the protocol.
+    the analysed protocol and solvers, such as iterative solvers declared
+    deterministic that run once under a time limit. A conditional note of the
+    plan becomes one only for the solvers whose condition the outcomes meet:
+    solvers declared deterministic that are not iterative and run once are
+    reported when the time limit ended one of their completed runs. The
+    ``stop-reasons`` limitation counts, for each iterative solver, the
+    completed runs by the reason they ended for, when those reasons differ
+    within the protocol.
     """
     found: list[Limitation] = []
     selected = [entry.name for entry in scope.dataset.solvers]
@@ -630,6 +634,22 @@ def _fairness_limitations(scope: Scope, outcomes: ProtocolOutcomes) -> list[Limi
         Limitation("plan", note[0].upper() + note[1:] + ".")
         for note in fairness.notes(scope.dataset.plan, protocol, selected)
     )
+    cut = "; ".join(
+        f"{name} " + ", ".join(f"{count} {reason}" for reason, count in reasons.items())
+        for name, reasons in outcomes.unreplicated.items()
+        if name in selected
+    )
+    if cut:
+        found.append(
+            Limitation(
+                "plan",
+                f"Under protocol {scope.protocol}, the time limit ended completed runs of "
+                f"solvers declared deterministic that run once per problem: {cut}. A run that "
+                "the time limit ends depends on the speed and load of the machine, and one run "
+                "does not show by how much; replicate_timed = true in the campaign file gives "
+                "such a solver every replicate.",
+            )
+        )
     if outcomes.divergent:
         counted = "; ".join(
             f"{name} " + ", ".join(f"{count} {reason}" for reason, count in reasons.items())
@@ -655,7 +675,8 @@ def _time_limitations(
 
     The ``budget`` limitation names the solvers whose completed runs took
     more wall time than the limit allows with ``overrun_tolerance``, as the
-    assessment of the outcomes counts them. The
+    assessment of the outcomes counts them, by the rule of the engine's note
+    on a run (:func:`~dispatchatlas.campaigns.execution.overran`). The
     ``clock`` limitation counts the completed runs whose records state that
     the solver's clock started at the start of the attempt, when only some
     of them do. The

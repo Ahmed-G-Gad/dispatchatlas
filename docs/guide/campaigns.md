@@ -127,7 +127,8 @@ is that list in place of the number of runs.
   show by how much. With `replicate_timed = true`, such a solver runs every
   replicate under each protocol that sets a time limit, and still once under
   the others. A solver that ignores the time limit then repeats one result.
-  Without the key, the plan notes the solvers it concerns (see
+  Without the key, the plan notes the iterative solvers it concerns, and
+  states the others in a conditional note (see
   [Fair comparison](#fair-comparison)).
 - **A solver's own count.** A solver entry with `replicates` runs that many
   times under every protocol, whatever it declares. It is the way to give
@@ -202,9 +203,19 @@ and that a reader of the comparison needs. The planner logs each as a
 warning, `campaign validate` prints them, `plan.json` stores them, and the
 analysis reports those of the analysed protocol as limitations. Both concern
 protocols with a time limit: solvers whose `threads` differ (see
-[Execution](#execution)), and solvers declared deterministic that run once
-although the campaign has more replicates, unless the solver entry states its
-own `replicates`.
+[Execution](#execution)), and iterative solvers declared deterministic that
+run once although the campaign has more replicates, unless the solver entry
+states its own `replicates`.
+
+A solver declared deterministic that is not iterative ends when its algorithm
+does. A constructive rule such as `neh` never reads the clock, and an exact
+solver such as `milp` can be ended by its time limit; the plan cannot tell
+the two apart. Such a solver that runs once under a time limit is therefore a
+**conditional note** (`conditional_notes` in `plan.json`): it holds only if
+the time limit ends one of the solver's runs. The planner logs it as
+information, `campaign validate` prints it beside the notes, and the analysis
+reports it as a limitation only for the solvers whose completed runs the time
+limit ended.
 
 A fair plan does not make the runs comparable by itself. Under one protocol, a
 solver that stops for lack of improvement spends less than the budget another
@@ -212,11 +223,14 @@ uses up to its time limit, and a solver that honours no deadline spends more.
 `dispatchatlas.campaigns.fairness.assess_outcomes(plan, records)` compares the
 records of the completed runs with the plan, protocol by protocol: how many
 runs of each iterative solver ended for each stop reason, whether those
-reasons diverge, and which solvers' runs took more wall time than the time
-limit allows. A divergence qualifies a comparison and does not refuse it,
-since a reached target or a proof of optimality is a legitimate end. The
-analysis reports both as limitations (see
-[Analyzing campaigns](analyzing.md)).
+reasons diverge, which solvers' runs took more wall time than the time limit
+allows, and which solvers of a conditional note had a run that the time limit
+ended. A run counts as over its time limit by the rule of the engine's note
+on a run: its wall time passes the limit by more than the tolerance, 5 % of
+the limit by default, and by more than 0.05 seconds. A divergence qualifies a
+comparison and does not refuse it, since a reached target or a proof of
+optimality is a legitimate end. The analysis reports these as limitations
+(see [Analyzing campaigns](analyzing.md)).
 
 ## Estimating
 

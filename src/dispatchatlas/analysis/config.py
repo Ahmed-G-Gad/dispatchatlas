@@ -20,6 +20,7 @@ from typing import Any, Literal
 from dispatchatlas.analysis.stats.bootstrap import IntervalMethod
 from dispatchatlas.analysis.stats.corrections import CORRECTIONS, Correction
 from dispatchatlas.analysis.stats.ranks import Sense, check_sense
+from dispatchatlas.campaigns.execution import OVERRUN_MARGIN
 from dispatchatlas.core.errors import ConfigError
 
 __all__ = ["AnalysisConfig", "CellStatistic", "Omnibus", "ReferenceRule", "TimeoutScore"]
@@ -97,8 +98,13 @@ class AnalysisConfig:
             these runs under either choice.
         overrun_tolerance: Share of the time limit by which the wall time of
             a completed run may pass the limit before the limitations name
-            the run: 0.05 allows 5 % more wall time than the limit. Nothing
-            is excluded or rescored.
+            the run: 0.05 allows 5 % more wall time than the limit. The
+            default is the share of the engine's note on a run,
+            :data:`~dispatchatlas.campaigns.execution.OVERRUN_MARGIN`, and
+            the engine's clock margin applies beside any share, so a wall
+            time within
+            :data:`~dispatchatlas.campaigns.execution.CLOCK_MARGIN_SECONDS`
+            of the limit is never named. Nothing is excluded or rescored.
     """
 
     protocol: str | None = None
@@ -125,7 +131,7 @@ class AnalysisConfig:
     focal: str | None = None
     baselines: tuple[str, ...] | None = None
     timeout_score: TimeoutScore = "worst"
-    overrun_tolerance: float = 0.05
+    overrun_tolerance: float = OVERRUN_MARGIN
 
     def __post_init__(self) -> None:
         for name in ("protocol", "objective", "reference_source", "focal"):

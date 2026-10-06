@@ -349,6 +349,27 @@ def test_validate_can_list_the_planned_runs_before_anything_runs(cli: Cli, tmp_p
     assert stored["runs"] == runs
 
 
+def test_validate_shows_a_conditional_note_without_a_warning(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace("stop = { max_evaluations = 10 }", "stop = { time_limit = 0.5 }"),
+        encoding="utf-8",
+    )
+    result = cli("campaign", "validate", config)
+    assert result.code == 0
+    # A constructive rule runs once under the time limit: stated, and no warning.
+    assert "declared deterministic that are not iterative (input-order)" in result.out
+    assert "only if the time limit ends it" in result.out
+    logged = [line for line in result.err.splitlines() if "declared deterministic" in line]
+    assert all(": info" in line.split("campaign tiny")[0] for line in logged)
+    assert "warning" not in result.err
+    document = cli("campaign", "validate", config, "--json").json()
+    assert document["fairness"]["notes"] == []
+    (note,) = document["fairness"]["conditional_notes"]
+    assert "(input-order)" in note
+
+
 def test_validate_states_the_replication_and_the_seed_namespace(cli: Cli, tmp_path: Path) -> None:
     config = campaign_file(tmp_path, solvers='id = "input-order"\nreplicates = 3')
     text = config.read_text(encoding="utf-8")

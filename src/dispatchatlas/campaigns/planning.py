@@ -541,6 +541,8 @@ def prepare(
     _report(result)
     for note in verdict.notes:
         _LOG.warning("campaign %s: %s", campaign.id, note)
+    for note in verdict.conditional_notes:
+        _LOG.info("campaign %s: %s", campaign.id, note)
     return Prepared(campaign, result, problems, solvers)
 
 

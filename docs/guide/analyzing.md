@@ -110,8 +110,11 @@ does with CBC, shows a share near 0 while that program computes.
 
 Three limitations summarise the timing of the analysed protocol when it
 sets a time limit. `budget` names every solver whose completed runs took
-more wall time than `time_limit * (1 + overrun_tolerance)`, with how many of
-its completed runs did and the largest ratio of wall time to limit. Such a
+more wall time than `time_limit + max(0.05, overrun_tolerance * time_limit)`
+seconds, with how many of its completed runs did and the largest ratio of
+wall time to limit. The rule is the one of the engine's note on a run, and
+its 0.05 seconds are the margin within which the engine's clock cannot tell
+a run from its limit. Such a
 run searched for longer than the protocol states; it is neither excluded nor
 rescored. `timing` states the load that the completed runs which lasted at
 least half of the time limit executed under: the range and median of their
@@ -136,11 +139,16 @@ whose records all state it, or none, has no such limitation.
 Two more limitations come from the fairness assessment of the campaign (see
 [Fair comparison](campaigns.md#fair-comparison)). Each `plan` limitation is a
 note of the plan on the analysed protocol and solvers: solvers whose `threads`
-differ under a time limit, and solvers declared deterministic that run once
-under a time limit although the campaign has more replicates. The result of
-such a run depends on the machine wherever the time limit ends it, and its
-single run cannot show the spread that the replicates of the other solvers
-show; `replicate_timed = true` in the campaign file gives it every replicate.
+differ under a time limit, and iterative solvers declared deterministic that
+run once under a time limit although the campaign has more replicates. The
+result of such a run depends on the machine wherever the time limit ends it,
+and its single run cannot show the spread that the replicates of the other
+solvers show; `replicate_timed = true` in the campaign file gives it every
+replicate. A solver declared deterministic that is not iterative, such as a
+constructive rule or an exact solver, is reported the same way only when the
+time limit ended one of its completed runs, with its runs counted by stop
+reason, for example `milp 3 completed, 2 time-limit`. A constructive rule,
+which the clock cannot end, is never reported.
 
 `stop-reasons` appears when the completed runs of the iterative solvers ended
 for more than one reason under the analysed protocol, and counts each
@@ -245,7 +253,7 @@ default:
 | `omnibus` | `"iman-davenport"` | the test that gates the Nemenyi test, or `"friedman"` |
 | `statistic` | `"mean"` | how replicates become one score; with `"median"`, failures decide the cell only when they reach half of the runs |
 | `timeout_score` | `"worst"` | how a run killed at its hard limit is scored: as the worst value, or with `"incumbent"` by the feasible incumbent it held when its time limit passed |
-| `overrun_tolerance` | `0.05` | share of the time limit by which the wall time of a completed run may pass the limit before the `budget` limitation names it; nothing is excluded |
+| `overrun_tolerance` | `0.05` | share of the time limit by which the wall time of a completed run may pass the limit before the `budget` limitation names it, beside the engine's clock margin of 0.05 seconds, which always applies; nothing is excluded |
 | `replicate_floor` | none | fewest replicates per cell of a stochastic solver; smaller cells are reported, not excluded |
 | `power` | `0.8` | target power of the detectable-effect statement |
 | `references` | none | a reference value per problem, for the relative deviation |

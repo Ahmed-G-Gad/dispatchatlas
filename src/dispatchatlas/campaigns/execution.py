@@ -78,6 +78,7 @@ __all__ = [
     "engine_failure",
     "exception_error",
     "observe",
+    "overran",
     "utc_now",
     "warm_up",
     "warm_up_task",
@@ -469,6 +470,23 @@ def describe(
     return outcome, schedule, tuple(notes)
 
 
+def overran(wall_seconds: float, limit: float, margin: float = OVERRUN_MARGIN) -> bool:
+    """Return whether a wall time passes a time limit by more than the margins allow.
+
+    It does when it exceeds the limit by more than ``margin`` of the limit
+    and by more than :data:`CLOCK_MARGIN_SECONDS`. The engine's note on a run
+    and the assessment of a campaign's outcomes
+    (:func:`~dispatchatlas.campaigns.fairness.assess_outcomes`) both count an
+    overrun by this rule.
+
+    Args:
+        wall_seconds: Wall-clock seconds of a solve, on the engine's clock.
+        limit: The time limit of the run, in seconds.
+        margin: Share of the limit by which the wall time may pass it.
+    """
+    return wall_seconds > limit + max(CLOCK_MARGIN_SECONDS, margin * limit)
+
+
 def observe(
     outcome: Outcome, stop: StopCriteria, wall_seconds: float, *, iterative: bool
 ) -> tuple[str, ...]:
@@ -504,7 +522,7 @@ def observe(
     notes: list[str] = []
     limit = stop.time_limit
     if limit is not None:
-        if wall_seconds > limit + max(CLOCK_MARGIN_SECONDS, OVERRUN_MARGIN * limit):
+        if overran(wall_seconds, limit):
             notes.append(
                 f"the run took {wall_seconds:.6g} s of wall time under a time limit of "
                 f"{limit:g} s, {wall_seconds / limit:.3g} times the limit"

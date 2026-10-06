@@ -115,8 +115,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plans replicate what depends on the clock. The campaign key
   `replicate_timed` gives a solver declared deterministic every replicate
   under a protocol that sets a time limit, and a solver entry may carry its
-  own `replicates`. Without the key, the plan notes the solvers declared
-  deterministic that run once under a time limit. The campaign key
+  own `replicates`. Without the key, the plan notes the iterative solvers
+  declared deterministic that run once under a time limit, and states those
+  that are not iterative, which the clock ends only if they honour the time
+  limit, in a conditional note that the planner logs as information. The
+  campaign key
   `seed_namespace` separates the run seeds of campaigns that share a seed.
   The stop criteria state in the field `schedule` which clock a parameter
   schedule follows, `"deterministic"` or `"binding"`, and a solver that
@@ -128,10 +131,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps its config hash, seeds, and run ids.
 - `dispatchatlas.campaigns.fairness.assess_outcomes` compares the completed
   runs of a campaign with its plan: for each protocol, the stop reasons of
-  the iterative solvers' runs, whether they diverge, and the solvers whose
-  runs took more wall time than the time limit allows. The analysis reports
-  divergent stop reasons (`stop-reasons`) and the notes of the plan on the
-  analysed protocol (`plan`) as limitations.
+  the iterative solvers' runs, whether they diverge, the solvers whose runs
+  took more wall time than the time limit allows, and the solvers of a
+  conditional note whose runs the time limit ended. It counts an overrun by
+  the rule of the engine's note on a run
+  (`dispatchatlas.campaigns.execution.overran`), which the `budget`
+  limitation of the analysis follows too. The analysis reports divergent
+  stop reasons (`stop-reasons`), the notes of the plan on the analysed
+  protocol, and the conditional notes that the outcomes confirm (`plan`) as
+  limitations.
 - `campaign validate --runs` lists every planned run with its id and seed
   before anything runs. A plan written over one of the same config hash
   names, in a warning, the runs that left it, the runs that entered it, the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
@@ -20,7 +21,7 @@ from dispatchatlas.campaigns import (
     loads_campaign,
     plan,
 )
-from dispatchatlas.campaigns.fairness import assess
+from dispatchatlas.campaigns.fairness import assess, conditional_notes, notes
 from dispatchatlas.campaigns.planning import PlannedRun, run_seed
 from dispatchatlas.campaigns.records import SolverEntry
 from dispatchatlas.core import ConfigError, StopCriteria
@@ -66,12 +67,56 @@ def test_a_deterministic_solver_runs_once_under_a_time_limit_and_the_plan_notes_
     assert not result.replicate_timed
     verdict = assess(result)
     assert verdict.fair
-    (note,) = verdict.notes
+    # A constructive rule ends when its algorithm does: the note is conditional.
+    assert verdict.notes == ()
+    (note,) = verdict.conditional_notes
     assert "'timed'" in note
-    assert "input-order" in note
+    assert "declared deterministic that are not iterative (input-order)" in note
+    assert "only if the time limit ends it" in note
     assert "replicate_timed" in note
     assert "random-search" not in note
-    assert result.to_dict()["fairness"]["notes"] == [note]
+    document = result.to_dict()["fairness"]
+    assert document["notes"] == []
+    assert document["conditional_notes"] == [note]
+
+
+def test_an_iterative_deterministic_solver_under_a_time_limit_is_noted_whatever_its_runs_do(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    solvers = (SolverSpec("input-order"), SolverSpec("test-sleeper"), SolverSpec("random-search"))
+    campaign = tiny_campaign(solvers=solvers, protocols=(TIMED, COUNTED), replicates=3)
+    with caplog.at_level(logging.INFO):
+        result = plan(campaign, registry=REGISTRY)
+    verdict = assess(result)
+    (note,) = verdict.notes
+    assert "the iterative solvers declared deterministic (test-sleeper)" in note
+    assert "input-order" not in note
+    (conditional,) = verdict.conditional_notes
+    assert "(input-order)" in conditional
+    assert "test-sleeper" not in conditional
+    assert notes(result, result.protocol("timed")) == (note,)
+    assert conditional_notes(result, result.protocol("timed")) == (conditional,)
+    assert conditional_notes(result, result.protocol("timed"), ["test-sleeper"]) == ()
+    assert conditional_notes(result, result.protocol("evals")) == ()
+    # The planner warns about the first and only informs about the second.
+    levels = {record.getMessage(): record.levelno for record in caplog.records}
+    assert levels[f"campaign {campaign.id}: {note}"] == logging.WARNING
+    assert levels[f"campaign {campaign.id}: {conditional}"] == logging.INFO
+
+
+@pytest.mark.parametrize("name", sorted(EXAMPLE_HASHES))
+def test_the_example_campaigns_plan_without_a_warning_about_replication(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO):
+        result = plan(load_campaign(EXAMPLES / name))
+    warned = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING and "declared deterministic" in record.getMessage()
+    ]
+    assert warned == []
+    assert not any("declared deterministic" in note for note in assess(result).notes)
 
 
 def test_replicate_timed_gives_a_deterministic_solver_every_replicate_under_a_time_limit() -> None:
@@ -94,7 +139,7 @@ def test_replicate_timed_gives_a_deterministic_solver_every_replicate_under_a_ti
     verdict = assess(result)
     assert verdict.fair
     assert verdict.paired
-    assert verdict.notes == ()
+    assert verdict.notes == verdict.conditional_notes == ()
     for run in result.runs:
         assert run.seed == run_seed(campaign.seed, run.problem, run.replicate)
     assert campaign.config_hash != base.config_hash
@@ -103,9 +148,9 @@ def test_replicate_timed_gives_a_deterministic_solver_every_replicate_under_a_ti
 
 def test_no_note_when_every_solver_runs_once_or_no_protocol_sets_a_time_limit() -> None:
     single = plan(tiny_campaign(protocols=(TIMED,), replicates=1), registry=REGISTRY)
-    assert assess(single).notes == ()
+    assert assess(single).notes == assess(single).conditional_notes == ()
     counted = plan(tiny_campaign(protocols=(COUNTED,), replicates=3), registry=REGISTRY)
-    assert assess(counted).notes == ()
+    assert assess(counted).notes == assess(counted).conditional_notes == ()
 
 
 def test_a_stored_plan_keeps_its_replication_rule() -> None:
@@ -145,7 +190,7 @@ def test_a_solver_entry_sets_its_own_replicate_count() -> None:
     verdict = assess(result)
     assert verdict.fair
     # A count the entry states is a choice, so the plan has nothing to note.
-    assert verdict.notes == ()
+    assert verdict.notes == verdict.conditional_notes == ()
     assert Plan.from_dict(result.to_dict()) == result
 
 

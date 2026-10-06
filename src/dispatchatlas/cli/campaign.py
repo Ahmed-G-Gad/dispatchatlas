@@ -222,7 +222,10 @@ def _validate(arguments: argparse.Namespace) -> int:
             ("excluded", _count(len(planned.exclusions), "problem and solver pair")),
             ("caveats", "\n".join(_caveat(item) for item in planned.caveats) or "none"),
             ("fair", "yes" if fairness["fair"] else "no: " + "; ".join(fairness["issues"])),
-            ("notes", "\n".join(fairness["notes"]) or "none"),
+            (
+                "notes",
+                "\n".join([*fairness["notes"], *fairness["conditional_notes"]]) or "none",
+            ),
         ]
     )
     if arguments.runs:

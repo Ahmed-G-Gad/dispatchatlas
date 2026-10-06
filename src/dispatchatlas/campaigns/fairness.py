@@ -34,23 +34,32 @@ a plan. Both concern protocols with a time limit:
   has more replicates, because the result of a run that the clock ends
   depends on the speed and load of the machine and one run does not show by
   how much. The campaign key ``replicate_timed`` gives them every replicate,
-  and a solver whose entry states its own count is not noted.
+  and a solver whose entry states its own count is not noted. A stop
+  criterion ends the run of an iterative solver, so such a solver is a note.
+  A solver that is not iterative ends when its algorithm does: a constructive
+  rule never reads the clock, and an exact solver can be ended by its time
+  limit. The plan cannot tell the two apart, so such a solver is a
+  **conditional note** (:func:`conditional_notes`), which holds only if the
+  time limit ends one of its runs.
 
 A plan says what should run. :func:`assess_outcomes` compares the records of
 the completed runs with it, protocol by protocol: for which reasons the runs
 of the iterative solvers ended, since runs of one protocol that ended for
-different reasons did not spend the same budget, and which solvers' runs took
-more wall time than the protocol's time limit allows.
+different reasons did not spend the same budget, which solvers' runs took
+more wall time than the protocol's time limit allows, and which of the
+solvers of a conditional note had a run that the time limit ended.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from dispatchatlas.campaigns.execution import OVERRUN_MARGIN, overran
 from dispatchatlas.core.errors import ConfigError
+from dispatchatlas.core.solver import StopReason
 
 if TYPE_CHECKING:
     from dispatchatlas.campaigns.config import Protocol
@@ -63,7 +72,6 @@ __all__ = [
     "EQUAL_ITERATIONS",
     "EQUAL_WALL_CLOCK",
     "FIXED_TARGET",
-    "OVERRUN_TOLERANCE",
     "PARITIES",
     "Fairness",
     "Outcomes",
@@ -71,6 +79,7 @@ __all__ = [
     "ProtocolOutcomes",
     "assess",
     "assess_outcomes",
+    "conditional_notes",
     "notes",
     "parities",
 ]
@@ -81,9 +90,6 @@ EQUAL_ITERATIONS = "equal-iterations"
 FIXED_TARGET = "fixed-target"
 PARITIES = (EQUAL_WALL_CLOCK, EQUAL_EVALUATIONS, EQUAL_ITERATIONS, FIXED_TARGET)
 """Every parity name, in report order."""
-
-OVERRUN_TOLERANCE = 0.05
-"""Default share of a time limit by which a completed run may exceed it unreported."""
 
 _SHOWN = 3
 """Examples an issue lists before summarising the rest."""
@@ -114,6 +120,9 @@ class Fairness:
         issues: Every violation found. Empty for a fair plan.
         notes: Facts that violate nothing but bear on a comparison. They
             leave a plan fair.
+        conditional_notes: Facts that bear on a comparison only if a run
+            ends a certain way, which the plan cannot tell
+            (:func:`conditional_notes`). They leave a plan fair.
     """
 
     solvers: tuple[str, ...]
@@ -121,6 +130,7 @@ class Fairness:
     paired: bool
     issues: tuple[str, ...]
     notes: tuple[str, ...] = ()
+    conditional_notes: tuple[str, ...] = ()
 
     @property
     def fair(self) -> bool:
@@ -144,6 +154,7 @@ class Fairness:
             "paired": self.paired,
             "issues": list(self.issues),
             "notes": list(self.notes),
+            "conditional_notes": list(self.conditional_notes),
         }
 
 
@@ -203,6 +214,9 @@ def assess(plan: Plan) -> Fairness:
         paired=not unpaired,
         issues=tuple(issues),
         notes=tuple(note for protocol in plan.protocols for note in notes(plan, protocol)),
+        conditional_notes=tuple(
+            note for protocol in plan.protocols for note in conditional_notes(plan, protocol)
+        ),
     )
 
 
@@ -220,9 +234,9 @@ def notes(
     Returns:
         One sentence, without its capital and full stop, for each fact: the
         compared solvers' thread counts differ under a time limit, and
-        solvers declared deterministic run once under a time limit although
-        the campaign has more replicates. Empty for a protocol without a time
-        limit.
+        iterative solvers declared deterministic run once under a time limit
+        although the campaign has more replicates. Empty for a protocol
+        without a time limit.
     """
     if protocol.stop.time_limit is None:
         return ()
@@ -236,21 +250,52 @@ def notes(
             f"counts differ ({counts}), so its equal wall-clock budgets are unequal processor "
             "budgets"
         )
-    single = [
-        solver.name
-        for solver in compared
-        if not solver.stochastic
-        and solver.replicates is None
-        and plan.replicates_of(solver, protocol) < plan.replicates
-    ]
+    single = [solver.name for solver in _unreplicated(plan, protocol, solvers) if solver.iterative]
     if single:
         found.append(
             f"protocol {protocol.name!r} sets a time limit and gives one run per problem to "
-            f"the solvers declared deterministic ({', '.join(single)}): a run that the time "
-            "limit ends depends on the speed and load of the machine, and one run does not "
-            "show by how much; replicate_timed = true gives them every replicate"
+            f"the iterative solvers declared deterministic ({', '.join(single)}): a run that "
+            "the time limit ends depends on the speed and load of the machine, and one run "
+            "does not show by how much; replicate_timed = true gives them every replicate"
         )
     return tuple(found)
+
+
+def conditional_notes(
+    plan: Plan, protocol: Protocol, solvers: Collection[str] | None = None
+) -> tuple[str, ...]:
+    """Return what bears on a comparison under one protocol only if a run ends a certain way.
+
+    A solver declared deterministic that is not iterative ends when its
+    algorithm does. A constructive rule never reads the clock, and an exact
+    solver can be ended by its time limit; the plan cannot tell the two
+    apart, so what it says about them holds only for a run that the time
+    limit ends. :func:`assess_outcomes` finds those runs among the records.
+
+    Args:
+        plan: The plan.
+        protocol: One of its protocols.
+        solvers: Names of the solvers compared. ``None`` compares every
+            solver of the plan.
+
+    Returns:
+        One sentence, without its capital and full stop: solvers declared
+        deterministic that are not iterative run once under a time limit
+        although the campaign has more replicates. Empty when there is none,
+        and for a protocol without a time limit.
+    """
+    single = [
+        solver.name for solver in _unreplicated(plan, protocol, solvers) if not solver.iterative
+    ]
+    if not single:
+        return ()
+    return (
+        f"protocol {protocol.name!r} sets a time limit and gives one run per problem to the "
+        f"solvers declared deterministic that are not iterative ({', '.join(single)}): the "
+        "result of such a run depends on the speed and load of the machine only if the time "
+        "limit ends it, as it can end the run of an exact solver, and one run does not show by "
+        "how much; replicate_timed = true gives them every replicate",
+    )
 
 
 @dataclass(frozen=True)
@@ -260,7 +305,8 @@ class Overrun:
     Attributes:
         runs: Completed runs of the solver under the protocol.
         over: How many of them took more wall time than the time limit with
-            the tolerance allows.
+            the tolerance allows, by the rule of
+            :func:`~dispatchatlas.campaigns.execution.overran`.
         worst: The longest wall time among those, as a multiple of the time
             limit.
     """
@@ -283,11 +329,18 @@ class ProtocolOutcomes:
         overruns: For each solver with a completed run over the time limit,
             in plan order, the count and extent. Empty for a protocol
             without a time limit.
+        unreplicated: For each solver declared deterministic that is not
+            iterative, runs once per problem under the protocol's time limit
+            although the campaign has more replicates, and has a completed
+            run that the time limit ended, in plan order, how many of its
+            runs ended for each stop reason. These are the solvers of the
+            plan's conditional note whose condition holds.
     """
 
     protocol: str
     stop_reasons: Mapping[str, Mapping[str, int]]
     overruns: Mapping[str, Overrun]
+    unreplicated: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
 
     @property
     def divergent(self) -> bool:
@@ -311,6 +364,7 @@ class ProtocolOutcomes:
                 name: {"runs": item.runs, "over": item.over, "worst": item.worst}
                 for name, item in self.overruns.items()
             },
+            "unreplicated": {name: dict(counts) for name, counts in self.unreplicated.items()},
         }
 
 
@@ -321,7 +375,9 @@ class Outcomes:
     Attributes:
         protocols: The outcomes under each protocol, in plan order.
         overrun_tolerance: Share of a time limit by which a run may exceed
-            it without counting as over.
+            it without counting as over; the clock margin of
+            :func:`~dispatchatlas.campaigns.execution.overran` applies
+            beside it.
         records: How many records counted: those of runs of the plan.
     """
 
@@ -359,7 +415,7 @@ def assess_outcomes(
     plan: Plan,
     records: Iterable[RunRecord],
     *,
-    overrun_tolerance: float = OVERRUN_TOLERANCE,
+    overrun_tolerance: float = OVERRUN_MARGIN,
 ) -> Outcomes:
     """Compare the outcomes of a campaign's completed runs with its plan.
 
@@ -373,12 +429,16 @@ def assess_outcomes(
         records: Records of completed runs. A record of a run that is not in
             the plan does not count.
         overrun_tolerance: Share of the time limit by which the wall time of
-            a completed run may exceed it without counting as over.
+            a completed run may exceed it without counting as over. A run
+            counts as over by the rule of the engine's note on it,
+            :func:`~dispatchatlas.campaigns.execution.overran`, so a wall
+            time within the clock margin of the limit never does.
 
     Returns:
-        For each protocol, the stop reasons of the iterative solvers' runs
-        and the solvers whose runs took more wall time than the time limit
-        allows.
+        For each protocol, the stop reasons of the iterative solvers' runs,
+        the solvers whose runs took more wall time than the time limit
+        allows, and the solvers declared deterministic that run once and
+        are not iterative whose runs the time limit ended.
 
     Raises:
         ConfigError: If ``overrun_tolerance`` is not zero or a positive
@@ -404,21 +464,54 @@ def assess_outcomes(
         overruns: dict[str, Overrun] = {}
         for solver in plan.solvers:
             taken = walls.get((protocol.name, solver.name), [])
-            over = [] if limit is None else [w for w in taken if w > limit * (1.0 + tolerance)]
+            over = [] if limit is None else [w for w in taken if overran(w, limit, tolerance)]
             if over and limit is not None:
                 overruns[solver.name] = Overrun(len(taken), len(over), max(over) / limit)
+        ended = {
+            solver.name: dict(sorted(reasons[protocol.name, solver.name].items()))
+            for solver in plan.solvers
+            if (protocol.name, solver.name) in reasons
+        }
         protocols.append(
             ProtocolOutcomes(
                 protocol=protocol.name,
                 stop_reasons={
-                    solver.name: dict(sorted(reasons[protocol.name, solver.name].items()))
+                    solver.name: ended[solver.name]
                     for solver in plan.solvers
-                    if solver.iterative and (protocol.name, solver.name) in reasons
+                    if solver.iterative and solver.name in ended
                 },
                 overruns=overruns,
+                unreplicated={
+                    solver.name: ended[solver.name]
+                    for solver in _unreplicated(plan, protocol)
+                    if not solver.iterative
+                    and StopReason.TIME_LIMIT.value in ended.get(solver.name, {})
+                },
             )
         )
     return Outcomes(tuple(protocols), float(tolerance), counted)
+
+
+def _unreplicated(
+    plan: Plan, protocol: Protocol, solvers: Collection[str] | None = None
+) -> list[SolverEntry]:
+    """Return the solvers declared deterministic that run once under a protocol's time limit.
+
+    They are the solvers, among those named, that are not stochastic, whose
+    entries state no replicate count of their own, and that the plan gives
+    fewer runs per problem under the protocol than the campaign has
+    replicates. Empty for a protocol without a time limit.
+    """
+    if protocol.stop.time_limit is None:
+        return []
+    return [
+        solver
+        for solver in plan.solvers
+        if (solvers is None or solver.name in solvers)
+        and not solver.stochastic
+        and solver.replicates is None
+        and plan.replicates_of(solver, protocol) < plan.replicates
+    ]
 
 
 def _threads(solver: SolverEntry) -> int:
