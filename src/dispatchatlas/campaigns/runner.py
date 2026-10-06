@@ -389,6 +389,7 @@ class _Books:
                     result_hash=result.result_hash,
                     schedule=result.schedule,
                     provenance=provenance,
+                    notes=result.notes,
                 )
             )
             self.completed.add(planned.run_id)

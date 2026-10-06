@@ -27,6 +27,7 @@ from dispatchatlas.campaigns import (
 from dispatchatlas.campaigns.config import THREAD_VARIABLES
 from dispatchatlas.campaigns.processors import allowed_cpus
 from dispatchatlas.core import FEATURES, Problem, SolverError, SolveResult, SolverInfo, StopCriteria
+from dispatchatlas.core.solver import TracePoint
 from dispatchatlas.solvers import SolverRegistry, default_registry
 from dispatchatlas.solvers.rules import InputOrder, RandomSearch
 from dispatchatlas.solvers.search import Search
@@ -313,7 +314,64 @@ class Nested:
         return InputOrder().solve(problem, stop, seed)
 
 
+@dataclass(frozen=True)
+class SlowSetup:
+    """Spends ``setup`` seconds before its search starts, then samples orders within its limits."""
+
+    setup: float = 0.4
+    info: ClassVar[SolverInfo] = _info("test-slow-setup")
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        time.sleep(self.setup)
+        return RandomSearch().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class Tardy:
+    """Schedules the listed order, then works ``seconds`` more after its clock was read."""
+
+    seconds: float = 0.3
+    info: ClassVar[SolverInfo] = _info("test-tardy", stochastic=False, iterative=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        result = InputOrder().solve(problem, stop, seed)
+        time.sleep(self.seconds)
+        return result
+
+
+@dataclass(frozen=True)
+class Scripted:
+    """Returns the schedule of the listed order with a scripted trace and elapsed time.
+
+    The trace has one point per entry of ``times`` and ``evaluations``. Every
+    point holds the value of the schedule, but the last one holds ``last``
+    when that is set. ``elapsed`` replaces the elapsed time when it is set.
+    """
+
+    times: tuple[float, ...] = ()
+    evaluations: tuple[int, ...] = ()
+    last: float | None = None
+    elapsed: float | None = None
+    info: ClassVar[SolverInfo] = _info("test-scripted", stochastic=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        result = InputOrder().solve(problem, stop, seed)
+        value = result.value
+        assert value is not None
+        points = [
+            TracePoint(float(at), int(count), 0, value)
+            for at, count in zip(self.times, self.evaluations, strict=True)
+        ]
+        if points and self.last is not None:
+            points[-1] = replace(points[-1], value=self.last)
+        elapsed = result.elapsed if self.elapsed is None else self.elapsed
+        return replace(result, trace=tuple(points), elapsed=elapsed)
+
+
 TEST_SOLVERS = (
+    SlowSetup,
+    Tardy,
+    Scripted,
     Sleeper,
     Crasher,
     Flaky,

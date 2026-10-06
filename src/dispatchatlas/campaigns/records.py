@@ -218,10 +218,11 @@ class Outcome:
 
     @property
     def replayable(self) -> bool:
-        """Whether a replay can reproduce the run.
+        """Whether the stop reason leaves the run reproducible by a replay.
 
-        A run stopped by its wall-clock limit cannot: how far it got depends
-        on the speed and load of the machine.
+        A run stopped by its wall-clock limit is not: how far it got depends
+        on the speed and load of the machine. The protocol decides too, see
+        :attr:`RunRecord.replayable`.
         """
         return self.stop_reason is not StopReason.TIME_LIMIT
 
@@ -515,6 +516,13 @@ class RunRecord:
         result_hash: :meth:`Outcome.result_hash` at the time of the run.
         schedule: The best schedule, unless the campaign did not record it.
         provenance: How the attempt that completed the run executed.
+        notes: What the engine noticed about the attempt: the claims of the
+            solver that the checks of its result contradict, a wall time
+            beyond the time limit, an elapsed time the engine's clock
+            contradicts, and a trace whose times or evaluation counts are
+            out of order or that ends at another value than the outcome.
+            Empty when the engine noticed nothing, and when the record does
+            not state them.
     """
 
     run_id: str
@@ -529,6 +537,29 @@ class RunRecord:
     result_hash: str
     schedule: Schedule | None
     provenance: Provenance
+    notes: tuple[str, ...] = ()
+
+    @property
+    def replayable(self) -> bool:
+        """Whether a replay can reproduce the run.
+
+        A run stopped by its wall-clock limit cannot, and neither can any run
+        of an iterative solver under a protocol whose only bound is its time
+        limit, whatever stopped it: with no evaluation or iteration limit, a
+        search places itself on its schedule by the elapsed time
+        (:meth:`~dispatchatlas.core.solver.StopCriteria.progress`), so what
+        it does before it stops, at a target or for lack of improvement,
+        depends on the speed and load of the machine. A solver that is not
+        iterative follows no such schedule, and its run that completed under
+        a time limit reproduces.
+        """
+        stop = self.protocol.stop
+        timed_only = (
+            stop.time_limit is not None
+            and stop.max_evaluations is None
+            and stop.max_iterations is None
+        )
+        return self.outcome.replayable and not (timed_only and self.solver.iterative)
 
     def verify(self) -> tuple[str, ...]:
         """Return the integrity problems of the record, empty when it is intact.
@@ -561,11 +592,14 @@ class RunRecord:
             "result_hash": self.result_hash,
             "schedule": None if self.schedule is None else schedule_rows(self.schedule),
             "provenance": self.provenance.to_dict(),
+            "notes": list(self.notes),
         }
 
     @classmethod
     def from_dict(cls, document: object) -> RunRecord:
         """Build a record from :meth:`to_dict` output.
+
+        The field ``notes`` may be absent, and is then empty.
 
         Raises:
             SerializationError: If the document is not a run record of this
@@ -579,6 +613,11 @@ class RunRecord:
             if not isinstance(rows, list):
                 raise SerializationError("the schedule of a run record must be a list of rows")
             schedule = _schedule(rows)
+        stated = fields.absent_or_raw("notes")
+        notes = tuple(
+            _text(note, "a note of a run record")
+            for note in ([] if stated is None else _list(stated, "the notes of a run record"))
+        )
         return cls(
             run_id=fields.text("run_id"),
             campaign=fields.text("campaign"),
@@ -592,6 +631,7 @@ class RunRecord:
             result_hash=fields.text("result_hash"),
             schedule=schedule,
             provenance=Provenance.from_dict(fields.raw("provenance")),
+            notes=notes,
         )
 
 

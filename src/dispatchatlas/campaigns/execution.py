@@ -13,12 +13,26 @@ includes any threads the solver starts; and, on Linux, the peak resident
 memory of the process during the solve, read from ``/proc/self/status`` after
 resetting it through ``/proc/self/clear_refs``.
 
+The instant the wall time counts from is also the origin of the solver's
+clock: :func:`attempt` calls the solver inside
+:func:`~dispatchatlas.core.clock.clock_origin`, so the time limit and the
+elapsed time of every solver cover everything the solver does from the start
+of the attempt, including what it does before its search starts, such as
+building an evaluator or a model or importing a backend.
+
+:func:`observe` adds what the time and the trace of the attempt show: a wall
+time beyond the time limit, an elapsed time the engine's clock contradicts,
+and a trace that cannot be drawn against time or evaluations or that ends at
+another value than the outcome. These notes and those of :func:`describe`
+are returned with the completion, logged, and stored in the run record.
+
 :func:`classify` sorts errors into the categories of
 :class:`~dispatchatlas.campaigns.records.Category`.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import time
 import traceback
@@ -34,6 +48,7 @@ from dispatchatlas.campaigns.records import (
     RunError,
     schedule_digest,
 )
+from dispatchatlas.core.clock import clock_origin
 from dispatchatlas.core.errors import DispatchAtlasError
 from dispatchatlas.core.model import Problem
 from dispatchatlas.core.objectives import evaluate
@@ -42,6 +57,9 @@ from dispatchatlas.core.solver import Solver, SolveResult, Status, StopCriteria
 from dispatchatlas.core.validation import check_schedule
 
 __all__ = [
+    "CLOCK_MARGIN_SECONDS",
+    "CLOCK_MARGIN_SHARE",
+    "OVERRUN_MARGIN",
     "Completion",
     "Failure",
     "Measurement",
@@ -52,8 +70,24 @@ __all__ = [
     "describe",
     "engine_failure",
     "exception_error",
+    "observe",
     "utc_now",
 ]
+
+OVERRUN_MARGIN = 0.05
+"""Share of its time limit by which the wall time of a run may pass the limit unnoted."""
+
+CLOCK_MARGIN_SECONDS = 0.05
+"""Seconds by which a solver's elapsed time may differ from the engine's wall time unnoted."""
+
+CLOCK_MARGIN_SHARE = 0.05
+"""Share of the engine's wall time by which a solver's elapsed time may differ from it unnoted."""
+
+_TRACE_TIME_TOLERANCE = 1e-9
+"""Seconds by which a trace time may pass the solver's elapsed time unnoted."""
+
+_TRACE_VALUE_TOLERANCE = 1e-6
+"""Relative and absolute tolerance between the last trace value and the outcome's value."""
 
 _TRACEBACK_CHARACTERS = 10_000
 """Longest traceback a failure record keeps; longer ones keep their end."""
@@ -139,7 +173,9 @@ class Completion:
             of the outcome.
         schedule: The schedule, when the campaign records schedules.
         measurement: How the attempt executed.
-        notes: Discrepancies between the solver's claims and the checks.
+        notes: What the engine notices about the attempt: the claims of the
+            solver that the checks contradict (:func:`describe`), and what
+            its time and trace show (:func:`observe`).
     """
 
     run_id: str
@@ -212,24 +248,27 @@ def attempt(task: Task, worker: str = "main") -> Result:
     """
     started = utc_now()
     measured = _peak_rss_resettable()
-    clock = time.perf_counter()
     cpu = time.process_time()
-    try:
-        result = task.solver.solve(task.problem, task.stop, task.seed)
-    except Exception as error:
-        measurement = _measurement(started, clock, cpu, measured, worker, task.hard_limit)
-        return Failure(
-            task.run_id,
-            task.attempt,
-            classify(error),
-            exception_error(error),
-            measurement,
-            solve_started=True,
-        )
+    with clock_origin() as clock:
+        try:
+            result = task.solver.solve(task.problem, task.stop, task.seed)
+        except Exception as error:
+            measurement = _measurement(started, clock, cpu, measured, worker, task.hard_limit)
+            return Failure(
+                task.run_id,
+                task.attempt,
+                classify(error),
+                exception_error(error),
+                measurement,
+                solve_started=True,
+            )
     measurement = _measurement(started, clock, cpu, measured, worker, task.hard_limit)
     try:
         outcome, schedule, notes = describe(task.problem, result)
         result_hash = outcome.result_hash()
+        notes += observe(
+            outcome, task.stop, measurement.wall_seconds, iterative=task.solver.info.iterative
+        )
     except Exception as error:
         return Failure(
             task.run_id,
@@ -324,6 +363,78 @@ def describe(
         extras=dict(result.extras),
     )
     return outcome, schedule, tuple(notes)
+
+
+def observe(
+    outcome: Outcome, stop: StopCriteria, wall_seconds: float, *, iterative: bool
+) -> tuple[str, ...]:
+    """Return what the time and the trace of a completed attempt show.
+
+    One note is returned for each of these facts:
+
+    - the wall time the engine measured passes the time limit by more than
+      :data:`OVERRUN_MARGIN` of the limit;
+    - the elapsed time the solver reports differs from that wall time by more
+      than :data:`CLOCK_MARGIN_SECONDS` and by more than
+      :data:`CLOCK_MARGIN_SHARE` of it;
+    - the trace holds a negative time, times that decrease, or a time beyond
+      the elapsed time the solver reports;
+    - the evaluation counts of the trace decrease;
+    - the last value of the trace differs from the value of the outcome;
+    - an iterative solver returned a schedule and no trace.
+
+    Args:
+        outcome: The checked outcome of the attempt.
+        stop: The stop criteria the solver received.
+        wall_seconds: Wall-clock seconds of the solve, on the engine's clock.
+        iterative: Whether the solver runs until a stop criterion fires.
+
+    Returns:
+        The notes, empty when nothing is found.
+    """
+    notes: list[str] = []
+    limit = stop.time_limit
+    if limit is not None and wall_seconds > limit * (1.0 + OVERRUN_MARGIN):
+        notes.append(
+            f"the run took {wall_seconds:.6g} s of wall time under a time limit of {limit:g} s, "
+            f"{wall_seconds / limit:.3g} times the limit"
+        )
+    elapsed = outcome.elapsed
+    margin = max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * wall_seconds)
+    if abs(wall_seconds - elapsed) > margin:
+        notes.append(
+            f"the solver reports {elapsed:.6g} s elapsed, the engine measured "
+            f"{wall_seconds:.6g} s of wall time"
+        )
+    trace = outcome.trace
+    if not trace:
+        if iterative and outcome.schedule_digest is not None:
+            notes.append("the solver is iterative and returned a schedule without a trace")
+        return tuple(notes)
+    times = [point.elapsed for point in trace]
+    if min(times) < 0.0:
+        notes.append(f"the trace holds a negative time ({min(times)!r} s)")
+    fall = next(((a, b) for a, b in itertools.pairwise(times) if b < a), None)
+    if fall is not None:
+        notes.append(f"the times of the trace decrease (from {fall[0]!r} s to {fall[1]!r} s)")
+    if max(times) > elapsed + _TRACE_TIME_TOLERANCE:
+        notes.append(
+            f"the trace holds a time ({max(times)!r} s) beyond the elapsed time the solver "
+            f"reports ({elapsed!r} s)"
+        )
+    counts = [point.evaluations for point in trace]
+    drop = next(((a, b) for a, b in itertools.pairwise(counts) if b < a), None)
+    if drop is not None:
+        notes.append(f"the evaluation counts of the trace decrease (from {drop[0]} to {drop[1]})")
+    last = trace[-1].value
+    if outcome.value is not None and not math.isclose(
+        last, outcome.value, rel_tol=_TRACE_VALUE_TOLERANCE, abs_tol=_TRACE_VALUE_TOLERANCE
+    ):
+        notes.append(
+            f"the last value of the trace ({last!r}) differs from the value of the outcome "
+            f"({outcome.value!r})"
+        )
+    return tuple(notes)
 
 
 def engine_failure(

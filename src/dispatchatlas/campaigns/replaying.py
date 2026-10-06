@@ -178,6 +178,12 @@ def replay(
         elif not record.outcome.replayable:
             detail = "the run stopped at its wall-clock limit, which does not reproduce"
             verdicts[item.run_id] = _entry(item, Verdict.SKIPPED, detail)
+        elif not record.replayable:
+            detail = (
+                "the only bound of the run's protocol is its time limit, so what the run did "
+                "depended on the machine and does not reproduce"
+            )
+            verdicts[item.run_id] = _entry(item, Verdict.SKIPPED, detail)
         else:
             replayable.append(item)
     attempts = {item.run_id: records[item.run_id].provenance.attempt for item in replayable}
