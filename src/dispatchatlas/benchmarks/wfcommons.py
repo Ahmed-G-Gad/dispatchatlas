@@ -27,7 +27,7 @@ not read.
 
 The reader consumes a few fields and checks each of them; anything missing
 or malformed raises :class:`~dispatchatlas.core.errors.SerializationError`
-naming the field:
+naming the field, and naming the file when the instance is read from one:
 
 - Runtimes are never invented: a task without a recorded runtime is refused,
   and so is an instance of schema ``1.5`` or ``1.6`` that has no ``execution``
@@ -75,9 +75,11 @@ from pathlib import Path
 from typing import Any
 
 from dispatchatlas.benchmarks._common import (
+    READ_WITHOUT_DUE_DATES,
     check_number,
     check_objectives,
     check_problem_id,
+    check_source_path,
     default_problem_id,
     eligible_nodes,
 )
@@ -142,23 +144,68 @@ def read_wfcommons(
 
     Raises:
         SerializationError: If the document is not a supported WfFormat
-            instance or its content is inconsistent.
+            instance or its content is inconsistent. The message names the
+            file when ``source`` is a path.
         ConfigError: If an objective is unknown, repeated, or needs due
             dates, ``tiers`` is a string, repeats a tier, or names a tier
             without a node, a node has less than one core,
             ``bytes_per_unit`` is not a positive number, ``problem_id`` is
             not a non-empty string without surrounding spaces, ``platform``
-            is not a platform, or ``source`` is neither a mapping nor a path.
+            is not a platform, or ``source`` is neither a mapping nor a
+            path: it is neither a mapping, a string, nor an
+            :class:`os.PathLike` object, or its path is not text, holds a
+            null character, or cannot be written in the encoding of file
+            names.
         OSError: If the file cannot be read.
     """
     try:
-        names = check_objectives(objectives, due_dates=False)
+        names = check_objectives(objectives, due_dates=False, no_due_dates=READ_WITHOUT_DUE_DATES)
         unit = check_number("bytes_per_unit", bytes_per_unit, positive=True)
         chosen = check_problem_id(problem_id)
+        path = (
+            None
+            if isinstance(source, Mapping)
+            else check_source_path(source, "a mapping or a path")
+        )
         nodes = eligible_nodes(platform, tiers)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for read_wfcommons: {error}") from error
-    document, stem = _load(source)
+    if path is None:
+        return _problem(source, "", platform, nodes, chosen, names, unit)
+    parsed = _parsed(path)
+    try:
+        return _problem(parsed, path.stem, platform, nodes, chosen, names, unit)
+    except SerializationError as error:
+        raise SerializationError(f"{path}: {error}") from error
+
+
+def _problem(
+    source: object,
+    stem: str,
+    platform: Platform,
+    nodes: Sequence[Resource],
+    chosen: str | None,
+    names: tuple[str, ...],
+    unit: float,
+) -> Problem:
+    """Return the problem of a parsed document.
+
+    Args:
+        source: The parsed document.
+        stem: The name of the file the document was read from, without its
+            extension, or an empty string for a document that was given
+            parsed.
+        platform: Nodes and network the workflow runs on.
+        nodes: The nodes that may run tasks.
+        chosen: The id the caller gives the problem, or ``None``.
+        names: The objectives.
+        unit: Bytes per data unit of the platform's bandwidths.
+
+    Raises:
+        SerializationError: If the document is not a supported WfFormat
+            instance or its content is inconsistent.
+    """
+    document = _mapping(source, "document")
     version = document.get("schemaVersion")
     if version not in SCHEMA_VERSIONS:
         raise SerializationError(
@@ -192,16 +239,15 @@ def read_wfcommons(
         raise SerializationError(f"WfFormat instance {identifier!r} is invalid: {error}") from error
 
 
-def _load(source: object) -> tuple[Mapping[str, Any], str]:
-    """Return the document and, for a file, its name without extension, else an empty string."""
-    if isinstance(source, Mapping):
-        return source, ""
-    if not isinstance(source, (str, os.PathLike)):
-        raise ConfigError(
-            "invalid arguments for read_wfcommons: source must be a mapping or a path, "
-            f"got {type(source).__name__}"
-        )
-    path = Path(source)
+def _parsed(path: Path) -> object:
+    """Return the JSON value written in the file at ``path``.
+
+    Raises:
+        SerializationError: If the file is not UTF-8 text, is not JSON, is
+            nested too deeply, or holds an object that repeats a key. The
+            message names the file.
+        OSError: If the file cannot be read.
+    """
     try:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as error:
@@ -209,14 +255,14 @@ def _load(source: object) -> tuple[Mapping[str, Any], str]:
             f"invalid JSON in {path}: the file is not UTF-8 text ({error})"
         ) from error
     try:
-        document = json.loads(text, object_pairs_hook=_unique_keys)
+        parsed: object = json.loads(text, object_pairs_hook=_unique_keys)
     except RecursionError as error:
         raise SerializationError(
             f"invalid JSON in {path}: the document is nested too deeply"
         ) from error
     except ValueError as error:
         raise SerializationError(f"invalid JSON in {path}: {error}") from error
-    return _mapping(document, "document"), path.stem
+    return parsed
 
 
 def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

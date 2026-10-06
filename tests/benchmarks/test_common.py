@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
 import pytest
 
 from dispatchatlas.benchmarks._common import (
+    READ_WITHOUT_DUE_DATES,
     ceil_tolerant,
     check_bool,
     check_int,
@@ -22,6 +25,7 @@ from dispatchatlas.benchmarks._common import (
     check_per_item,
     check_problem_id,
     check_seed,
+    check_source_path,
     decimal_number,
     default_problem_id,
     eligible_nodes,
@@ -174,6 +178,92 @@ def test_objective_check():
             check_objectives(value)
     with pytest.raises(ValueError, match="repeat"):
         check_objectives(("makespan", "makespan"))
+
+
+def test_objective_check_words_the_missing_due_dates_for_its_caller():
+    family = (
+        r"^objectives \['max_lateness', 'tardy_tasks'\] need due dates; this family generates none$"
+    )
+    with pytest.raises(ValueError, match=family):
+        check_objectives(("tardy_tasks", "makespan", "max_lateness"), due_dates=False)
+    reader = (
+        r"^objectives \['tardy_tasks'\] need due dates; the problems this reader builds have none$"
+    )
+    with pytest.raises(ValueError, match=reader):
+        check_objectives("tardy_tasks", due_dates=False, no_due_dates=READ_WITHOUT_DUE_DATES)
+    # A parameter that adds due dates is named whatever the other wording is.
+    with pytest.raises(ValueError, match=r"need due dates; set due_factor to generate them$"):
+        check_objectives(
+            "tardy_tasks", due_dates=False, due_parameter="due_factor", no_due_dates="unused"
+        )
+    # The wording plays no part while the problems have due dates.
+    assert check_objectives("tardy_tasks", no_due_dates="unused") == ("tardy_tasks",)
+
+
+class TextPath:
+    """A path-like object whose path is the text it is given."""
+
+    def __init__(self, text: object) -> None:
+        self.text = text
+
+    def __fspath__(self) -> object:
+        return self.text
+
+
+def test_a_source_path_is_returned_as_a_path_without_opening_a_file(tmp_path):
+    missing = tmp_path / "missing" / "run 01.dat"
+    assert check_source_path(missing) == missing
+    assert check_source_path(str(missing)) == missing
+    assert check_source_path(TextPath(str(missing))) == missing
+    assert check_source_path(PurePosixPath("runs/run.dat")) == Path("runs/run.dat")
+    # A string is a path whatever it holds.
+    assert check_source_path("") == Path()
+    assert check_source_path('{"name": "run"}') == Path('{"name": "run"}')
+    assert isinstance(check_source_path("run.dat"), Path)
+    assert not missing.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "value", [None, 5, 1.5, b"run.dat", bytearray(b"run.dat"), ["run.dat"], {}]
+)
+def test_a_source_path_of_another_type_is_refused(value):
+    message = f"^source must be a path, got {type(value).__name__}$"
+    with pytest.raises(ValueError, match=message):
+        check_source_path(value)
+    message = f"^source must be a table or a path, got {type(value).__name__}$"
+    with pytest.raises(ValueError, match=message):
+        check_source_path(value, "a table or a path")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "run\0.dat",
+        "\0",
+        Path("runs/run\0.dat"),
+        TextPath("run\0.dat"),
+        TextPath(b"run.dat"),
+        TextPath(7),
+    ],
+    ids=["null", "only a null", "null in a path", "null in a path-like", "bytes", "integer"],
+)
+def test_a_source_path_that_is_not_text_or_holds_a_null_character_is_refused(value):
+    message = r"^a source path must be text without a null character$"
+    with pytest.raises(ValueError, match=message):
+        check_source_path(value)
+
+
+def test_a_source_path_that_file_names_cannot_encode_is_refused():
+    name = "lone\ud800.dat"
+    try:
+        os.fsencode(name)
+    except UnicodeEncodeError:
+        message = "^a source path must be text that the encoding of file names can express$"
+        with pytest.raises(ValueError, match=message):
+            check_source_path(name)
+    else:
+        # The encoding of file names on this platform expresses a lone surrogate.
+        assert check_source_path(name) == Path(name)
 
 
 def test_eligible_nodes_follow_the_tiers_and_leave_out_the_devices_by_default():

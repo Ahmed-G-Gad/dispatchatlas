@@ -19,12 +19,17 @@ implement:
 - **Integers computed from floats** tolerate rounding error:
   :func:`floor_tolerant`, :func:`ceil_tolerant`, and :func:`round_half_up`.
 - **Readers onto a continuum platform** answer the questions they share in
-  one way. They choose the nodes that may run tasks from the same ``tiers``
-  argument and refuse the same values: :func:`eligible_nodes`. They check an
-  id the caller gives a problem, and otherwise derive one from the names the
-  source gives it: :func:`check_problem_id`, :func:`default_problem_id`, and
-  :func:`id_from_name`. They read a number written as text by one grammar:
-  :func:`decimal_number`.
+  one way. They refuse the same values of a source that is given as a path:
+  :func:`check_source_path`. They choose the nodes that may run tasks from
+  the same ``tiers`` argument and refuse the same values:
+  :func:`eligible_nodes`. They refuse an objective that needs due dates in
+  the same words, since the problems they build have none:
+  :data:`READ_WITHOUT_DUE_DATES`. They check an id the caller gives a
+  problem, and otherwise derive one from the names the source gives it:
+  :func:`check_problem_id`, :func:`default_problem_id`, and
+  :func:`id_from_name`. Those whose format writes a number as text of its
+  own, in an XML attribute or in a field of a table, read it by one grammar:
+  :func:`decimal_number`. A JSON document holds the numbers of JSON instead.
 
 The module is private to :mod:`dispatchatlas.benchmarks`. Its names have no
 leading underscore because the modules of the package import them.
@@ -34,8 +39,10 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from dispatchatlas.core.errors import ModelError
@@ -44,6 +51,7 @@ from dispatchatlas.core.objectives import is_registered
 
 __all__ = [
     "DUE_DATE_OBJECTIVES",
+    "READ_WITHOUT_DUE_DATES",
     "ROUNDING_SLACK",
     "ceil_tolerant",
     "check_bool",
@@ -56,6 +64,7 @@ __all__ = [
     "check_per_item",
     "check_problem_id",
     "check_seed",
+    "check_source_path",
     "decimal_number",
     "default_problem_id",
     "eligible_nodes",
@@ -70,6 +79,9 @@ __all__ = [
 
 DUE_DATE_OBJECTIVES = frozenset({"total_tardiness", "max_lateness", "tardy_tasks"})
 """Built-in objectives that are constant when no task has a due date."""
+
+READ_WITHOUT_DUE_DATES = "the problems this reader builds have none"
+"""The words of :func:`check_objectives` for a reader, whose problems have no due dates."""
 
 ROUNDING_SLACK = 1e-9
 """Slack that absorbs floating-point error before rounding: ``2.3 * 100`` is just below 230."""
@@ -253,17 +265,25 @@ def check_optional_positive(name: str, value: object) -> float | None:
 
 
 def check_objectives(
-    value: object, *, due_dates: bool = True, due_parameter: str | None = None
+    value: object,
+    *,
+    due_dates: bool = True,
+    due_parameter: str | None = None,
+    no_due_dates: str = "this family generates none",
 ) -> tuple[str, ...]:
     """Return objective names as a tuple after checking them.
 
     Args:
         value: One objective name or a sequence of them, primary first.
-        due_dates: Whether the generated problems have due dates. When
-            ``False``, the objectives of :data:`DUE_DATE_OBJECTIVES` are
-            refused, since they would be constant.
+        due_dates: Whether the problems have due dates. When ``False``, the
+            objectives of :data:`DUE_DATE_OBJECTIVES` are refused, since they
+            would be constant.
         due_parameter: The parameter that adds due dates, named in the error
-            message, or ``None`` when the family never generates them.
+            message, or ``None`` when no parameter adds them.
+        no_due_dates: What the error message says of the due dates when no
+            parameter adds them. The default is the wording of a family that
+            never generates them, and :data:`READ_WITHOUT_DUE_DATES` that of
+            a reader.
 
     Raises:
         ValueError: If the names are empty, repeated, or not registered, or
@@ -280,11 +300,7 @@ def check_objectives(
         raise ValueError(f"objectives repeat a name: {list(result)}")
     needing = sorted(DUE_DATE_OBJECTIVES.intersection(result))
     if needing and not due_dates:
-        remedy = (
-            "this family generates none"
-            if due_parameter is None
-            else f"set {due_parameter} to generate them"
-        )
+        remedy = no_due_dates if due_parameter is None else f"set {due_parameter} to generate them"
         raise ValueError(f"objectives {needing} need due dates; {remedy}")
     return result
 
@@ -296,6 +312,44 @@ _UNSAFE_IN_ID = re.compile(r"[^A-Za-z0-9._-]+")
 
 _DECIMAL_CHARACTERS = "0123456789.eE+-"
 """The characters a decimal number is written in."""
+
+
+def check_source_path(value: object, accepted: str = "a path") -> Path:
+    """Return the path of a source that a reader is given as a path.
+
+    The path is checked without opening a file, so that a reader refuses it
+    with its other arguments instead of raising the error of a later call.
+
+    Args:
+        value: The source: a string, which is always a path, or an
+            :class:`os.PathLike` object.
+        accepted: What the reader accepts as a source, for the error message.
+
+    Returns:
+        The path.
+
+    Raises:
+        ValueError: If ``value`` is neither a string nor an
+            :class:`os.PathLike` object, or if its path is not text, holds a
+            null character, or holds a character that the encoding of file
+            names cannot express.
+    """
+    if not isinstance(value, str | os.PathLike):
+        raise ValueError(f"source must be {accepted}, got {type(value).__name__}")
+    text: object
+    try:
+        text = os.fspath(value)
+    except TypeError:
+        text = None
+    if not isinstance(text, str) or "\0" in text:
+        raise ValueError("a source path must be text without a null character")
+    try:
+        os.fsencode(text)
+    except UnicodeEncodeError:
+        raise ValueError(
+            "a source path must be text that the encoding of file names can express"
+        ) from None
+    return Path(text)
 
 
 def eligible_nodes(platform: object, tiers: object) -> tuple[Resource, ...]:

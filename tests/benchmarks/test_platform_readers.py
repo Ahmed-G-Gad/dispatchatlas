@@ -1,16 +1,19 @@
 """What the readers onto a continuum platform have in common.
 
 The readers of WfCommons instances, of Pegasus DAX files, and of the Alibaba 2018 batch
-jobs choose the nodes of a platform, name their problems, and read numbers in one way.
+jobs check their source, choose the nodes of a platform, and name their problems in one
+way. They refuse the same texts that are not numbers, and the two whose format writes a
+number as text of its own read it by one grammar.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +36,16 @@ HALF = Platform((Resource("a-0", capacity=0.5, tier="a"),), Network())
 Reader = Callable[..., Problem]
 
 
-def wfcommons_text(number: str = "1.5", name: str = "one task") -> str:
-    """A WfFormat instance of one task whose runtime is written as ``number``."""
+def wfcommons_text(number: str = "1.5", name: str = "one task", copies: int = 1) -> str:
+    """A WfFormat instance of one task whose runtime is written as ``number``.
+
+    The specification lists the task ``copies`` times.
+    """
     document = {
         "name": name,
         "schemaVersion": "1.5",
         "workflow": {
-            "specification": {"tasks": [{"id": "a", "name": "a"}]},
+            "specification": {"tasks": [{"id": "a", "name": "a"}] * copies},
             "execution": {"tasks": [{"id": "a", "runtimeInSeconds": 0}]},
         },
     }
@@ -49,9 +55,13 @@ def wfcommons_text(number: str = "1.5", name: str = "one task") -> str:
     return text.replace(marker, f'"runtimeInSeconds": {number}')
 
 
-def pegasus_text(number: str = "1.5", name: str = "one task") -> str:
-    """A DAX document of one job whose runtime is written as ``number``."""
-    return f'<adag name="{name}"><job id="a" runtime="{number}"/></adag>\n'
+def pegasus_text(number: str = "1.5", name: str = "one task", copies: int = 1) -> str:
+    """A DAX document of one job whose runtime is written as ``number``.
+
+    The document lists the job ``copies`` times.
+    """
+    job = f'<job id="a" runtime="{number}"/>'
+    return f'<adag name="{name}">{job * copies}</adag>\n'
 
 
 def alibaba_lines(number: str = "1.5") -> list[str]:
@@ -65,11 +75,44 @@ FILE_READERS: dict[str, tuple[Reader, Callable[..., str], str, str]] = {
 }
 """The readers of one problem per file: the function, a source, an extension, a fallback id."""
 
+SOURCES: dict[str, tuple[Callable[..., Any], str]] = {
+    "read_wfcommons": (read_wfcommons, "a mapping or a path"),
+    "read_pegasus_dax": (read_pegasus_dax, "a path"),
+    "iter_alibaba_batch": (iter_alibaba_batch, "a path or an iterable of text lines"),
+}
+"""Every reader with what it accepts as a source, in the words of its refusal."""
+
+LISTED_TWICE = {
+    "read_wfcommons": "task 'a' is listed twice",
+    "read_pegasus_dax": "id 'a' is used by two job elements",
+}
+"""What each reader of one problem per file says of a task that its source lists twice."""
+
+
+class BytesPath:
+    """A path-like object whose path is bytes."""
+
+    def __fspath__(self) -> bytes:
+        return b"one.dat"
+
+
+class NumberPath:
+    """A path-like object whose path is neither text nor bytes."""
+
+    def __fspath__(self) -> int:
+        return 7
+
 
 def written(folder: Path, name: str, text: str) -> Path:
     path = folder / name
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def opened(read: Callable[..., Any], source: object) -> object:
+    """Call a reader on ``source``, and ask the streaming reader for its first problem."""
+    result = read(source, PLATFORM)
+    return next(result) if isinstance(result, Generator) else result
 
 
 @pytest.fixture
@@ -87,6 +130,95 @@ def readers(tmp_path: Path) -> dict[str, Reader]:
         "read_pegasus_dax": lambda platform, **options: read_pegasus_dax(dax, platform, **options),
         "iter_alibaba_batch": alibaba,
     }
+
+
+# ------------------------------------------------------------------ sources
+
+
+@pytest.mark.parametrize("source", [None, 5, 1.5, b"one.dat", bytearray(b"one.dat")])
+def test_the_readers_refuse_a_source_of_another_type_in_the_same_words(source):
+    for name, (read, accepted) in SOURCES.items():
+        with pytest.raises(ConfigError) as caught:
+            read(source, PLATFORM)
+        assert str(caught.value) == (
+            f"invalid arguments for {name}: source must be {accepted}, got {type(source).__name__}"
+        )
+
+
+def test_a_source_that_one_reader_accepts_is_refused_by_the_readers_that_do_not():
+    # A list holds lines for iter_alibaba_batch, and a mapping is a document for
+    # read_wfcommons; neither is a path.
+    for name in ("read_wfcommons", "read_pegasus_dax"):
+        read, accepted = SOURCES[name]
+        message = f"^invalid arguments for {name}: source must be {accepted}, got list$"
+        with pytest.raises(ConfigError, match=message):
+            read([], PLATFORM)
+    assert list(iter_alibaba_batch([], PLATFORM)) == []
+    message = "^invalid arguments for read_pegasus_dax: source must be a path, got dict$"
+    with pytest.raises(ConfigError, match=message):
+        read_pegasus_dax({}, PLATFORM)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["one\0.dat", Path("one\0.dat"), BytesPath(), NumberPath()],
+    ids=["null in a string", "null in a path", "path of bytes", "path of another type"],
+)
+def test_the_readers_refuse_a_path_that_is_not_text_or_holds_a_null_character(source):
+    for name, (read, _) in SOURCES.items():
+        with pytest.raises(ConfigError) as caught:
+            read(source, PLATFORM)
+        assert str(caught.value) == (
+            f"invalid arguments for {name}: a source path must be text without a null character"
+        )
+
+
+def test_the_readers_report_the_source_after_their_options_and_before_the_platform():
+    for name, (read, accepted) in SOURCES.items():
+        message = f"^invalid arguments for {name}: source must be {accepted}, got NoneType$"
+        with pytest.raises(ConfigError, match=message):
+            read(None, None)
+        with pytest.raises(ConfigError, match=message):
+            read(None, PLATFORM, tiers="cloud")
+        message = f"^invalid arguments for {name}: unknown objective 'speed'$"
+        with pytest.raises(ConfigError, match=message):
+            read(None, None, objectives="speed")
+
+
+def test_a_path_without_a_file_raises_the_error_of_the_operating_system(tmp_path):
+    missing = tmp_path / "missing.dat"
+    for read, _ in SOURCES.values():
+        for source in (missing, str(missing)):
+            with pytest.raises(FileNotFoundError):
+                opened(read, source)
+
+
+def test_a_path_that_file_names_cannot_encode_is_refused_or_names_no_file(tmp_path):
+    # Where the encoding of file names cannot express a lone surrogate, the path is
+    # refused with the other arguments; elsewhere it names a file that does not exist.
+    source = str(tmp_path / "lone\ud800.dat")
+    expected: type[Exception]
+    message: str | None
+    try:
+        os.fsencode(source)
+    except UnicodeEncodeError:
+        expected = ConfigError
+        message = r"a source path must be text that the encoding of file names can express$"
+    else:
+        expected = FileNotFoundError
+        message = None
+    for read, _ in SOURCES.values():
+        with pytest.raises(expected, match=message):
+            opened(read, source)
+
+
+def test_an_error_in_the_content_of_a_file_names_the_file(tmp_path):
+    for name, (read, text, extension, _) in FILE_READERS.items():
+        path = written(tmp_path, "twice" + extension, text(copies=2))
+        for source in (path, str(path)):
+            with pytest.raises(SerializationError) as caught:
+                read(source, PLATFORM)
+            assert str(caught.value) == f"{path}: {LISTED_TWICE[name]}"
 
 
 # ------------------------------------------------------------------ nodes
@@ -130,9 +262,22 @@ REFUSED: list[tuple[Any, dict[str, Any], str]] = [
     (PLATFORM, {"objectives": "speed"}, "^unknown objective 'speed'$"),
     (PLATFORM, {"objectives": ()}, "^objectives must be a non-empty list of objective names$"),
     (PLATFORM, {"objectives": ("makespan", "makespan")}, "^objectives repeat a name"),
-    (PLATFORM, {"objectives": "total_tardiness"}, r"^objectives \['total_tardiness'\] need due"),
-    (PLATFORM, {"objectives": ("makespan", "tardy_tasks")}, r"\['tardy_tasks'\] need due dates"),
-    (PLATFORM, {"objectives": ["max_lateness"]}, r"\['max_lateness'\] need due dates"),
+    (
+        PLATFORM,
+        {"objectives": "total_tardiness"},
+        r"^objectives \['total_tardiness'\] need due dates; "
+        "the problems this reader builds have none$",
+    ),
+    (
+        PLATFORM,
+        {"objectives": ("makespan", "tardy_tasks")},
+        r"^objectives \['tardy_tasks'\] need due dates; the problems this reader builds",
+    ),
+    (
+        PLATFORM,
+        {"objectives": ["max_lateness"]},
+        r"^objectives \['max_lateness'\] need due dates; the problems this reader builds",
+    ),
 ]
 
 
@@ -169,6 +314,17 @@ def test_no_reader_gives_a_problem_without_due_dates_a_due_date_objective(reader
         problem = read(PLATFORM, objectives=("makespan", "energy", "cost"))
         assert problem.objectives == ("makespan", "energy", "cost")
         assert all(task.due is None for task in problem.tasks)
+
+
+def test_a_reader_that_refuses_a_due_date_objective_speaks_of_its_problems(readers):
+    for name, read in readers.items():
+        with pytest.raises(ConfigError) as caught:
+            read(PLATFORM, objectives=("total_tardiness", "makespan", "max_lateness"))
+        # A reader is no benchmark family, and its message names none.
+        assert str(caught.value) == (
+            f"invalid arguments for {name}: objectives ['max_lateness', 'total_tardiness'] "
+            "need due dates; the problems this reader builds have none"
+        )
 
 
 # ------------------------------------------------------------------ problem ids
@@ -270,6 +426,38 @@ def test_the_readers_refuse_the_same_texts_and_numbers_too_large_for_a_float(tmp
             read(written(tmp_path, "one" + extension, text(number)), PLATFORM)
     with pytest.raises(SerializationError, match="row 1: plan_cpu must be a finite decimal number"):
         list(iter_alibaba_batch(alibaba_lines(number), PLATFORM))
+
+
+@pytest.mark.parametrize(
+    ("number", "value"),
+    [(".5", 0.5), ("5.", 5.0), ("007", 7.0), ("1.e3", 1000.0), ("00.50e01", 5.0)],
+)
+def test_a_json_number_needs_digits_that_the_decimal_numbers_of_the_other_formats_do_not(
+    tmp_path, number, value
+):
+    # A WfFormat file holds JSON numbers: a digit on both sides of the point, and no zero
+    # in front of another digit. The other two formats write numbers as text of their own.
+    path = written(tmp_path, "one.json", wfcommons_text(number))
+    with pytest.raises(SerializationError, match=r"^invalid JSON in "):
+        read_wfcommons(path, PLATFORM)
+    problem = read_pegasus_dax(written(tmp_path, "one.xml", pegasus_text(number)), PLATFORM)
+    durations = [PLATFORM.duration(value, node) for node in NODES]
+    assert [mode.duration for mode in problem.tasks[0].modes] == durations
+    (job,) = iter_alibaba_batch(alibaba_lines(number), PLATFORM)
+    assert job.tasks[0].metadata["plan_cpu"] == value
+
+
+def test_white_space_around_a_number_follows_each_format(tmp_path):
+    # JSON allows white space between its tokens, and the reader of DAX files allows the
+    # white space of XML inside an attribute. A field of the table holds the number alone.
+    durations = [PLATFORM.duration(1.5, node) for node in NODES]
+    for read, text, extension, _ in FILE_READERS.values():
+        problem = read(written(tmp_path, "one" + extension, text(" \t1.5\n ")), PLATFORM)
+        assert [mode.duration for mode in problem.tasks[0].modes] == durations
+    for number in (" 1.5", "1.5 ", "\t1.5"):
+        message = "^row 1: plan_cpu must be a finite decimal number, got "
+        with pytest.raises(SerializationError, match=message):
+            list(iter_alibaba_batch(alibaba_lines(number), PLATFORM))
 
 
 def test_the_readers_read_a_negative_zero_as_zero(tmp_path):

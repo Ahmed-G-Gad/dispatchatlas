@@ -1016,11 +1016,22 @@ def test_platforms_that_cannot_run_the_jobs_are_refused():
         iter_alibaba_batch(LINES, three_tier_platform(fog=0), tiers=("fog", "cloud"))
     apart = Platform((Resource("a-0", tier="a"), Resource("b-0", tier="b")), Network())
     assert [problem.id for problem in iter_alibaba_batch(LINES, apart)] == ["j_1", "j_2", "j_3"]
-    with pytest.raises(ConfigError, match="link between 'a' and 'b'"):
+    # A missing link is refused in the form of every other argument, before any reading.
+    message = (
+        "^invalid arguments for iter_alibaba_batch: edge_data needs a link between "
+        "'a' and 'b', which the platform network lacks$"
+    )
+    with pytest.raises(ConfigError, match=message):
         iter_alibaba_batch(LINES, apart, edge_data=1.0)
     twins = Platform((Resource("a-0", tier="a"), Resource("a-1", tier="a")), Network())
-    with pytest.raises(ConfigError, match="link between 'a' and 'a'"):
+    message = (
+        "^invalid arguments for iter_alibaba_batch: edge_data needs a link between 'a' and 'a'"
+    )
+    with pytest.raises(ConfigError, match=message):
         iter_alibaba_batch(LINES, twins, edge_data=1.0)
+    # The tiers are checked first, so a tier without a node is reported and not its links.
+    with pytest.raises(ConfigError, match=r"^invalid arguments .*: the platform has no node"):
+        iter_alibaba_batch(LINES, apart, tiers=("a", "c"), edge_data=1.0)
     alone = Platform((Resource("a-0", tier="a"),), Network())
     assert len(list(iter_alibaba_batch(LINES, alone, edge_data=1.0))) == 3
     half = Platform((Resource("a-0", capacity=0.5, tier="a"),), Network())

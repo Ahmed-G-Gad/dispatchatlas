@@ -390,6 +390,64 @@ def test_inconsistent_documents_are_refused(change, message):
         read_wfcommons(document, PLATFORM)
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        _without_runtime,
+        _set_runtime(-1.0),
+        _repeat_execution(600),
+        _unlisted_execution,
+        _set_task("id", "map_a"),
+        _set_task("children", ["ghost"]),
+        _set_task("parents", ["reduce"]),
+        _set_size(-3),
+        _two_huge_files,
+        _drop_edge_file,
+        _drop_execution,
+    ],
+)
+def test_an_inconsistent_file_is_refused_in_the_words_of_its_document_after_its_path(
+    tmp_path, change
+):
+    document = split_document()
+    change(document)
+    with pytest.raises(SerializationError) as parsed:
+        read_wfcommons(document, PLATFORM, problem_id="run")
+    # The error of a document that was given parsed names no file.
+    assert "run.json" not in str(parsed.value)
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    for source in (path, str(path)):
+        with pytest.raises(SerializationError) as read:
+            read_wfcommons(source, PLATFORM)
+        assert str(read.value) == f"{path}: {parsed.value}"
+
+
+def test_a_file_that_is_no_instance_is_named_once_in_the_error(tmp_path):
+    path = tmp_path / "other.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(SerializationError) as caught:
+        read_wfcommons(path, PLATFORM)
+    assert str(caught.value) == f"{path}: document must be a JSON object"
+    path.write_text('{"schemaVersion": "2.0"}', encoding="utf-8")
+    with pytest.raises(SerializationError) as caught:
+        read_wfcommons(path, PLATFORM)
+    assert str(caught.value) == (
+        f"{path}: WfFormat schemaVersion must be one of 1.4, 1.5, 1.6, found '2.0'"
+    )
+    # An error of the JSON syntax or of the encoding names the file in its own words.
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SerializationError) as caught:
+        read_wfcommons(path, PLATFORM)
+    assert str(caught.value).startswith(f"invalid JSON in {path}: ")
+    assert str(caught.value).count(str(path)) == 1
+    path.write_bytes(json.dumps(split_document()).encode("utf-16"))
+    with pytest.raises(SerializationError) as caught:
+        read_wfcommons(path, PLATFORM)
+    assert str(caught.value).startswith(f"invalid JSON in {path}: the file is not UTF-8 text")
+    assert str(caught.value).count(str(path)) == 1
+
+
 def test_flat_layout_refusals():
     document = flat_document()
     document["workflow"]["tasks"][0]["files"][0]["link"] = "sideways"

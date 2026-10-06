@@ -158,9 +158,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 from dispatchatlas.benchmarks._common import (
+    READ_WITHOUT_DUE_DATES,
     check_int,
     check_number,
     check_objectives,
+    check_source_path,
     decimal_number,
     eligible_nodes,
 )
@@ -398,7 +400,10 @@ def iter_alibaba_batch(
             ``max_tasks`` below ``min_tasks``, an unknown work rule, a
             negative ``edge_data``, a positive ``edge_data`` on a platform
             whose network lacks a link between two eligible nodes, or a
-            source that is neither a path nor an iterable.
+            source that is neither a path nor an iterable of lines: bytes,
+            an object that is not iterable, or a path that is not text,
+            holds a null character, or cannot be written in the encoding of
+            file names.
         SerializationError: While iterating, if a row is malformed, a job
             name returns among the last 1024 jobs, the source is not UTF-8
             text, a job that is otherwise read has a task whose core-seconds
@@ -407,7 +412,7 @@ def iter_alibaba_batch(
         OSError: While iterating, if the file cannot be read.
     """
     try:
-        names = check_objectives(objectives, due_dates=False)
+        names = check_objectives(objectives, due_dates=False, no_due_dates=READ_WITHOUT_DUE_DATES)
         allowed = _check_statuses(statuses)
         smallest = check_int("min_tasks", min_tasks)
         largest = None if max_tasks is None else check_int("max_tasks", max_tasks, smallest)
@@ -417,10 +422,10 @@ def iter_alibaba_batch(
         _check_callback(on_skip)
         _check_source(source)
         nodes = eligible_nodes(platform, tiers)
+        if data > 0.0:
+            _check_links(platform, nodes)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for iter_alibaba_batch: {error}") from error
-    if data > 0.0:
-        _check_links(platform, nodes)
     lines = _lines(source)
     jobs = _scan(lines, allowed, WORK_RULES.index(work), smallest, largest)
     return _problems(lines, jobs, platform, nodes, names, work, data, on_skip)
@@ -459,27 +464,26 @@ def _check_source(value: object) -> None:
 
     Raises:
         ValueError: If the source is bytes, is not iterable, or is a path
-            that is not text or holds a null character.
+            that :func:`~dispatchatlas.benchmarks._common.check_source_path`
+            refuses.
     """
-    if isinstance(value, str | os.PathLike):
-        try:
-            path = os.fspath(value)
-        except TypeError:
-            path = None
-        if not isinstance(path, str) or "\0" in path:
-            raise ValueError("a source path must be text without a null character")
-    elif isinstance(value, bytes | bytearray) or not isinstance(value, Iterable):
-        raise ValueError("source must be a path or an iterable of text lines")
+    if isinstance(value, str | bytes | bytearray | os.PathLike) or not isinstance(value, Iterable):
+        check_source_path(value, "a path or an iterable of text lines")
 
 
 def _check_links(platform: Platform, nodes: Sequence[Resource]) -> None:
-    """Refuse a network without a link that a transfer between two of ``nodes`` needs."""
+    """Refuse a network without a link that a transfer between two of ``nodes`` needs.
+
+    Raises:
+        ValueError: If two of the nodes are in tiers that no link joins, or
+            share a tier that has no link to itself.
+    """
     counts = Counter(node.endpoint for node in nodes)
     endpoints = sorted(counts)
     for index, a in enumerate(endpoints):
         for b in endpoints[index:]:
             if (a != b or counts[a] > 1) and platform.network.link(a, b) is None:
-                raise ConfigError(
+                raise ValueError(
                     f"edge_data needs a link between {a!r} and {b!r}, "
                     "which the platform network lacks"
                 )

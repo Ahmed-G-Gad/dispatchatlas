@@ -27,10 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_wfcommons` for WfFormat 1.4, 1.5, and 1.6 instances,
   `read_pegasus_dax` for Pegasus DAX files, and `iter_alibaba_batch` for the
   Alibaba trace. They choose nodes from the same `tiers` argument and refuse
-  the same values of it, refuse an objective that needs due dates, and read
-  numbers written in ASCII digits with an optional minus sign, fraction, and
-  exponent. A problem read from one file is named after the file, without its
-  extension, and an empty `problem_id` is refused.
+  the same values of it, refuse an objective that needs due dates, and report
+  every refused argument as a `ConfigError`, a source that is not a usable
+  path included. A number in a DAX file or in the table of the trace is
+  written in ASCII digits with an optional minus sign, fraction, and
+  exponent; a WfFormat file holds JSON numbers, which also need a digit on
+  both sides of the decimal point and a whole part without a leading zero. A
+  problem read from one file is named after the file, without its extension,
+  an empty `problem_id` is refused, and an error in the content of the file
+  names the file.
 - `read_wfcommons` names a parsed document after its instance name and keeps
   the instance name in the problem's metadata. A document that contradicts
   itself is refused: a task or an execution entry listed twice, an execution

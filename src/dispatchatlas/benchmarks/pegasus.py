@@ -83,12 +83,13 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from dispatchatlas.benchmarks._common import (
+    READ_WITHOUT_DUE_DATES,
     check_number,
     check_objectives,
     check_problem_id,
+    check_source_path,
     decimal_number,
     default_problem_id,
     eligible_nodes,
@@ -165,7 +166,8 @@ def read_pegasus_dax(
     """Read a Pegasus DAX workflow file as a problem on ``platform``.
 
     Args:
-        source: Path of the DAX file.
+        source: Path of the DAX file, as a string or an :class:`os.PathLike`
+            object.
         platform: Nodes and network the workflow runs on.
         tiers: Tiers whose nodes may run tasks, as a sequence of names other
             than a string, each tier once and each with a node. Defaults to
@@ -195,15 +197,18 @@ def read_pegasus_dax(
             dates, ``tiers`` is a string, repeats a tier, or names a tier
             without a node, a node has less than one core,
             ``bytes_per_unit`` is not a positive number, ``problem_id`` is
-            not a non-empty string without surrounding spaces, or
-            ``platform`` is not a platform.
+            not a non-empty string without surrounding spaces, ``platform``
+            is not a platform, or ``source`` is not a path: it is neither a
+            string nor an :class:`os.PathLike` object, or its path is not
+            text, holds a null character, or cannot be written in the
+            encoding of file names.
         OSError: If the file cannot be read.
     """
     try:
-        names = check_objectives(objectives, due_dates=False)
+        names = check_objectives(objectives, due_dates=False, no_due_dates=READ_WITHOUT_DUE_DATES)
         check_number("bytes_per_unit", bytes_per_unit, positive=True)
         identifier = check_problem_id(problem_id)
-        path = Path(source)
+        path = check_source_path(source)
         nodes = eligible_nodes(platform, tiers)
     except ValueError as error:
         raise ConfigError(f"invalid arguments for read_pegasus_dax: {error}") from error

@@ -94,13 +94,24 @@ turns a task of the workload into a task with one mode per eligible node,
 which holds one core of that node for `work / speed` seconds. `tiers` names
 the tiers whose nodes are eligible, every tier except the devices by default.
 
-The three readers check their arguments in one way. `tiers` is a sequence
-such as a list, never a single string, that names each tier once, and every
-tier it names has a node. The problems have no due dates, so an objective
-that needs them is refused. A value that is refused raises `ConfigError`. A
-number in a source is written in ASCII digits with an optional minus sign,
-fraction, and exponent: `nan`, `inf`, `1_000`, and `+1.5` are not numbers to
-any of the readers.
+The three readers check their arguments in one way. A source that is a path
+is a string or an `os.PathLike` object whose path is text. `tiers` is a
+sequence such as a list, never a single string, that names each tier once,
+and every tier it names has a node. The problems have no due dates, so an
+objective that needs them is refused. A value that is refused raises
+`ConfigError`, the source included. A source whose content is refused raises
+`SerializationError`: `read_wfcommons` and `read_pegasus_dax` name the file
+in the message, and `iter_alibaba_batch` names the row.
+
+A number in a DAX file or in the table of the trace is written in ASCII
+digits with an optional minus sign, fraction, and exponent. A WfFormat file
+holds JSON numbers, which have that form under two more rules: a digit
+stands on both sides of the decimal point, and the whole part has no leading
+zero. So `.5`, `5.`, and `007` are numbers to `read_pegasus_dax` and
+`iter_alibaba_batch` and not to `read_wfcommons`, while `nan`, `inf`,
+`1_000`, and `+1.5` are numbers to none of the three. White space around a
+number follows each format: JSON and the attributes of a DAX file allow it,
+and a field of the table does not.
 
 `read_wfcommons` reads a recorded execution of a real scientific workflow in
 the WfCommons format (Coleman et al. 2022). The recorded runtime of a task is
