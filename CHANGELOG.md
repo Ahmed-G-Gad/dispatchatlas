@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   published seeds; readers for OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
   DAX files; instance catalogs with SHA-256 manifests; and descriptive
   instance features.
+- `read_wfcommons` reads WfFormat 1.4, 1.5, and 1.6 instances onto a continuum
+  platform. A problem read from a file is named after the file, without its
+  extension, a parsed document after its instance name, and the instance name
+  is kept in the problem's metadata. A document that contradicts itself is
+  refused: a task or an execution entry listed twice, an execution entry for
+  a task the specification does not list, or a file in which a JSON object
+  repeats a key.
 - Solvers from dispatching rules, list scheduling, and constructive
   heuristics to local search, population and swarm methods, multi-objective
   evolutionary algorithms, learning methods, hyper-heuristics, exact CP-SAT,

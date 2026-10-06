@@ -88,7 +88,21 @@ problem = build_problem("one-request", platform, [request], due_factor=2.0)
 ```
 
 `read_wfcommons` maps a recorded execution of a real scientific workflow, in
-the WfCommons format (Coleman et al. 2022), onto such a platform.
+the WfCommons format (Coleman et al. 2022), onto such a platform. A problem
+read from a file takes the file name without its extension as its id, and a
+parsed document takes its instance `name`. Either way the `name` is kept in
+the problem's metadata, and `problem_id` sets another id:
+
+```python
+from dispatchatlas.benchmarks import read_wfcommons
+
+recorded = read_wfcommons("workflow-run-001.json", platform)
+print(recorded.id)  # workflow-run-001
+```
+
+Instances of one collection can share a `name`, and then only the file names
+tell them apart. A document that contradicts itself is refused, for example
+one that lists a task or an execution entry twice.
 
 `read_pegasus_dax` does the same for a Pegasus DAX file (Deelman et al. 2015),
 the XML format of the synthetic Montage, CyberShake, Epigenomics, LIGO
