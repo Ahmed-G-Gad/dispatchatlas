@@ -140,6 +140,11 @@ class ProcessBackend:
         threads: Threads the numerical libraries of a worker may use.
         startup_limit: Seconds a worker has, from the hand-over of a run, to
             report that the solve begins.
+
+    Raises:
+        ConfigError: If there is no worker, a worker has no thread, the
+            start-up limit is not a positive, finite number, or there are
+            fewer processors to pin to than workers.
     """
 
     name = "process"
