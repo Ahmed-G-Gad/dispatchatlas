@@ -369,6 +369,30 @@ class Scripted:
         return replace(result, trace=tuple(points), elapsed=elapsed)
 
 
+@dataclass(frozen=True)
+class Timeless:
+    """Returns the schedule of the listed order with a time or a value that is not a number.
+
+    ``where`` names what is not finite: the ``elapsed`` time, an ``infinite``
+    elapsed time, a ``time`` of the trace, or a ``value`` of the trace.
+    """
+
+    where: str = "elapsed"
+    info: ClassVar[SolverInfo] = _info("test-timeless", stochastic=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        result = InputOrder().solve(problem, stop, seed)
+        value = result.value
+        assert value is not None
+        nan = float("nan")
+        trace = (
+            TracePoint(0.0, 1, 0, nan if self.where == "value" else value),
+            TracePoint(nan if self.where == "time" else 0.0, 1, 0, value),
+        )
+        elapsed = {"elapsed": nan, "infinite": float("inf")}.get(self.where, result.elapsed)
+        return replace(result, trace=trace, elapsed=elapsed)
+
+
 _PAID: set[str] = set()
 """The keys whose one-off cost this process has paid."""
 
@@ -446,6 +470,7 @@ class Phased:
 
 
 TEST_SOLVERS = (
+    Timeless,
     ColdStart,
     Prepared,
     Phased,

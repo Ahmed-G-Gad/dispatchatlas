@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from dataclasses import replace
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from dispatchatlas.campaigns import (
     SolverSpec,
     Verdict,
     plan,
+    read_failures,
     read_plan,
     read_runs,
     replay,
@@ -28,17 +30,26 @@ from dispatchatlas.campaigns.execution import (
     CLOCK_MARGIN_SECONDS,
     OVERRUN_MARGIN,
     Completion,
+    Failure,
     Task,
     attempt,
     observe,
 )
-from dispatchatlas.campaigns.records import ProblemRef, Provenance, RunRecord
+from dispatchatlas.campaigns.records import ErrorKind, ProblemRef, Provenance, RunRecord
 from dispatchatlas.campaigns.store import run_path
 from dispatchatlas.core import SerializationError, Solver, StopCriteria, StopReason, problem_digest
 from dispatchatlas.core.solver import TracePoint
 from dispatchatlas.solvers import default_registry
 from dispatchatlas.solvers.rules import RandomSearch
-from tests.campaigns.solvers import Scripted, SlowSetup, Tardy, registry, tiny_campaign
+from tests.campaigns.solvers import (
+    Phased,
+    Scripted,
+    SlowSetup,
+    Tardy,
+    Timeless,
+    registry,
+    tiny_campaign,
+)
 from tests.helpers import chain_problem, random_problem
 
 REGISTRY = registry()
@@ -59,22 +70,38 @@ def _noted(notes: tuple[str, ...], start: str) -> bool:
 
 def test_a_run_inside_its_limits_earns_no_note() -> None:
     assert _attempt(RandomSearch()).notes == ()
+    # The scheduler may end a run some hundredths of a second late: the margin
+    # in seconds covers that, whatever share of a short limit it is.
     assert _attempt(RandomSearch(), StopCriteria(time_limit=0.05)).notes == ()
     assert _attempt(Scripted(times=(0.0, 0.0), evaluations=(1, 1))).notes == ()
 
 
 def test_no_built_in_solver_earns_a_note_under_an_evaluation_limit() -> None:
     solvers = default_registry(plugins=False)
-    completed = 0
+    completed = set()
     for info in solvers.infos():
         problem = chain_problem()
         solver = solvers.create(info.id)
         stop = StopCriteria(max_evaluations=30)
         result = attempt(Task("run-0", 1, problem, problem_digest(problem), solver, stop, seed=2))
         if isinstance(result, Completion):
-            completed += 1
+            completed.add(info.id)
             assert result.notes == (), info.id
-    assert completed >= 60
+    assert len(completed) >= 60
+    # Where a backend is installed, the sweep covers the solvers that need it.
+    backends = {"cp-sat": "ortools", "restricted-neighbourhood-search": "ortools", "milp": "pulp"}
+    for solver_id, package in backends.items():
+        assert (solver_id in completed) == (find_spec(package) is not None), solver_id
+
+
+def test_the_milp_solver_times_its_trace_point_with_its_elapsed_time() -> None:
+    pytest.importorskip("pulp")
+    solver = default_registry(plugins=False).create("milp")
+    for _ in range(20):
+        completion = _attempt(solver, StopCriteria(time_limit=30.0))
+        (point,) = completion.outcome.trace
+        assert point.elapsed == completion.outcome.elapsed
+        assert completion.notes == ()
 
 
 def test_a_run_beyond_its_time_limit_is_noted_with_its_wall_time() -> None:
@@ -139,6 +166,79 @@ def test_the_margins_of_the_time_notes() -> None:
     # A long run may differ by the same share of its wall time.
     assert observe(replace(outcome, elapsed=96.0), EVALUATIONS, 100.0, iterative=True) == ()
     assert observe(replace(outcome, elapsed=94.0), EVALUATIONS, 100.0, iterative=True) != ()
+    # Under a short limit the margin in seconds holds, under a long one the share.
+    brief = StopCriteria(time_limit=0.05)
+    assert not _noted(observe(quick, brief, 0.09, iterative=True), "the run took")
+    assert _noted(observe(quick, brief, 0.11, iterative=True), "the run took 0.11 s")
+    long = StopCriteria(time_limit=100.0)
+    assert not _noted(observe(outcome, long, 104.0, iterative=True), "the run took")
+    assert _noted(observe(outcome, long, 106.0, iterative=True), "the run took 106 s")
+
+
+def test_a_stop_for_the_time_limit_well_before_the_limit_is_noted() -> None:
+    point = TracePoint(0.0, 1, 0, 0.0)
+    base = _attempt(RandomSearch()).outcome
+    outcome = replace(base, trace=(replace(point, value=base.value or 0.0),), elapsed=0.5)
+    stop = StopCriteria(time_limit=1.0)
+    start = "the solver stopped for its time limit after 0.5 s of wall time, under a time limit"
+    timed = replace(outcome, stop_reason=StopReason.TIME_LIMIT)
+    assert observe(timed, stop, 0.5, iterative=True) == (f"{start} of 1 s",)
+    # Another stop reason ends a run before its limit without contradiction.
+    assert observe(outcome, stop, 0.5, iterative=True) == ()
+    assert outcome.stop_reason is StopReason.EVALUATION_LIMIT
+    # At the limit, within the margins, nothing is noted.
+    assert observe(replace(timed, elapsed=0.96), stop, 0.96, iterative=True) == ()
+    assert observe(replace(timed, elapsed=1.0), stop, 1.0, iterative=True) == ()
+    # A solver that halves its limit for two searches, both counted from the
+    # start of the attempt, leaves half of the limit unused.
+    phased = _attempt(Phased(own_origin=False), StopCriteria(time_limit=0.6))
+    assert _noted(phased.notes, "the solver stopped for its time limit after")
+    assert not _noted(
+        _attempt(Phased(own_origin=True), StopCriteria(time_limit=0.6)).notes, "the solver stopped"
+    )
+
+
+def test_a_trace_time_a_second_reading_of_the_clock_explains_is_not_noted() -> None:
+    point = TracePoint(0.0, 1, 0, 0.0)
+    base = _attempt(RandomSearch()).outcome
+    after = replace(point, value=base.value or 0.0, elapsed=1.0 + 5e-7)
+    outcome = replace(base, trace=(after,), elapsed=1.0)
+    assert observe(outcome, EVALUATIONS, 1.0, iterative=True) == ()
+    beyond = replace(outcome, trace=(replace(after, elapsed=1.001),))
+    assert _noted(observe(beyond, EVALUATIONS, 1.0, iterative=True), "the trace holds a time")
+
+
+@pytest.mark.parametrize(
+    ("where", "message"),
+    [
+        ("elapsed", "the solver reports an elapsed time of nan s"),
+        ("infinite", "the solver reports an elapsed time of inf s"),
+        ("time", "point 1 of the trace holds a time of nan s"),
+        ("value", "point 0 of the trace holds a value of nan"),
+    ],
+)
+def test_a_time_that_is_not_a_finite_number_fails_the_attempt(where: str, message: str) -> None:
+    problem = chain_problem()
+    task = Task("run-0", 1, problem, problem_digest(problem), Timeless(where), EVALUATIONS, seed=3)
+    failure = attempt(task)
+    assert isinstance(failure, Failure)
+    assert failure.error.kind is ErrorKind.EXCEPTION
+    assert failure.error.type == "dispatchatlas.core.errors.SolverError"
+    assert failure.error.message == message
+    assert failure.measurement.cpu_seconds is not None
+
+
+def test_a_run_whose_times_are_not_numbers_fails_and_the_session_continues(tmp_path: Path) -> None:
+    campaign = tiny_campaign(
+        solvers=(SolverSpec("test-timeless"), SolverSpec("input-order")),
+        replicates=1,
+    )
+    summary = run(campaign, tmp_path, registry=REGISTRY)
+    assert (summary.completed, summary.failed, summary.pending) == (2, 2, 0)
+    failures = read_failures(summary.directory)
+    assert {failure.solver.name for failure in failures} == {"test-timeless"}
+    assert all(failure.error.kind is ErrorKind.EXCEPTION for failure in failures)
+    assert all("elapsed time of nan s" in failure.error.message for failure in failures)
 
 
 def test_notes_are_logged_and_stored_in_the_record(
@@ -255,17 +355,25 @@ def test_the_set_up_of_a_solver_counts_in_a_campaign_and_not_outside_one() -> No
 
 
 def test_a_mapping_heuristic_past_a_short_limit_is_flagged() -> None:
-    problem = random_problem(7, tasks=120, machines=4)
     solver = default_registry(plugins=False).create("min-min")
     stop = StopCriteria(time_limit=1e-4)
-    result = attempt(Task("run-0", 1, problem, problem_digest(problem), solver, stop, seed=1))
-    assert isinstance(result, Completion)
-    # The heuristic checks no limit: it completes, late, and only the note says so.
-    assert result.outcome.stop_reason is StopReason.COMPLETED
-    assert result.outcome.evaluations == 1
-    assert result.measurement.wall_seconds > 1e-4 * (1.0 + OVERRUN_MARGIN)
-    assert _noted(result.notes, "the run took")
-    assert "under a time limit of 0.0001 s" in result.notes[0]
+    # The second problem is for a machine that maps the first one within the margin.
+    for tasks in (800, 2400):
+        problem = random_problem(7, tasks=tasks, machines=8)
+        result = attempt(Task("run-0", 1, problem, problem_digest(problem), solver, stop, seed=1))
+        assert isinstance(result, Completion)
+        # The heuristic checks no limit: it completes, late, and only the note says so.
+        assert result.outcome.stop_reason is StopReason.COMPLETED
+        assert result.outcome.evaluations == 1
+        wall = result.measurement.wall_seconds
+        assert wall > 1e-4 * (1.0 + OVERRUN_MARGIN)
+        late = wall - 1e-4 > CLOCK_MARGIN_SECONDS
+        assert _noted(result.notes, "the run took") == late
+        if late:
+            assert "under a time limit of 0.0001 s" in result.notes[0]
+            break
+    else:
+        pytest.fail("min-min mapped 2400 tasks within the margin of the overrun note")
 
 
 # -------------------------------------------------------------- replayable

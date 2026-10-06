@@ -52,11 +52,11 @@ from dispatchatlas.campaigns.records import (
     schedule_digest,
 )
 from dispatchatlas.core.clock import clock_origin
-from dispatchatlas.core.errors import DispatchAtlasError
+from dispatchatlas.core.errors import DispatchAtlasError, SolverError
 from dispatchatlas.core.model import Problem
 from dispatchatlas.core.objectives import evaluate
 from dispatchatlas.core.schedule import Assignment, Schedule
-from dispatchatlas.core.solver import Solver, SolveResult, Status, StopCriteria
+from dispatchatlas.core.solver import Solver, SolveResult, Status, StopCriteria, StopReason
 from dispatchatlas.core.validation import check_schedule
 
 __all__ = [
@@ -83,13 +83,27 @@ OVERRUN_MARGIN = 0.05
 """Share of its time limit by which the wall time of a run may pass the limit unnoted."""
 
 CLOCK_MARGIN_SECONDS = 0.05
-"""Seconds by which a solver's elapsed time may differ from the engine's wall time unnoted."""
+"""Seconds two times of a run may differ by unnoted, whatever their size.
+
+The scheduler of the machine and the resolution of its clocks move the end of
+a run by a few hundredths of a second. The margin applies to the wall time
+against the time limit, and to the solver's elapsed time against the wall
+time.
+"""
 
 CLOCK_MARGIN_SHARE = 0.05
-"""Share of the engine's wall time by which a solver's elapsed time may differ from it unnoted."""
+"""Share of the engine's wall time by which a solver's elapsed time may differ from it unnoted.
 
-_TRACE_TIME_TOLERANCE = 1e-9
-"""Seconds by which a trace time may pass the solver's elapsed time unnoted."""
+Also the share of the time limit by which a run that stops for its time limit
+may end before the limit unnoted.
+"""
+
+_TRACE_TIME_TOLERANCE = 1e-6
+"""Seconds by which a trace time may pass the solver's elapsed time unnoted.
+
+A solver that reads its clock once for a trace point and again for its
+elapsed time may be a fraction of a microsecond apart.
+"""
 
 _TRACE_VALUE_TOLERANCE = 1e-6
 """Relative and absolute tolerance between the last trace value and the outcome's value."""
@@ -382,7 +396,13 @@ def describe(
     Returns:
         The outcome, the schedule with normalised numbers (or ``None``), and
         notes on every claim of the solver the checks contradict.
+
+    Raises:
+        SolverError: If the elapsed time, or a time or a value of the trace,
+            is not a finite number. Such a result can be neither compared
+            with the clock of the engine nor stored in a record.
     """
+    _require_finite(result)
     notes: list[str] = []
     schedule: Schedule | None = None
     violations: tuple[str, ...] = ()
@@ -446,7 +466,12 @@ def observe(
     One note is returned for each of these facts:
 
     - the wall time the engine measured passes the time limit by more than
-      :data:`OVERRUN_MARGIN` of the limit;
+      :data:`OVERRUN_MARGIN` of the limit and by more than
+      :data:`CLOCK_MARGIN_SECONDS`;
+    - the solver stopped for its time limit while that wall time is below the
+      limit by more than :data:`CLOCK_MARGIN_SECONDS` and by more than
+      :data:`CLOCK_MARGIN_SHARE` of the limit, as when a solver gives a
+      search a share of its limit that counts from the start of the attempt;
     - the elapsed time the solver reports differs from that wall time by more
       than :data:`CLOCK_MARGIN_SECONDS` and by more than
       :data:`CLOCK_MARGIN_SHARE` of it;
@@ -467,11 +492,18 @@ def observe(
     """
     notes: list[str] = []
     limit = stop.time_limit
-    if limit is not None and wall_seconds > limit * (1.0 + OVERRUN_MARGIN):
-        notes.append(
-            f"the run took {wall_seconds:.6g} s of wall time under a time limit of {limit:g} s, "
-            f"{wall_seconds / limit:.3g} times the limit"
-        )
+    if limit is not None:
+        if wall_seconds > limit + max(CLOCK_MARGIN_SECONDS, OVERRUN_MARGIN * limit):
+            notes.append(
+                f"the run took {wall_seconds:.6g} s of wall time under a time limit of "
+                f"{limit:g} s, {wall_seconds / limit:.3g} times the limit"
+            )
+        early = wall_seconds < limit - max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * limit)
+        if early and outcome.stop_reason is StopReason.TIME_LIMIT:
+            notes.append(
+                f"the solver stopped for its time limit after {wall_seconds:.6g} s of wall "
+                f"time, under a time limit of {limit:g} s"
+            )
     elapsed = outcome.elapsed
     margin = max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * wall_seconds)
     if abs(wall_seconds - elapsed) > margin:
@@ -558,6 +590,17 @@ def exception_error(error: BaseException, kind: ErrorKind = ErrorKind.EXCEPTION)
 
 
 # ------------------------------------------------------------------- helpers
+
+
+def _require_finite(result: SolveResult) -> None:
+    """Raise when the elapsed time or a number of the trace of ``result`` is not finite."""
+    if not math.isfinite(result.elapsed):
+        raise SolverError(f"the solver reports an elapsed time of {result.elapsed!r} s")
+    for index, point in enumerate(result.trace):
+        if not math.isfinite(point.elapsed):
+            raise SolverError(f"point {index} of the trace holds a time of {point.elapsed!r} s")
+        if not math.isfinite(point.value):
+            raise SolverError(f"point {index} of the trace holds a value of {point.value!r}")
 
 
 def _measurement(
