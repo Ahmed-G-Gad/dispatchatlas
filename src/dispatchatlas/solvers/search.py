@@ -198,6 +198,8 @@ class Search:
         self._archive: list[Candidate] = []
         self._trace: list[TracePoint] = []
         self._last_improvement = 0
+        self._schedule_read = False
+        self._schedule_override: bool | None = None
         self._target = (
             None if stop.target is None else self.evaluator.objective.minimized(stop.target)
         )
@@ -233,7 +235,7 @@ class Search:
             return None
         return max(0.0, self.stop.time_limit - self.elapsed)
 
-    def progress(self, *, deterministic: bool = True) -> float:
+    def progress(self, *, deterministic: bool | None = None) -> float:
         """Return the fraction of the binding budget used so far, in [0, 1].
 
         Solvers whose parameters follow a schedule over the run, such as a
@@ -241,15 +243,20 @@ class Search:
         that schedule. It is :meth:`StopCriteria.progress
         <dispatchatlas.core.solver.StopCriteria.progress>` of this run's
         evaluations, started iterations, and elapsed time: the largest
-        fraction of a set limit, which reaches 1 when the first limit ends
-        the run.
+        fraction of a limit that the criteria's ``schedule`` counts.
+
+        A run that reads it records in the extras of its result which clock
+        its schedule followed, see :meth:`result`.
 
         Args:
-            deterministic: Count the time limit only when neither an
-                evaluation nor an iteration limit is set, the default, so the
-                schedule replays exactly on any machine. ``False`` counts
-                every set limit.
+            deterministic: Overrides the criteria's ``schedule`` for this
+                reading: ``True`` counts the time limit only when neither an
+                evaluation nor an iteration limit is set, so the schedule
+                replays exactly on any machine, and ``False`` counts every
+                set limit. ``None``, the default, follows the criteria.
         """
+        self._schedule_read = True
+        self._schedule_override = deterministic
         return self.stop.progress(
             self.evaluations, self.iterations, self.elapsed, deterministic=deterministic
         )
@@ -442,6 +449,13 @@ class Search:
     def result(self, extras: Mapping[str, Scalar] | None = None) -> SolveResult:
         """Build the result of the run from the incumbent.
 
+        A run that read :meth:`progress` records in its extras which clock
+        its parameter schedule followed: ``schedule_clock`` is
+        ``"evaluations"``, ``"iterations"``, or ``"time"``, the limit that
+        places the end of the run on the schedule, and ``schedule_progress``
+        is that place, in [0, 1]. A value below 1 says that the schedule did
+        not reach its end.
+
         Args:
             extras: Solver-specific facts to record, merged with :attr:`extras`.
 
@@ -472,6 +486,14 @@ class Search:
             for item in sorted(self._archive, key=self.vector)
         )
         merged: dict[str, Scalar] = dict(self.extras)
+        if self._schedule_read:
+            counts = (self.evaluations, self.iterations, elapsed)
+            clock = self.stop.schedule_clock(*counts, deterministic=self._schedule_override)
+            if clock is not None:
+                merged["schedule_clock"] = clock
+                merged["schedule_progress"] = self.stop.progress(
+                    *counts, deterministic=self._schedule_override
+                )
         if extras:
             merged.update(extras)
         return SolveResult(

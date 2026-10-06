@@ -268,6 +268,7 @@ class FunctionRun:
         self.reason: StopReason | None = None
         self.extras: dict[str, Scalar] = {}
         self._last_improvement = 0
+        self._schedule_read = False
         self._started = clock_start()
 
     @property
@@ -277,7 +278,12 @@ class FunctionRun:
 
     @property
     def progress(self) -> float:
-        """Fraction of the tightest limit spent, in [0, 1], by ``StopCriteria.progress``."""
+        """Fraction of the tightest limit spent, in [0, 1], by ``StopCriteria.progress``.
+
+        A run that reads it records in the extras of its result which clock
+        its schedule followed, see :meth:`result`.
+        """
+        self._schedule_read = True
         return self.stop.progress(self.evaluations, self.iterations, self.elapsed)
 
     def check(self) -> None:
@@ -324,19 +330,33 @@ class FunctionRun:
     def result(self) -> Minimum:
         """Return the best point found and the run's counts.
 
+        A run that read :attr:`progress` records in its extras which clock
+        its parameter schedule followed: ``schedule_clock`` is
+        ``"evaluations"``, ``"iterations"``, or ``"time"``, the limit that
+        places the end of the run on the schedule, and ``schedule_progress``
+        is that place, in [0, 1].
+
         Raises:
             SolverError: If nothing was evaluated.
         """
         if self.best is None:
             raise SolverError("the optimiser evaluated no point")
+        elapsed = self.elapsed
+        extras = dict(self.extras)
+        if self._schedule_read:
+            counts = (self.evaluations, self.iterations, elapsed)
+            clock = self.stop.schedule_clock(*counts)
+            if clock is not None:
+                extras["schedule_clock"] = clock
+                extras["schedule_progress"] = self.stop.progress(*counts)
         return Minimum(
             vector=self.best[0],
             value=self.best[1],
             evaluations=self.evaluations,
             iterations=self.iterations,
             reason=self.reason or StopReason.COMPLETED,
-            elapsed=self.elapsed,
-            extras=dict(self.extras),
+            elapsed=elapsed,
+            extras=extras,
         )
 
 

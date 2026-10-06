@@ -19,6 +19,7 @@ from dispatchatlas.core.model import FEATURES, Problem
 from dispatchatlas.core.schedule import Assignment, Schedule
 from dispatchatlas.core.serialization import digest, schedule_to_dict
 from dispatchatlas.core.solver import (
+    SCHEDULES,
     SOLVER_FAMILIES,
     FrontPoint,
     Solver,
@@ -122,6 +123,58 @@ def test_progress_is_the_largest_used_fraction_of_a_set_limit() -> None:
     assert StopCriteria(time_limit=10.0).progress(0, 0, 2.5) == 0.25
     assert StopCriteria(target=1.0, patience=3).progress(10**6, 10**6, 1e6) == 0.0
     assert StopCriteria().progress(0, 0, 0.0) == 0.0
+
+
+def test_progress_follows_the_schedule_setting() -> None:
+    assert SCHEDULES == ("deterministic", "binding")
+    both = StopCriteria(time_limit=10.0, max_evaluations=1000)
+    assert both.schedule == "deterministic"
+    assert both.progress(100, 0, 9.0) == 0.1
+    assert both.schedule_clock(100, 0, 9.0) == "evaluations"
+    binding = StopCriteria(time_limit=10.0, max_evaluations=1000, schedule="binding")
+    assert binding.progress(100, 0, 9.0) == 0.9
+    assert binding.schedule_clock(100, 0, 9.0) == "time"
+    assert binding.schedule_clock(950, 0, 9.0) == "evaluations"
+    # The keyword overrides the setting for one reading.
+    assert binding.progress(100, 0, 9.0, deterministic=True) == 0.1
+    assert both.progress(100, 0, 9.0, deterministic=False) == 0.9
+    assert both.schedule_clock(100, 0, 9.0, deterministic=False) == "time"
+    # With the time limit as the only limit both settings read the clock.
+    for schedule in SCHEDULES:
+        timed = StopCriteria(time_limit=10.0, schedule=schedule)  # type: ignore[arg-type]
+        assert timed.progress(100, 0, 9.0) == 0.9
+        assert timed.schedule_clock(100, 0, 9.0) == "time"
+    counted = StopCriteria(max_evaluations=10, max_iterations=4)
+    assert counted.schedule_clock(5, 3, 0.0) == "iterations"
+    assert counted.schedule_clock(5, 2, 0.0) == "evaluations"
+    assert StopCriteria(target=1.0).schedule_clock(5, 2, 1.0) is None
+
+
+def test_the_schedule_setting_says_whether_a_schedule_reads_the_clock() -> None:
+    assert StopCriteria(time_limit=1.0).schedule_timed
+    assert StopCriteria(time_limit=1.0, max_evaluations=5, schedule="binding").schedule_timed
+    assert not StopCriteria(time_limit=1.0, max_evaluations=5).schedule_timed
+    assert not StopCriteria(time_limit=1.0, max_iterations=5).schedule_timed
+    assert not StopCriteria(max_evaluations=5, schedule="binding").schedule_timed
+
+
+def test_the_schedule_is_written_only_when_it_is_not_the_default() -> None:
+    assert StopCriteria(time_limit=1.0, max_evaluations=5).to_dict() == {
+        "time_limit": 1.0,
+        "max_evaluations": 5,
+    }
+    explicit = StopCriteria(max_evaluations=5, schedule="deterministic")
+    assert explicit.to_dict() == {"max_evaluations": 5}
+    binding = StopCriteria(time_limit=1.0, max_evaluations=5, schedule="binding")
+    assert binding.to_dict() == {"time_limit": 1.0, "max_evaluations": 5, "schedule": "binding"}
+    assert StopCriteria.from_dict(binding.to_dict()) == binding
+    assert StopCriteria.from_dict({"max_evaluations": 5}).schedule == "deterministic"
+    assert binding != StopCriteria(time_limit=1.0, max_evaluations=5)
+    # The setting bounds nothing.
+    assert not StopCriteria(schedule="binding").bounded
+    for value in ("clock", "", None, 1):
+        with pytest.raises(ModelError, match="schedule must be one of deterministic, binding"):
+            StopCriteria(max_evaluations=5, schedule=value)  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------- solver info

@@ -186,7 +186,7 @@ def test_the_timing_limitation_of_a_protocol_with_another_bound_does_not_call_th
     bound: dict[str, int],
 ) -> None:
     walls = {"a": [1.0, 1.0, 1.0, 0.1], "b": [1.0, 1.0, 1.0, 1.0]}
-    stop = StopCriteria(time_limit=1.0, **bound)
+    stop = StopCriteria.from_dict({"time_limit": 1.0, **bound})
     dataset = _timed(make_dataset(CELLS), walls, cpu={"a": 0.98, "b": 0.5}, stop=stop)
     (timing,) = [item for item in summarize(dataset).limitations if item.topic == "timing"]
     assert "same wall-clock time" not in timing.message

@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from dispatchatlas.core._frozen import FrozenMap
 from dispatchatlas.core.errors import ModelError
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from dispatchatlas.core.schedule import Schedule
 
 __all__ = [
+    "SCHEDULES",
     "SOLVER_FAMILIES",
     "FrontPoint",
     "SolveResult",
@@ -83,6 +84,16 @@ class Status(StrEnum):
     """No schedule found and infeasibility not proven."""
 
 
+SCHEDULES = ("deterministic", "binding")
+"""The clocks a parameter schedule can follow, the default first.
+
+``"deterministic"`` places a run on its schedule by its evaluations and
+iterations whenever an evaluation or iteration limit is set, and by the
+elapsed time only when the time limit is the only limit. ``"binding"`` counts
+every limit that is set, so the schedule follows whichever of them is nearest.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class StopCriteria:
     """When an iterative solver must stop. The first criterion met ends the run.
@@ -93,6 +104,16 @@ class StopCriteria:
         max_iterations: Main-loop iterations, as each solver defines them.
         target: Stop once the primary objective reaches this value or better.
         patience: Stop after this many iterations without improvement.
+        schedule: Which clock a parameter schedule follows, one of
+            :data:`SCHEDULES`. It ends no run: it decides how
+            :meth:`progress` places a run on a schedule such as a falling
+            exploration rate. With ``"deterministic"``, a run under an
+            evaluation or iteration limit follows the same schedule on every
+            machine, and the schedule stops short of its end when the time
+            limit ends the run first. With ``"binding"``, the schedule reaches
+            its end at whichever limit ends the run, and where it is at a
+            given evaluation depends on the speed and load of the machine
+            whenever a time limit is set.
     """
 
     time_limit: float | None = None
@@ -100,8 +121,13 @@ class StopCriteria:
     max_iterations: int | None = None
     target: float | None = None
     patience: int | None = None
+    schedule: Literal["deterministic", "binding"] = "deterministic"
 
     def __post_init__(self) -> None:
+        if self.schedule not in SCHEDULES:
+            raise ModelError(
+                f"schedule must be one of {', '.join(SCHEDULES)}, got {self.schedule!r}"
+            )
         if self.time_limit is not None:
             value = self.time_limit
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
@@ -130,44 +156,104 @@ class StopCriteria:
             or self.max_iterations is not None
         )
 
+    @property
+    def schedule_timed(self) -> bool:
+        """Whether a parameter schedule reads the elapsed time under these criteria.
+
+        It does when a time limit is set and :attr:`schedule` is
+        ``"binding"`` or no evaluation or iteration limit is set. What a
+        solver that follows a schedule does before it stops then depends on
+        the speed and load of the machine.
+        """
+        return self.time_limit is not None and (
+            self.schedule == "binding"
+            or (self.max_evaluations is None and self.max_iterations is None)
+        )
+
     def progress(
-        self, evaluations: int, iterations: int, elapsed: float, *, deterministic: bool = True
+        self,
+        evaluations: int,
+        iterations: int,
+        elapsed: float,
+        *,
+        deterministic: bool | None = None,
     ) -> float:
         """Return the fraction of the binding budget a run has used, in [0, 1].
 
         The fraction is the largest of evaluations over the evaluation limit,
         iterations over the iteration limit, and elapsed seconds over the time
-        limit, among the limits that are set, so it reaches 1 when the first of
-        them ends the run. The target and the patience end runs at points no
-        one can predict and play no part. Without a limit the fraction is 0.
+        limit, among the limits :attr:`schedule` counts, so with
+        ``"binding"`` it reaches 1 when the first of them ends the run. The
+        target and the patience end runs at points no one can predict and
+        play no part. Without a limit the fraction is 0.
 
         Args:
             evaluations: Evaluations so far.
             iterations: Iterations started so far.
             elapsed: Seconds since the run started.
-            deterministic: Count the time limit only when neither an
-                evaluation nor an iteration limit is set, the default. A run
-                with one of those then follows the same schedule on every
-                machine and replays exactly, though its schedule stops short
-                of 1 when the time limit ends it first. ``False`` counts every
-                set limit.
+            deterministic: Overrides :attr:`schedule` for this reading:
+                ``True`` counts the time limit only when neither an
+                evaluation nor an iteration limit is set, and ``False`` counts
+                every set limit. ``None``, the default, follows
+                :attr:`schedule`.
         """
-        fractions: list[float] = []
+        fractions = self._fractions(evaluations, iterations, elapsed, deterministic)
+        return min(1.0, max((fraction for fraction, _ in fractions), default=0.0))
+
+    def schedule_clock(
+        self,
+        evaluations: int,
+        iterations: int,
+        elapsed: float,
+        *,
+        deterministic: bool | None = None,
+    ) -> str | None:
+        """Return which clock gives :meth:`progress` its value at this point of a run.
+
+        Takes the arguments of :meth:`progress`.
+
+        Returns:
+            ``"evaluations"``, ``"iterations"``, or ``"time"``: the limit
+            whose fraction is the largest among those :attr:`schedule`
+            counts, the first in that order among equals. ``None`` without a
+            limit.
+        """
+        fractions = self._fractions(evaluations, iterations, elapsed, deterministic)
+        if not fractions:
+            return None
+        largest = max(fraction for fraction, _ in fractions)
+        return next(clock for fraction, clock in fractions if fraction == largest)
+
+    def _fractions(
+        self, evaluations: int, iterations: int, elapsed: float, deterministic: bool | None
+    ) -> list[tuple[float, str]]:
+        """Return the fraction spent of every limit a schedule counts, with its clock."""
+        if deterministic is None:
+            deterministic = self.schedule == "deterministic"
+        fractions: list[tuple[float, str]] = []
         if self.max_evaluations is not None:
-            fractions.append(evaluations / self.max_evaluations)
+            fractions.append((evaluations / self.max_evaluations, "evaluations"))
         if self.max_iterations is not None:
-            fractions.append(iterations / self.max_iterations)
+            fractions.append((iterations / self.max_iterations, "iterations"))
         if self.time_limit is not None and not (deterministic and fractions):
-            fractions.append(elapsed / self.time_limit)
-        return min(1.0, max(fractions, default=0.0))
+            fractions.append((elapsed / self.time_limit, "time"))
+        return fractions
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the criteria that are set, as a JSON-ready dictionary."""
-        return {
+        """Return the criteria that are set, as a JSON-ready dictionary.
+
+        :attr:`schedule` is part of it only when it is not the default, so
+        criteria that leave it alone have the dictionary, and with it the
+        identity in a campaign, that they have without the field.
+        """
+        values = {
             name: getattr(self, name)
             for name in ("time_limit", "max_evaluations", "max_iterations", "target", "patience")
             if getattr(self, name) is not None
         }
+        if self.schedule != SCHEDULES[0]:
+            values["schedule"] = self.schedule
+        return values
 
     @classmethod
     def from_dict(cls, values: Mapping[str, Any]) -> StopCriteria:
@@ -178,6 +264,7 @@ class StopCriteria:
             "max_iterations",
             "target",
             "patience",
+            "schedule",
         }
         if unknown:
             raise ModelError(f"unknown stop criteria: {sorted(unknown)}")

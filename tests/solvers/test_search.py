@@ -444,6 +444,56 @@ def test_progress_ignores_the_clock_unless_time_is_the_only_limit() -> None:
     assert timed.progress() == pytest.approx(0.25, abs=0.01)
 
 
+def test_progress_follows_the_schedule_the_criteria_state() -> None:
+    problem = chain_problem()
+    stop = StopCriteria(time_limit=10.0, max_evaluations=100, schedule="binding")
+    search = Search(problem, stop, 0, _info())
+    search.evaluate([0, 1, 2])
+    search._started -= 5.0
+    assert search.progress() == pytest.approx(0.5, abs=0.01)
+    assert search.progress(deterministic=True) == pytest.approx(0.01)
+
+
+def test_a_result_records_which_clock_its_schedule_followed() -> None:
+    problem = chain_problem()
+
+    def run(stop: StopCriteria, *, read: bool = True, back: float = 0.0) -> dict[str, Any]:
+        search = Search(problem, stop, 0, _info())
+        for _ in range(5):
+            search.evaluate([0, 1, 2])
+        search._started -= back
+        if read:
+            search.progress()
+        return dict(search.result().extras)
+
+    both = StopCriteria(time_limit=10.0, max_evaluations=100)
+    # A search that reads no schedule has no clock to record.
+    assert run(both, read=False) == {}
+    assert run(both, back=5.0) == {"schedule_clock": "evaluations", "schedule_progress": 0.05}
+    bound = run(StopCriteria(time_limit=10.0, max_evaluations=100, schedule="binding"), back=5.0)
+    assert bound["schedule_clock"] == "time"
+    assert bound["schedule_progress"] == pytest.approx(0.5, abs=0.01)
+    ahead = run(StopCriteria(time_limit=1000.0, max_evaluations=10, schedule="binding"))
+    assert ahead == {"schedule_clock": "evaluations", "schedule_progress": 0.5}
+    timed = run(StopCriteria(time_limit=10.0), back=2.5)
+    assert timed["schedule_clock"] == "time"
+    assert timed["schedule_progress"] == pytest.approx(0.25, abs=0.01)
+    assert run(StopCriteria(max_iterations=4)) == {
+        "schedule_clock": "iterations",
+        "schedule_progress": 0.0,
+    }
+
+
+def test_a_solver_that_follows_a_schedule_records_its_clock_and_another_does_not() -> None:
+    problem = random_problem(3, tasks=8)
+    scheduled = solve(problem, "q-learning-dispatching", max_evaluations=60, seed=1)
+    assert scheduled.extras["schedule_clock"] == "evaluations"
+    assert scheduled.extras["schedule_progress"] == 1.0
+    plain = solve(problem, "random-search", max_evaluations=60, seed=1)
+    assert "schedule_clock" not in plain.extras
+    assert "schedule_progress" not in plain.extras
+
+
 # -------------------------------------------------------------- submissions
 
 
