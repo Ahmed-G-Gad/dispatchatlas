@@ -6,11 +6,19 @@ problem x replicate x solver x protocol into :class:`PlannedRun` items:
 
 - **Replicates.** A stochastic solver runs ``campaign.replicates`` times per
   problem and protocol, as replicates ``0, 1, ...``. A deterministic one runs
-  once, as replicate 0.
+  once, as replicate 0, unless the campaign sets ``replicate_timed``: it then
+  runs every replicate under each protocol that sets a time limit, where its
+  result depends on the machine. A solver whose entry carries its own
+  ``replicates`` runs that many times under every protocol, whatever it
+  declares.
 - **Seeds.** Seeds are common random numbers: replicate ``r`` of problem
   ``p`` receives ``derive_seed(campaign.seed, "problem:" + p, r)`` under every
   solver and protocol. Results are therefore paired across solvers, and
-  adding, removing, or reordering solvers never changes a seed.
+  adding, removing, or reordering solvers never changes a seed. A campaign
+  with a ``seed_namespace`` derives them from the root
+  ``derive_seed(campaign.seed, "namespace:" + namespace)`` in place of its
+  seed, so two campaigns that share a seed and differ in namespace share no
+  run seed.
 - **Run ids.** ``"run-"`` and the first 16 hexadecimal digits of the SHA-256
   digest of the canonical JSON of the config hash, the problem id and digest,
   the solver id, label, and parameters, the protocol name, and the replicate.
@@ -78,17 +86,22 @@ PLAN_SCHEMA = "dispatchatlas.plan/1"
 _LOG = get_logger(__name__)
 
 
-def run_seed(root: int, problem_id: str, replicate: int) -> int:
+def run_seed(root: int, problem_id: str, replicate: int, namespace: str | None = None) -> int:
     """Return the seed of every run of one problem and replicate.
 
     Args:
         root: The campaign seed.
         problem_id: Id of the problem.
         replicate: Replicate number, from 0.
+        namespace: The campaign's seed namespace, or ``None`` without one.
 
     Returns:
-        ``derive_seed(root, "problem:" + problem_id, replicate)``.
+        ``derive_seed(root, "problem:" + problem_id, replicate)``. With a
+        namespace, ``derive_seed(root, "namespace:" + namespace)`` takes the
+        place of ``root``.
     """
+    if namespace is not None:
+        root = derive_seed(root, f"namespace:{namespace}")
     return derive_seed(root, f"problem:{problem_id}", replicate)
 
 
@@ -214,6 +227,9 @@ class Plan:
         runs: The runs, ordered by problem, replicate, solver, and protocol.
         exclusions: Pairs that do not run, and why.
         caveats: Pairings that run but need care in the analysis.
+        replicate_timed: Whether a solver declared deterministic runs every
+            replicate under a protocol that sets a time limit.
+        seed_namespace: The campaign's seed namespace, or ``None``.
     """
 
     campaign: str
@@ -226,6 +242,8 @@ class Plan:
     runs: tuple[PlannedRun, ...]
     exclusions: tuple[Exclusion, ...] = ()
     caveats: tuple[Caveat, ...] = ()
+    replicate_timed: bool = False
+    seed_namespace: str | None = None
 
     @cached_property
     def _runs(self) -> Mapping[str, PlannedRun]:
@@ -276,9 +294,20 @@ class Plan:
                 return item
         raise KeyError(name)
 
-    def replicates_of(self, solver: SolverEntry) -> int:
-        """Return how many replicates a solver runs: all for stochastic solvers, else one."""
-        return self.replicates if solver.stochastic else 1
+    def replicates_of(self, solver: SolverEntry, protocol: Protocol | None = None) -> int:
+        """Return how many replicates a solver runs under a protocol.
+
+        The solver's own count when its entry carries one. Otherwise every
+        replicate for a stochastic solver, and for one declared deterministic
+        a single run, or every replicate when :attr:`replicate_timed` is set
+        and the protocol sets a time limit.
+
+        Args:
+            solver: A solver of the plan.
+            protocol: A protocol of the plan. ``None`` asks for the count
+                under a protocol without a time limit.
+        """
+        return _replicates(solver, protocol, self.replicates, self.replicate_timed)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the plan as a JSON-ready document.
@@ -293,7 +322,9 @@ class Plan:
             "campaign": self.campaign,
             "config_hash": self.config_hash,
             "seed": self.seed,
+            "seed_namespace": self.seed_namespace,
             "replicates": self.replicates,
+            "replicate_timed": self.replicate_timed,
             "problems": [problem.to_dict() for problem in self.problems],
             "solvers": [solver.to_dict() for solver in self.solvers],
             "protocols": [
@@ -310,14 +341,26 @@ class Plan:
     def from_dict(cls, document: object) -> Plan:
         """Build a plan from :meth:`to_dict` output. Derived entries are ignored.
 
+        A document without ``replicate_timed`` or ``seed_namespace`` reads as
+        a plan that sets neither.
+
         Raises:
             SerializationError: If the document is not a plan of this schema
                 version, or is malformed.
         """
         if not isinstance(document, Mapping) or document.get("schema") != PLAN_SCHEMA:
             raise SerializationError(f"expected a {PLAN_SCHEMA!r} document")
+        replicate_timed = document.get("replicate_timed", False)
+        namespace = document.get("seed_namespace")
+        if not isinstance(replicate_timed, bool) or not isinstance(namespace, str | None):
+            raise SerializationError(
+                "malformed plan document: replicate_timed must be true or false and "
+                "seed_namespace a string or null"
+            )
         try:
             return cls(
+                replicate_timed=replicate_timed,
+                seed_namespace=namespace,
                 campaign=str(document["campaign"]),
                 config_hash=str(document["config_hash"]),
                 seed=int(document["seed"]),
@@ -418,6 +461,13 @@ def prepare(
         [(spec.name, solvers.info(spec.id)) for spec in campaign.solvers],
     )
     config_hash = campaign.config_hash
+    counts = {
+        (entry.name, protocol.name): _replicates(
+            entry, protocol, campaign.replicates, campaign.replicate_timed
+        )
+        for entry in entries
+        for protocol in campaign.protocols
+    }
     planned_problems: list[PlannedProblem] = []
     runs: list[PlannedRun] = []
     for source, problem in loaded:
@@ -434,14 +484,14 @@ def prepare(
                 features=tuple(sorted(problem.features)),
             )
         )
-        for replicate in range(campaign.replicates):
-            seed = run_seed(campaign.seed, problem.id, replicate)
+        for replicate in range(max(counts.values())):
+            seed = run_seed(campaign.seed, problem.id, replicate, campaign.seed_namespace)
             for spec, entry in zip(campaign.solvers, entries, strict=True):
-                if (replicate > 0 and not entry.stochastic) or assessment.excludes(
-                    problem.id, spec.name
-                ):
+                if assessment.excludes(problem.id, spec.name):
                     continue
                 for protocol in campaign.protocols:
+                    if replicate >= counts[entry.name, protocol.name]:
+                        continue
                     identifier = run_id(
                         config_hash, problem.id, problem_hash, spec, protocol.name, replicate
                     )
@@ -461,6 +511,8 @@ def prepare(
         runs=tuple(runs),
         exclusions=assessment.exclusions,
         caveats=assessment.caveats,
+        replicate_timed=campaign.replicate_timed,
+        seed_namespace=campaign.seed_namespace,
     )
     if not runs:
         raise ConfigError(
@@ -523,7 +575,28 @@ def _solver_entry(spec: SolverSpec, registry: SolverRegistry) -> SolverEntry:
         iterative=info.iterative,
         multi_objective=info.multi_objective,
         threads=threads,
+        replicates=spec.replicates,
     )
+
+
+def _replicates(
+    solver: SolverEntry, protocol: Protocol | None, replicates: int, replicate_timed: bool
+) -> int:
+    """Return how many replicates a solver runs under a protocol.
+
+    Args:
+        solver: The solver.
+        protocol: The protocol, or ``None`` for one without a time limit.
+        replicates: The campaign's replicates.
+        replicate_timed: Whether a solver declared deterministic runs them
+            all under a time limit.
+    """
+    if solver.replicates is not None:
+        return solver.replicates
+    timed = protocol is not None and protocol.stop.time_limit is not None
+    if solver.stochastic or (replicate_timed and timed):
+        return replicates
+    return 1
 
 
 def _load_problems(

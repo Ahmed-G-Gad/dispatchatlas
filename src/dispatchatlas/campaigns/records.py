@@ -351,6 +351,9 @@ class SolverEntry:
         threads: The value of its ``threads`` parameter, the default when the
             campaign sets none. ``None`` for a solver without such a
             parameter and for an entry that does not state it.
+        replicates: The replicate count the campaign gives this solver
+            alone. ``None`` when the campaign gives none and for an entry
+            that does not state it.
     """
 
     name: str
@@ -362,6 +365,7 @@ class SolverEntry:
     iterative: bool
     multi_objective: bool
     threads: int | None = None
+    replicates: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the entry as a JSON-ready dictionary."""
@@ -375,6 +379,7 @@ class SolverEntry:
             "iterative": self.iterative,
             "multi_objective": self.multi_objective,
             "threads": self.threads,
+            "replicates": self.replicates,
         }
 
     @classmethod
@@ -391,6 +396,7 @@ class SolverEntry:
             iterative=fields.boolean("iterative"),
             multi_objective=fields.boolean("multi_objective"),
             threads=fields.absent_or_integer("threads"),
+            replicates=fields.absent_or_integer("replicates"),
         )
 
 
@@ -555,22 +561,20 @@ class RunRecord:
         """Whether a replay can reproduce the run.
 
         A run stopped by its wall-clock limit cannot, and neither can any run
-        of an iterative solver under a protocol whose only bound is its time
-        limit, whatever stopped it: with no evaluation or iteration limit, a
-        search places itself on its schedule by the elapsed time
+        of an iterative solver under a protocol whose parameter schedules
+        read the elapsed time, whatever stopped it. They do when the time
+        limit is the protocol's only bound, and under any time limit when its
+        ``schedule`` is ``"binding"``
+        (:attr:`~dispatchatlas.core.solver.StopCriteria.schedule_timed`): a
+        search then places itself on its schedule by the elapsed time
         (:meth:`~dispatchatlas.core.solver.StopCriteria.progress`), so what
-        it does before it stops, at a target or for lack of improvement,
-        depends on the speed and load of the machine. A solver that is not
-        iterative follows no such schedule, and its run that completed under
-        a time limit reproduces.
+        it does before it stops, at a target, at another limit, or for lack
+        of improvement, depends on the speed and load of the machine. A
+        solver that is not iterative follows no such schedule, and its run
+        that completed under a time limit reproduces.
         """
-        stop = self.protocol.stop
-        timed_only = (
-            stop.time_limit is not None
-            and stop.max_evaluations is None
-            and stop.max_iterations is None
-        )
-        return self.outcome.replayable and not (timed_only and self.solver.iterative)
+        timed = self.protocol.stop.schedule_timed
+        return self.outcome.replayable and not (timed and self.solver.iterative)
 
     def verify(self) -> tuple[str, ...]:
         """Return the integrity problems of the record, empty when it is intact.

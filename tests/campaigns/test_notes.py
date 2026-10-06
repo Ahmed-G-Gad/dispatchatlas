@@ -418,8 +418,13 @@ def test_a_run_under_a_time_only_protocol_is_not_replayable_whatever_stopped_it(
     assert not stagnated.replayable
     # An evaluation or iteration limit beside the time limit fixes the schedule of the search.
     for bound in ({"max_evaluations": 50}, {"max_iterations": 50}):
-        stop = StopCriteria(time_limit=5.0, patience=3, **bound)
+        stop = StopCriteria.from_dict({"time_limit": 5.0, "patience": 3, **bound})
         assert replace(stagnated, protocol=Protocol("both", stop)).replayable
+        # Unless the schedule follows whichever limit binds, the time limit among them.
+        binding = StopCriteria.from_dict({**stop.to_dict(), "schedule": "binding"})
+        assert not replace(stagnated, protocol=Protocol("both", binding)).replayable
+    counted = StopCriteria(max_evaluations=50, schedule="binding")
+    assert replace(stagnated, protocol=Protocol("evals", counted)).replayable
     assert replace(stagnated, protocol=Protocol("evals", EVALUATIONS)).replayable
     # A solver that is not iterative follows no schedule: its completed run reproduces.
     constructive = replace(stagnated.solver, iterative=False)

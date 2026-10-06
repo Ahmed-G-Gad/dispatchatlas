@@ -462,7 +462,7 @@ def test_a_time_limit_over_unequal_thread_counts_is_noted_and_stays_fair() -> No
     )
     protocols = (*TIMED, Protocol("evals", StopCriteria(max_evaluations=5)))
     timed = plan(
-        tiny_campaign(solvers=solvers, protocols=protocols, instances=ONE_PROBLEM),
+        tiny_campaign(solvers=solvers, protocols=protocols, instances=ONE_PROBLEM, replicates=1),
         registry=REGISTRY,
     )
     verdict = assess(timed)
@@ -479,7 +479,8 @@ def test_a_time_limit_over_unequal_thread_counts_is_noted_and_stays_fair() -> No
         SolverSpec("test-threaded", "b", {"threads": 2}),
     )
     same = plan(
-        tiny_campaign(solvers=equal, protocols=TIMED, instances=ONE_PROBLEM), registry=REGISTRY
+        tiny_campaign(solvers=equal, protocols=TIMED, instances=ONE_PROBLEM, replicates=1),
+        registry=REGISTRY,
     )
     assert assess(same).notes == ()
     untimed = plan(tiny_campaign(solvers=solvers, instances=ONE_PROBLEM), registry=REGISTRY)
@@ -802,7 +803,12 @@ def test_the_fairness_note_counts_the_threads_a_solver_holds_by_default(
 ) -> None:
     mixed = (SolverSpec("input-order", "plain"), SolverSpec("test-four-threads", "four"))
     campaign = tiny_campaign(
-        solvers=mixed, protocols=TIMED, instances=ONE_PROBLEM, backend="process", workers=2
+        solvers=mixed,
+        protocols=TIMED,
+        instances=ONE_PROBLEM,
+        replicates=1,
+        backend="process",
+        workers=2,
     )
     timed = plan(campaign, registry=REGISTRY)
     assert [entry.threads for entry in timed.solvers] == [None, 4]
@@ -819,7 +825,8 @@ def test_the_fairness_note_counts_the_threads_a_solver_holds_by_default(
         SolverSpec("test-four-threads", "set", {"threads": 4}),
     )
     equal = plan(
-        tiny_campaign(solvers=same, protocols=TIMED, instances=ONE_PROBLEM), registry=REGISTRY
+        tiny_campaign(solvers=same, protocols=TIMED, instances=ONE_PROBLEM, replicates=1),
+        registry=REGISTRY,
     )
     assert [entry.threads for entry in equal.solvers] == [4, 4]
     assert assess(equal).notes == ()

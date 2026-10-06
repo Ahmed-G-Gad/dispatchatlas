@@ -41,9 +41,11 @@ Example::
 
 An instance source is one of ``{family, seeds, parameters?}``,
 ``{suite, instances, directory?}``, ``{catalog, seed?}``, ``{directory}``,
-or ``{file, format?}``. A protocol's ``stop`` table takes the fields of
+or ``{file, format?}``. A solver is ``{id, label?, parameters?, replicates?}``.
+A protocol's ``stop`` table takes the fields of
 :class:`~dispatchatlas.core.solver.StopCriteria`. The optional top-level keys
-are ``replicates``, ``objectives``, ``execution`` (the fields of
+are ``replicates``, ``replicate_timed``, ``seed_namespace``, ``objectives``,
+``execution`` (the fields of
 :class:`~dispatchatlas.campaigns.config.Execution`), and ``metadata``. In
 JSON, ``null`` stands for an absent optional value.
 """
@@ -86,6 +88,8 @@ _TOP_LEVEL = (
     "solvers",
     "protocols",
     "replicates",
+    "replicate_timed",
+    "seed_namespace",
     "objectives",
     "execution",
     "metadata",
@@ -103,6 +107,7 @@ _STOP_KEYS = {
     "max_iterations": "integer",
     "target": "number",
     "patience": "integer",
+    "schedule": "string",
 }
 _EXECUTION_KEYS = (
     "backend",
@@ -183,6 +188,8 @@ def campaign_to_dict(campaign: Campaign) -> dict[str, Any]:
         "id": campaign.id,
         "seed": campaign.seed,
         "replicates": campaign.replicates,
+        "replicate_timed": campaign.replicate_timed,
+        "seed_namespace": campaign.seed_namespace,
         "objectives": None if campaign.objectives is None else list(campaign.objectives),
         "instances": [source.to_dict() for source in campaign.instances],
         "solvers": [solver.to_dict() for solver in campaign.solvers],
@@ -234,6 +241,10 @@ def campaign_from_dict(document: Mapping[str, Any], *, base: Path | None = None)
     options: dict[str, Any] = {}
     if (replicates := table.get("replicates")) is not _ABSENT:
         options["replicates"] = _integer(replicates, "replicates")
+    if (replicate_timed := table.get("replicate_timed")) is not _ABSENT:
+        options["replicate_timed"] = _boolean(replicate_timed, "replicate_timed")
+    if (namespace := table.get("seed_namespace")) is not _ABSENT:
+        options["seed_namespace"] = _string(namespace, "seed_namespace")
     if (objectives := table.get("objectives")) is not _ABSENT:
         options["objectives"] = tuple(
             _string(item, f"objectives[{i}]")
@@ -309,13 +320,15 @@ def _source(value: object, where: str) -> InstanceSource:
 
 
 def _solver(value: object, where: str) -> SolverSpec:
-    table = _Table(value, where, ("id", "label", "parameters"))
+    table = _Table(value, where, ("id", "label", "parameters", "replicates"))
     solver_id = _string(table.required("id"), f"{where}.id")
     label = table.get("label")
     name = None if label is _ABSENT else _string(label, f"{where}.label")
     parameters = table.get("parameters")
     options = {} if parameters is _ABSENT else _json_table(parameters, f"{where}.parameters")
-    return _build(where, lambda: SolverSpec(solver_id, name, options))
+    replicates = table.get("replicates")
+    count = None if replicates is _ABSENT else _integer(replicates, f"{where}.replicates")
+    return _build(where, lambda: SolverSpec(solver_id, name, options, count))
 
 
 def _protocol(value: object, where: str) -> Protocol:
@@ -326,8 +339,7 @@ def _protocol(value: object, where: str) -> Protocol:
     for key, kind in _STOP_KEYS.items():
         item = stop.get(key)
         if item is not _ABSENT:
-            place = f"{where}.stop.{key}"
-            criteria[key] = _integer(item, place) if kind == "integer" else _number(item, place)
+            criteria[key] = _STOP_READERS[kind](item, f"{where}.stop.{key}")
 
     def build() -> Protocol:
         try:
@@ -450,6 +462,14 @@ def _boolean(value: object, where: str) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"{where} must be true or false, got {_describe(value)}")
     return value
+
+
+_STOP_READERS: Mapping[str, Callable[[object, str], Any]] = {
+    "integer": _integer,
+    "number": _number,
+    "string": _string,
+}
+"""The reader of each kind of value in a protocol's ``stop`` table."""
 
 
 def _array(value: object, where: str) -> list[Any]:

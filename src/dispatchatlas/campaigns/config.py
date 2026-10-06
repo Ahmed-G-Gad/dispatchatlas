@@ -421,11 +421,18 @@ class SolverSpec:
         label: Name that tells this setting apart from other settings of the
             same solver. Defaults to the id.
         parameters: Solver parameters; the others keep their defaults.
+        replicates: Runs of this solver per problem and protocol, whatever
+            the solver declares and whatever the protocol bounds. ``None``
+            leaves the count to the campaign: its ``replicates`` for a
+            stochastic solver, and for one declared deterministic a single
+            run, or every replicate under a time limit when the campaign
+            sets ``replicate_timed``.
     """
 
     id: str
     label: str | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict, hash=False)
+    replicates: int | None = None
 
     def __post_init__(self) -> None:
         _check_text(self.id, "a solver id")
@@ -433,6 +440,8 @@ class SolverSpec:
             check_name(self.label, "solver label")
         check_name(self.name, "solver name")
         object.__setattr__(self, "parameters", _frozen_table(self.parameters, "parameters"))
+        if self.replicates is not None:
+            _check_integer(self.replicates, f"the replicates of solver {self.name!r}", 1)
 
     @property
     def name(self) -> str:
@@ -440,8 +449,14 @@ class SolverSpec:
         return self.label if self.label is not None else self.id
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the specification as a JSON-ready dictionary."""
-        return {"id": self.id, "label": self.label, "parameters": jsonable(self.parameters)}
+        """Return the specification as a JSON-ready dictionary.
+
+        ``replicates`` is part of it only when the specification sets one.
+        """
+        document = {"id": self.id, "label": self.label, "parameters": jsonable(self.parameters)}
+        if self.replicates is not None:
+            document["replicates"] = self.replicates
+        return document
 
     def arguments(self) -> dict[str, Any]:
         """Return the parameters as keyword arguments: tables as dictionaries, lists as tuples.
@@ -668,6 +683,15 @@ class Campaign:
             the directory of the campaign file when read by
             :func:`~dispatchatlas.campaigns.io.load_campaign`, else the
             working directory. Not part of the config hash.
+        replicate_timed: Whether a solver declared deterministic runs
+            ``replicates`` times, like a stochastic one, under every protocol
+            that sets a time limit. Where the clock ends such a run, its
+            result depends on the speed and load of the machine, and a single
+            run does not show by how much.
+        seed_namespace: A name that separates the seeds of this campaign
+            from those of every campaign with the same ``seed`` and another
+            namespace, or none. ``None`` leaves every seed as the campaign
+            seed alone gives it.
     """
 
     id: str
@@ -680,11 +704,19 @@ class Campaign:
     execution: Execution = field(default_factory=Execution)
     metadata: Mapping[str, Any] = field(default_factory=dict, hash=False)
     base: Path | None = None
+    replicate_timed: bool = False
+    seed_namespace: str | None = None
 
     def __post_init__(self) -> None:
         check_name(self.id, "campaign id")
         _check_integer(self.seed, "seed", 0)
         _check_integer(self.replicates, "replicates", 1)
+        if not isinstance(self.replicate_timed, bool):
+            raise ConfigError(
+                f"replicate_timed must be true or false, got {self.replicate_timed!r}"
+            )
+        if self.seed_namespace is not None:
+            _check_text(self.seed_namespace, "seed_namespace")
         instances = tuple(self.instances)
         if not instances:
             raise ConfigError(f"campaign {self.id!r} needs at least one instance source")
@@ -707,9 +739,14 @@ class Campaign:
 
         These are exactly the fields the config hash covers: ``seed``,
         ``instances`` without file-system locations, ``solvers``,
-        ``protocols``, ``replicates``, and ``objectives``.
+        ``protocols``, ``replicates``, and ``objectives``, and the optional
+        settings that are set: ``replicate_timed`` when it is true,
+        ``seed_namespace`` when there is one, a solver's own ``replicates``,
+        and a protocol's ``schedule`` when it is not the default. A setting
+        left at its default is absent, so a campaign that sets none of them
+        has the config hash it has without them.
         """
-        return {
+        identity: dict[str, Any] = {
             "seed": self.seed,
             "instances": [source.identity() for source in self.instances],
             "solvers": [solver.to_dict() for solver in self.solvers],
@@ -717,6 +754,11 @@ class Campaign:
             "replicates": self.replicates,
             "objectives": None if self.objectives is None else list(self.objectives),
         }
+        if self.replicate_timed:
+            identity["replicate_timed"] = True
+        if self.seed_namespace is not None:
+            identity["seed_namespace"] = self.seed_namespace
+        return identity
 
     @cached_property
     def config_hash(self) -> str:
