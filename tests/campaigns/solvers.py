@@ -431,18 +431,18 @@ class ColdStart:
 
 
 @dataclass(frozen=True)
-class Prepared:
-    """Pays ``seconds`` once in a process, in ``prepare`` when that is called first.
+class Warmed:
+    """Pays ``seconds`` once in a process, in ``warm_up`` when that is called first.
 
-    With ``broken`` set, ``prepare`` raises as a solver whose backend is missing does.
+    With ``broken`` set, ``warm_up`` raises as a solver whose backend is missing does.
     """
 
     seconds: float = 0.25
-    key: str = "prepared"
+    key: str = "warmed"
     broken: bool = False
-    info: ClassVar[SolverInfo] = _info("test-prepared")
+    info: ClassVar[SolverInfo] = _info("test-warmed")
 
-    def prepare(self) -> None:
+    def warm_up(self) -> None:
         if self.broken:
             raise SolverError("the backend cannot be loaded")
         _pay_once(self.key, self.seconds)
@@ -486,7 +486,7 @@ TEST_SOLVERS = (
     Delegating,
     Timeless,
     ColdStart,
-    Prepared,
+    Warmed,
     Phased,
     SlowSetup,
     Tardy,

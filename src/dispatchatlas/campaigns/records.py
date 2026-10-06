@@ -439,7 +439,7 @@ class Provenance:
             of the solve. They hold the start of the worker's interpreter and the
             loading of plugins, for a worker that started for this attempt,
             the rebuilding of the solver and the problem, and the
-            preparation of the solver. ``None`` when the solve never began,
+            warm-up of the solver. ``None`` when the solve never began,
             for the sequential backend, and when the record does not state
             it.
         shared_clock: Whether the clocks of the solver started at the

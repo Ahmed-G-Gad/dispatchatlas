@@ -91,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wall time, and the provenance of an attempt states it in the optional
   field `shared_clock`. What a solver does once in a process, such as
   importing a backend, the engine has it do before that instant, through
-  the solver's optional `prepare` method, so that it shortens the search of
+  the solver's optional `warm_up` method, so that it shortens the search of
   no run. A solver called outside a campaign counts from the instant it
   creates its clock.
 - The engine compares what every completed attempt took with its budget and

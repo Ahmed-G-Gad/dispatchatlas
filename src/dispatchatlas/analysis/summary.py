@@ -562,7 +562,7 @@ def _design_limitations(
 
 
 _FAILURE_KINDS: Mapping[str, str] = {
-    "exception": "the solver, its preparation, or the checks of its result raised an exception",
+    "exception": "the solver, its warm-up, or the checks of its result raised an exception",
     "timeout": "the engine killed the worker at the hard limit of the run",
     "startup": "the engine killed a worker that had not begun the solve at the start-up limit",
     "worker-exit": (

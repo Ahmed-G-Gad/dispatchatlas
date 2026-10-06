@@ -125,7 +125,7 @@ class RestrictedNeighbourhoodSearch:
         if not self.call_limit > 0.0:
             raise ValueError("call_limit must be positive")
 
-    def prepare(self) -> None:
+    def warm_up(self) -> None:
         """Import OR-Tools and the model, which the first call in a process pays for.
 
         Raises:

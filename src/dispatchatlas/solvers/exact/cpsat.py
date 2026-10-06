@@ -158,7 +158,7 @@ class CpSat:
             log=self.log,
         )
 
-    def prepare(self) -> None:
+    def warm_up(self) -> None:
         """Import OR-Tools and the model, which the first call in a process pays for.
 
         Raises:

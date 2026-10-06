@@ -218,7 +218,7 @@ of one campaign.
   worker states as the start of the solve. What comes before that instant is
   not charged to the run: the start of the worker's interpreter and the
   loading of plugins, for a worker that started for this run, the
-  rebuilding of the solver and the problem, and the preparation of the
+  rebuilding of the solver and the problem, and the warm-up of the
   solver. The provenance of the attempt
   records it as `waited_seconds`, counted from the hand-over, before a fresh
   worker exists. When the hard limit passes, the supervisor kills the worker
@@ -247,14 +247,14 @@ of one campaign.
   each worker executes, and of the first run of every worker that replaces
   a killed one, so replicates of one solver would search for unequal times
   according to the order of the runs and the number of workers. The engine
-  therefore prepares the solver before the start of each attempt: it loads
-  NumPy's random module and calls the solver's `prepare` method, which
+  therefore warms up the solver before the start of each attempt: it loads
+  NumPy's random module and calls the solver's `warm_up` method, which
   `cp-sat`, `milp`, and `restricted-neighbourhood-search` use to import
-  their backend. The preparation is outside the time limit and the wall
+  their backend. The warm-up is outside the time limit and the wall
   time of every run; under the process backend it counts toward the
-  start-up limit and is part of `waited_seconds`. A preparation that raises
+  start-up limit and is part of `waited_seconds`. A warm-up that raises
   fails the attempt as an `exception`. A solver from a plugin that pays such
-  a cost inside `solve`, without a `prepare` method, is charged for it in
+  a cost inside `solve`, without a `warm_up` method, is charged for it in
   the first run of each process; see
   [Extending](../extending.md#a-solver).
 - **What the time limit cannot stop.** A solver checks its time limit
@@ -375,7 +375,7 @@ indentation, ASCII text, and a final newline.
   not pinned), the runs executing when the run was handed to its worker
   (`concurrent`), and the seconds from that hand-over to the start of the
   solve (`waited_seconds`, null for the sequential backend), which hold the
-  start of a worker that started for the run and the preparation of the
+  start of a worker that started for the run and the warm-up of the
   solver, and whether the solver's clocks started at the instant the wall
   time counts from (`shared_clock`, true for an attempt whose solver
   returned or raised, null for one the engine ended or that never reached

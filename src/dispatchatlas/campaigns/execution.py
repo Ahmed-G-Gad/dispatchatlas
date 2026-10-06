@@ -22,7 +22,7 @@ clock: :func:`attempt` calls the solver inside
 elapsed time of every solver cover everything the solver does from the start
 of the attempt, including what it does before its search starts, such as
 building an evaluator or a model. What a solver does once in a process, such
-as importing a backend, is done before that instant by :func:`prepare`, so
+as importing a backend, is done before that instant by :func:`warm_up`, so
 that it shortens the search of no run.
 
 :func:`observe` adds what the time and the trace of the attempt show: a wall
@@ -78,9 +78,9 @@ __all__ = [
     "engine_failure",
     "exception_error",
     "observe",
-    "prepare",
-    "prepare_task",
     "utc_now",
+    "warm_up",
+    "warm_up_task",
 ]
 
 OVERRUN_MARGIN = 0.05
@@ -263,7 +263,7 @@ def classify(error: BaseException) -> Category:
     return Category.TERMINAL if isinstance(error, DispatchAtlasError) else Category.RECOVERABLE
 
 
-def prepare(solver: Solver) -> None:
+def warm_up(solver: Solver) -> None:
     """Do what a solver does once in a process before it can solve.
 
     The first call of a solver in a process may pay a cost that no later
@@ -271,30 +271,30 @@ def prepare(solver: Solver) -> None:
     use. Paid inside a run, that cost would shorten the search of the first
     run of every process and of no other. This function pays it outside any
     run: it imports :mod:`numpy.random`, which NumPy loads on first use, and
-    calls the ``prepare`` method of the solver when the solver defines one.
+    calls the ``warm_up`` method of the solver when the solver defines one.
 
     Args:
         solver: The solver about to be called.
     """
     importlib.import_module("numpy.random")
-    hook = getattr(solver, "prepare", None)
+    hook = getattr(solver, "warm_up", None)
     if callable(hook):
         hook()
 
 
-def prepare_task(task: Task, worker: str = "main") -> Failure | None:
-    """Prepare the solver of an attempt, before the clock of the attempt starts.
+def warm_up_task(task: Task, worker: str = "main") -> Failure | None:
+    """Warm up the solver of an attempt, before the clock of the attempt starts.
 
     Args:
         task: The attempt.
         worker: Where it executes, for the measurement.
 
     Returns:
-        ``None``, or the failure of the attempt when :func:`prepare` raised.
+        ``None``, or the failure of the attempt when :func:`warm_up` raised.
     """
     started, clock = utc_now(), time.perf_counter()
     try:
-        prepare(task.solver)
+        warm_up(task.solver)
     except Exception as error:
         measurement = Measurement(
             started,
@@ -317,14 +317,14 @@ def prepare_task(task: Task, worker: str = "main") -> Failure | None:
 def attempt(task: Task, worker: str = "main", origin: float | None = None) -> Result:
     """Execute one attempt of a run.
 
-    The solver is prepared first (:func:`prepare_task`), outside the time of the
-    attempt. It is then called inside
+    The solver is warmed up first (:func:`warm_up_task`), outside the time of
+    the attempt. It is then called inside
     :func:`~dispatchatlas.core.clock.clock_origin`, whose origin is the
     instant the wall time of the attempt counts from, so the solver's
     elapsed time and time limit count from the same instant. A completion
     carries the notes of :func:`describe` and :func:`observe`.
 
-    Exceptions raised by the solver, by its preparation, or by the checks of
+    Exceptions raised by the solver, by its warm-up, or by the checks of
     its result become a :class:`Failure`. ``KeyboardInterrupt`` and
     ``SystemExit`` propagate.
 
@@ -332,16 +332,16 @@ def attempt(task: Task, worker: str = "main", origin: float | None = None) -> Re
         task: The attempt.
         worker: Where it executes, for the measurement.
         origin: The instant the attempt counts from, as
-            :func:`time.perf_counter` counts, for a caller that has prepared
-            the solver with :func:`prepare_task` and times the attempt from an
-            instant of its own. By default the attempt prepares the solver
+            :func:`time.perf_counter` counts, for a caller that has warmed up
+            the solver with :func:`warm_up_task` and times the attempt from an
+            instant of its own. By default the attempt warms up the solver
             and counts from the instant that is done.
 
     Returns:
         The completion or the failure.
     """
     if origin is None:
-        failure = prepare_task(task, worker)
+        failure = warm_up_task(task, worker)
         if failure is not None:
             return failure
     started = utc_now()

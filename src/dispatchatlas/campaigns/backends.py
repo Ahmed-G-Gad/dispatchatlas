@@ -71,8 +71,8 @@ from dispatchatlas.campaigns.execution import (
     attempt,
     engine_failure,
     exception_error,
-    prepare_task,
     utc_now,
+    warm_up_task,
 )
 from dispatchatlas.campaigns.processors import affinity_cpus, confined, describe_cpus
 from dispatchatlas.campaigns.records import Category, ErrorKind, Incumbent
@@ -372,7 +372,7 @@ def _serve(message: tuple[Any, ...], name: str, held: list[Any], connection: Con
     )
     # What the solver does once in a process comes before the start of the
     # solve, so the start-up limit covers it and no run's time limit does.
-    failure = prepare_task(task, name)
+    failure = warm_up_task(task, name)
     if failure is not None:
         return failure
     # One instant is the start of the solve for the hard limit, the reporter,

@@ -68,7 +68,7 @@ about who ended the attempt:
 
 | Kind | Meaning |
 | --- | --- |
-| `exception` | the solver, its preparation, or the checks of its result raised an exception |
+| `exception` | the solver, its warm-up, or the checks of its result raised an exception |
 | `timeout` | the engine killed the worker at the hard limit of the run |
 | `startup` | the engine killed a worker that had not begun the solve at the start-up limit |
 | `worker-exit` | the worker process ended during the run, as after a crash in the solver's native code or when memory runs out; the engine does not know the cause |

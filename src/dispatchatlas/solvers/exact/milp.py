@@ -298,7 +298,7 @@ class TimeIndexedMilp:
             extras=extras,
         )
 
-    def prepare(self) -> None:
+    def warm_up(self) -> None:
         """Import PuLP and the backend, which the first call in a process pays for.
 
         Raises:

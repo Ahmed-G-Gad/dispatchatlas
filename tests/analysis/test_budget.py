@@ -302,7 +302,7 @@ def test_the_failures_limitation_names_the_error_kinds_per_solver() -> None:
         "4 runs failed and 0 completed without a feasible schedule; each counts as the worst "
         "value. The failed runs by solver and by the kind of error of their last attempt: "
         "a 1 exception, 2 timeout; b 1 worker-exit. What each kind means: exception: the "
-        "solver, its preparation, or the checks of its result raised an exception; timeout: "
+        "solver, its warm-up, or the checks of its result raised an exception; timeout: "
         "the engine killed the worker at the hard limit of the run; worker-exit: the worker "
         "process ended during the run, as after a crash in native code or when memory runs "
         "out, and the engine does not know the cause."
@@ -336,7 +336,7 @@ def test_the_failures_limitation_words_only_the_kinds_that_occur() -> None:
     only = message({"a": [ErrorKind.EXCEPTION] * 2, "b": [ErrorKind.EXCEPTION]})
     assert only.endswith(
         "a 2 exception; b 1 exception. What each kind means: exception: the solver, its "
-        "preparation, or the checks of its result raised an exception."
+        "warm-up, or the checks of its result raised an exception."
     )
     others = message({"a": [ErrorKind.STARTUP, ErrorKind.TRANSFER], "b": [ErrorKind.TRANSFER]})
     assert others.endswith(

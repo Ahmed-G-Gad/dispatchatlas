@@ -27,8 +27,8 @@ from dispatchatlas.campaigns.execution import (
     Failure,
     Task,
     attempt,
-    prepare,
-    prepare_task,
+    warm_up,
+    warm_up_task,
 )
 from dispatchatlas.campaigns.records import ErrorKind
 from dispatchatlas.core import (
@@ -43,7 +43,7 @@ from dispatchatlas.core import (
 from dispatchatlas.core.clock import clock_start
 from dispatchatlas.solvers import default_registry
 from dispatchatlas.solvers.rules import RandomSearch
-from tests.campaigns.solvers import ColdStart, Phased, Prepared, registry, tiny_campaign
+from tests.campaigns.solvers import ColdStart, Phased, Warmed, registry, tiny_campaign
 from tests.helpers import chain_problem, random_problem
 
 REGISTRY = registry()
@@ -54,7 +54,7 @@ _SWEEP = """
 import json
 import sys
 
-from dispatchatlas.campaigns.execution import prepare
+from dispatchatlas.campaigns.execution import warm_up
 from dispatchatlas.core import DispatchAtlasError, StopCriteria
 from dispatchatlas.solvers import default_registry
 from tests.helpers import chain_problem
@@ -65,7 +65,7 @@ for info in solvers.infos():
     if info.requires:
         continue
     solver = solvers.create(info.id)
-    prepare(solver)
+    warm_up(solver)
     before = set(sys.modules)
     try:
         solver.solve(chain_problem(), StopCriteria(max_evaluations=30), 2)
@@ -84,9 +84,9 @@ def _task(solver: Solver, stop: StopCriteria) -> Task:
     return Task("run-0", 1, problem, problem_digest(problem), solver, stop, seed=3)
 
 
-def test_what_a_solver_prepares_is_not_charged_to_its_first_run() -> None:
+def test_the_warm_up_of_a_solver_is_not_charged_to_its_first_run() -> None:
     stop = StopCriteria(time_limit=0.2)
-    solver = Prepared(seconds=0.6, key="first-run")
+    solver = Warmed(seconds=0.6, key="first-run")
     began = time.perf_counter()
     first = attempt(_task(solver, stop))
     assert time.perf_counter() - began >= 0.6
@@ -109,7 +109,7 @@ def test_a_first_call_cost_paid_inside_solve_is_charged_to_the_first_run() -> No
     solver = ColdStart(seconds=0.6, key="charged")
     first = attempt(_task(solver, stop))
     assert isinstance(first, Completion)
-    # Without a prepare method the cost is inside the time limit: no search is left.
+    # Without a warm_up method the cost is inside the time limit: no search is left.
     assert first.outcome.evaluations == 1
     assert first.outcome.trace[0].elapsed >= 0.6
     assert any(note.startswith("the run took") for note in first.notes)
@@ -119,11 +119,11 @@ def test_a_first_call_cost_paid_inside_solve_is_charged_to_the_first_run() -> No
     assert later.notes == ()
 
 
-def test_an_attempt_with_an_origin_counts_from_it_and_skips_the_preparation() -> None:
+def test_an_attempt_with_an_origin_counts_from_it_and_skips_the_warm_up() -> None:
     stop = StopCriteria(time_limit=0.6)
-    solver = Prepared(seconds=0.3, key="origin")
+    solver = Warmed(seconds=0.3, key="origin")
     task = _task(solver, stop)
-    assert prepare_task(task) is None
+    assert warm_up_task(task) is None
     origin = time.perf_counter()
     time.sleep(0.3)
     result = attempt(task, origin=origin)
@@ -135,10 +135,10 @@ def test_an_attempt_with_an_origin_counts_from_it_and_skips_the_preparation() ->
     assert result.notes == ()
 
 
-def test_a_preparation_that_raises_fails_the_attempt_before_its_solve() -> None:
-    task = _task(Prepared(broken=True), StopCriteria(max_evaluations=5))
+def test_a_warm_up_that_raises_fails_the_attempt_before_its_solve() -> None:
+    task = _task(Warmed(broken=True), StopCriteria(max_evaluations=5))
     workers = []
-    for failure in (attempt(task), prepare_task(task, "worker-1")):
+    for failure in (attempt(task), warm_up_task(task, "worker-1")):
         assert isinstance(failure, Failure)
         assert failure.error.kind is ErrorKind.EXCEPTION
         assert failure.error.message == "the backend cannot be loaded"
@@ -149,13 +149,13 @@ def test_a_preparation_that_raises_fails_the_attempt_before_its_solve() -> None:
     assert workers == ["main", "worker-1"]
 
 
-def test_preparing_calls_the_hook_of_a_solver_that_has_one() -> None:
+def test_warming_up_calls_the_hook_of_a_solver_that_has_one() -> None:
     before = time.perf_counter()
-    prepare(RandomSearch())
-    prepare(Prepared(seconds=0.2, key="hook"))
+    warm_up(RandomSearch())
+    warm_up(Warmed(seconds=0.2, key="hook"))
     assert time.perf_counter() - before >= 0.2
     again = time.perf_counter()
-    prepare(Prepared(seconds=0.2, key="hook"))
+    warm_up(Warmed(seconds=0.2, key="hook"))
     assert time.perf_counter() - again < 0.2
     assert "numpy.random" in sys.modules
 
@@ -164,13 +164,13 @@ def test_preparing_calls_the_hook_of_a_solver_that_has_one() -> None:
     ("solver_id", "package"),
     [("cp-sat", "ortools"), ("restricted-neighbourhood-search", "ortools"), ("milp", "pulp")],
 )
-def test_the_solvers_with_a_backend_import_it_when_prepared(solver_id: str, package: str) -> None:
+def test_the_solvers_with_a_backend_import_it_when_warmed_up(solver_id: str, package: str) -> None:
     solver = default_registry(plugins=False).create(solver_id)
     if find_spec(package) is None:
         with pytest.raises(MissingDependencyError, match=package):
-            prepare(solver)
+            warm_up(solver)
     else:
-        prepare(solver)
+        warm_up(solver)
         assert package in sys.modules
 
 
@@ -186,15 +186,15 @@ def test_no_built_in_solver_imports_a_module_during_its_first_solve() -> None:
     )
     report = json.loads(done.stdout.strip().splitlines()[-1])
     # A module a solver imports on its first solve is charged to the first run of every
-    # process: import it in the solver's module, or in the solver's prepare method.
+    # process: import it in the solver's module, or in the solver's warm_up method.
     assert report["late"] == {}
     assert report["solved"] >= 60
 
 
-def test_process_workers_prepare_a_solver_before_the_start_of_its_solve(tmp_path: Path) -> None:
+def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(tmp_path: Path) -> None:
     limit = 0.3
     campaign = tiny_campaign(
-        solvers=(SolverSpec("test-prepared", parameters={"seconds": 0.5, "key": "workers"}),),
+        solvers=(SolverSpec("test-warmed", parameters={"seconds": 0.5, "key": "workers"}),),
         protocols=(Protocol("clock", StopCriteria(time_limit=limit)),),
         instances=ONE_PROBLEM,
         replicates=4,
@@ -211,14 +211,14 @@ def test_process_workers_prepare_a_solver_before_the_start_of_its_solve(tmp_path
         assert record.outcome.trace[0].elapsed < limit
         assert record.outcome.evaluations > 1
         assert record.notes == ()
-    # The preparation is part of what the first run of a worker waited for its solve.
+    # The warm-up is part of what the first run of a worker waited for its solve.
     waited = [record.provenance.waited_seconds or 0.0 for record in records]
     assert max(waited) >= 0.5
 
 
-def test_a_preparation_that_raises_in_a_worker_fails_the_run(tmp_path: Path) -> None:
+def test_a_warm_up_that_raises_in_a_worker_fails_the_run(tmp_path: Path) -> None:
     campaign = tiny_campaign(
-        solvers=(SolverSpec("test-prepared", parameters={"broken": True}),),
+        solvers=(SolverSpec("test-warmed", parameters={"broken": True}),),
         instances=ONE_PROBLEM,
         replicates=1,
         backend="process",

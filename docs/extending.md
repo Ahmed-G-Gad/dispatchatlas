@@ -65,9 +65,9 @@ Two things decide what a time limit means for a solver in a campaign:
   of its attempt, so work that only the first call in a process pays, such as
   the import of a backend or the filling of a cache, would shorten the search
   of the first run of every worker process and of no other. Put that work in
-  a method `prepare(self) -> None`: the engine calls it before the clock of a
+  a method `warm_up(self) -> None`: the engine calls it before the clock of a
   run starts, and it counts toward the start-up limit of the worker, not
-  toward the time limit of a run. `solve` must still work when `prepare` was
+  toward the time limit of a run. `solve` must still work when `warm_up` was
   not called. Import at module level what needs no optional dependency.
 - **Where its clocks start.** Inside a campaign every `Search`, and every
   clock started at `dispatchatlas.core.clock.clock_start()`, counts from the

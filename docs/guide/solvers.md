@@ -139,7 +139,7 @@ the block start there. A campaign does so at the start of every attempt, so
 in a campaign `elapsed` and the time limit cover everything a solver does
 from that start on. What a solver does once in a process, the import of its
 backend, a campaign has it do before that start, through the solver's
-`prepare` method (see [Extending](../extending.md#a-solver)).
+`warm_up` method (see [Extending](../extending.md#a-solver)).
 
 Inside a `clock_origin` block a clock counts from the origin, not from its
 own creation, and so does the time limit of a search created there. Code
