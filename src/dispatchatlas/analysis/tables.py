@@ -191,8 +191,10 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
     A failed run names the kind of its last failed attempt. The column
     ``scored_by`` says where the score of a run comes from: its ``result``,
     the ``worst`` value, or, with ``timeout_score`` ``"incumbent"``, the
-    ``incumbent`` a run held when it was killed at its hard limit. The
-    objective columns of such a run hold the values of that incumbent.
+    ``incumbent`` a run killed at its hard limit held when its time limit
+    passed. The objective columns of such a run hold the values of that
+    incumbent, and its ``evaluations`` and ``elapsed`` columns say when its
+    search found it, which is within the time limit.
 
     Args:
         dataset: The runs.
@@ -223,6 +225,7 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
         outcome = None if record is None else record.outcome
         held = run.incumbent if timeout_score == "incumbent" else None
         source = "result" if run.succeeded else ("worst" if held is None else "incumbent")
+        timed = outcome if held is None else held
         failed = run.status == "failed" and bool(run.failures)
         rows.append(
             (
@@ -236,9 +239,9 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
                 run.failures[-1].error.kind.value if failed else None,
                 source,
                 None if outcome is None else outcome.stop_reason.value,
-                None if outcome is None else outcome.evaluations,
+                None if timed is None else timed.evaluations,
                 None if outcome is None else outcome.iterations,
-                None if outcome is None else outcome.elapsed,
+                None if timed is None else timed.elapsed,
                 None if record is None else record.provenance.cpu_seconds,
                 *(
                     run.value(name) if held is None else held.objectives.get(name)
@@ -280,7 +283,8 @@ def cells_table(summary: Summary) -> Table:
         for cell in summary.cells
     )
     kept = (
-        ", or, for a run killed at its hard limit, as the feasible incumbent it held"
+        ", or, for a run killed at its hard limit, as the feasible incumbent it held when "
+        "its time limit passed"
         if summary.config.timeout_score == "incumbent"
         else ""
     )

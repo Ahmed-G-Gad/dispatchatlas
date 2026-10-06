@@ -87,11 +87,14 @@ class AnalysisConfig:
             other analysed solver.
         timeout_score: How a run that never completed and was killed at its
             hard limit is scored. ``"worst"`` scores it as the worst value,
-            like any other failure. ``"incumbent"`` scores it by the last
-            incumbent its search had reported, when that incumbent is
-            feasible; the value is the solver's own, with no schedule to
-            check it against. The limitations count these runs under either
-            choice.
+            like any other failure. ``"incumbent"`` scores it by the
+            incumbent its search held when the time limit of its protocol
+            passed, the last one it had reported by then, when that
+            incumbent is feasible. An incumbent found after the time limit
+            is never a score, so a run that overran is compared on the same
+            seconds as one that stopped on time. The value is the solver's
+            own, with no schedule to check it against. The limitations count
+            these runs under either choice.
     """
 
     protocol: str | None = None

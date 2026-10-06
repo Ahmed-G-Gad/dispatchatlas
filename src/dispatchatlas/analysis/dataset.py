@@ -21,9 +21,10 @@ worst possible value. Denominators are therefore fixed by the plan, and a
 solver cannot look better by failing on hard problems.
 
 A failed run whose last attempt was killed at its hard limit is a *killed*
-run, and may hold the last incumbent its search had reported. It stays a
-failed run in every count; an analysis that asks for it scores the run by
-that incumbent instead of the worst value.
+run, and may hold the incumbent its search had reported when its time limit
+passed. It stays a failed run in every count; an analysis that asks for it
+scores the run by that incumbent instead of the worst value. What its search
+found after the time limit is never a score.
 """
 
 from __future__ import annotations
@@ -99,17 +100,44 @@ class Run:
         )
 
     @property
-    def incumbent(self) -> Incumbent | None:
-        """The feasible incumbent a killed run held when it was killed, or ``None``.
+    def unstarted(self) -> bool:
+        """Whether the run never completed and its last attempt ended at the start-up limit.
 
-        The last candidate the run's search had reported, if the search
-        found it feasible. Its values are the solver's own: no schedule
-        exists to check them against.
+        Its worker did not begin the solve in time, so the failure says
+        nothing about the solver.
+        """
+        return (
+            self.status == "failed"
+            and bool(self.failures)
+            and self.failures[-1].error.kind is ErrorKind.STARTUP
+        )
+
+    @property
+    def incumbent(self) -> Incumbent | None:
+        """The feasible incumbent a killed run held when its time limit passed, or ``None``.
+
+        The last candidate the run's search had reported within the time
+        limit of its protocol, if the search found it feasible. A candidate
+        found after the limit is never returned: a solver that stopped on
+        time had no such seconds to search in. The values are the solver's
+        own: no schedule exists to check them against.
         """
         if not self.killed:
             return None
-        held = self.failures[-1].last_incumbent
+        held = self.failures[-1].limit_incumbent
         return held if held is not None and held.feasible else None
+
+    @property
+    def late_incumbent(self) -> bool:
+        """Whether the search of a killed run reported an incumbent after its time limit.
+
+        No score uses such an incumbent, see :attr:`incumbent`.
+        """
+        if not self.killed:
+            return False
+        failure = self.failures[-1]
+        last = failure.last_incumbent
+        return last is not None and last != failure.limit_incumbent
 
     @property
     def outcome(self) -> Outcome | None:

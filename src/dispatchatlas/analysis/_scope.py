@@ -102,8 +102,9 @@ def run_scores(
     """Return each planned run's value, a run that did not succeed scoring the worst value.
 
     With ``timeout_score`` ``"incumbent"``, a run killed at its hard limit
-    scores the value of the feasible incumbent it held, if it held one with a
-    value for the objective.
+    scores the value of the feasible incumbent it held when its time limit
+    passed, if it held one with a value for the objective. What its search
+    found after the time limit is not scored.
 
     Raises:
         ConfigError: If a succeeded run has no value for the objective.

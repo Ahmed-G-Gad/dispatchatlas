@@ -7,9 +7,9 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    *score*, the configured statistic (mean or median) of the planned runs,
    where a run that did not succeed counts as the worst value (infinity for
    a minimised objective). With ``timeout_score`` ``"incumbent"``, a run
-   killed at its hard limit counts by the feasible incumbent it held instead.
-   Descriptive statistics and a bootstrap interval of the mean describe the
-   succeeded runs.
+   killed at its hard limit counts instead by the feasible incumbent it held
+   when its time limit passed. Descriptive statistics and a bootstrap
+   interval of the mean describe the succeeded runs.
 2. **Reliability.** Each solver's succeeded, infeasible, failed, and missing
    runs, over its planned runs.
 3. **Ranks and omnibus test.** On the *complete blocks*, the problems every
@@ -27,6 +27,7 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    bootstrap interval when no failure makes it infinite, and Cohen's d_z, as
    Carrasco et al. (2020) recommend.
 6. **Limitations.** What qualifies the results: failed or missing runs,
+   runs whose worker did not begin the solve in time,
    runs killed at their hard limit and how they are scored,
    problems left out of the ranks, too few shared problems for the paired
    test to reach significance, cells below a replicate floor, and tests that
@@ -472,6 +473,18 @@ def _design_limitations(
                 f"feasible schedule; each counts as the worst value{exception}.",
             )
         )
+    unstarted = sum(1 for run in scope.dataset.runs if run.unstarted)
+    if unstarted:
+        found.append(
+            Limitation(
+                "startup",
+                f"{unstarted} of the failed runs ended at the start-up limit: their worker did "
+                "not begin the solve in time, which says nothing about their solver. They "
+                "count as the worst value until another attempt completes; running the "
+                "campaign again with retry_failed (--retry-failed on the command line) gives "
+                "them one.",
+            )
+        )
     if killed:
         scored = (
             "a run holding one is scored by it, a value its solver reported and no schedule "
@@ -479,12 +492,14 @@ def _design_limitations(
             if rescored
             else "each counts as the worst value"
         )
+        late = sum(1 for run in killed if run.late_incumbent)
         found.append(
             Limitation(
                 "timeouts",
                 f"{len(killed)} runs were killed at their hard limit and never completed, "
-                f"{holding} of them holding a feasible incumbent; with timeout_score "
-                f"'{config.timeout_score}' {scored}.",
+                f"{holding} of them holding a feasible incumbent when their time limit passed; "
+                f"with timeout_score '{config.timeout_score}' {scored}. {late} of the killed "
+                "runs reported an incumbent after their time limit, which no score uses.",
             )
         )
     left_out = [problem for problem in problems if problem not in blocks]
