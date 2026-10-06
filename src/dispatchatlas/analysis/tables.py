@@ -203,12 +203,21 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
     the last failed one, where ``elapsed`` is the solver's own report.
     ``overrun_seconds`` is the wall time minus the time limit, negative for
     a run that ended early. ``cpu_share`` is the processor seconds of the
-    attempt over its wall seconds: below 1 when the process waited for a
-    processor, above 1 when the solver ran threads. ``concurrent`` is the
-    number of runs executing when the attempt started, itself included,
-    ``cpu`` the processor its worker was pinned to, and ``attempts`` the
-    number of the last attempt. A cell is empty when the protocol has no
-    time limit or the record does not state the value.
+    attempt over its wall seconds (:attr:`Run.cpu_share
+    <dispatchatlas.analysis.dataset.Run.cpu_share>`): below 1 when the
+    executing process was not computing for part of the run, whether it
+    waited for a processor, slept, or left the work to another process, and
+    above 1 when the solver ran threads. ``concurrent`` is the number of
+    runs executing when the attempt started, itself included, ``cpu`` the
+    processor its worker was pinned to, and ``attempts`` the number of the
+    last attempt. A cell is empty when the protocol has no time limit or
+    the record does not state the value.
+
+    For a run that did not complete, ``cpu_seconds``, ``wall_seconds``,
+    ``concurrent``, ``cpu``, and ``attempts`` describe its last failed
+    attempt, and ``overrun_seconds`` and ``cpu_share`` are empty: what ended
+    that attempt is in the ``failure`` column, and its times say nothing
+    about a budget.
 
     Args:
         dataset: The runs.
@@ -267,10 +276,10 @@ def runs_table(dataset: Dataset, timeout_score: TimeoutScore = "worst") -> Table
                 None if timed is None else timed.evaluations,
                 None if outcome is None else outcome.iterations,
                 None if timed is None else timed.elapsed,
-                None if record is None else record.provenance.cpu_seconds,
+                None if executed is None else executed.cpu_seconds,
                 limit,
                 wall,
-                None if limit is None or wall is None else wall - limit,
+                None if limit is None or wall is None or record is None else wall - limit,
                 run.cpu_share,
                 None if executed is None else executed.concurrent,
                 None if executed is None else executed.cpu,

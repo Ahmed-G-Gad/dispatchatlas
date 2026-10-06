@@ -471,11 +471,10 @@ def _design_limitations(
     rescored = holding if config.timeout_score == "incumbent" else 0
     if counts["failed"] or counts["infeasible"]:
         exception = f", except {rescored} killed runs scored by their incumbent" if rescored else ""
-        kinds = _failure_kinds(scope.dataset)
+        kinds, meanings = _failure_kinds(scope.dataset)
         breakdown = (
             f" The failed runs by solver and by the kind of error of their last attempt: {kinds}. "
-            "An exception was raised by the solver or by the checks of its result; the engine "
-            "ended the attempts of every other kind."
+            f"{meanings}"
             if kinds
             else ""
         )
@@ -562,18 +561,47 @@ def _design_limitations(
     return found
 
 
-def _failure_kinds(dataset: Dataset) -> str:
-    """Return the failed runs of each solver, counted by the error kind of their last attempt."""
+_FAILURE_KINDS: Mapping[str, str] = {
+    "exception": "the solver, its preparation, or the checks of its result raised an exception",
+    "timeout": "the engine killed the worker at the hard limit of the run",
+    "startup": "the engine killed a worker that had not begun the solve at the start-up limit",
+    "worker-exit": (
+        "the worker process ended during the run, as after a crash in native code or when "
+        "memory runs out, and the engine does not know the cause"
+    ),
+    "transfer": (
+        "the run could not be sent to a worker or rebuilt in it, as when its solver cannot be "
+        "pickled"
+    ),
+}
+"""What each kind of error says about who ended a failed attempt."""
+
+
+def _failure_kinds(dataset: Dataset) -> tuple[str, str]:
+    """Count the failed runs of each solver by the error kind of their last attempt.
+
+    Returns:
+        The counts in words, and one sentence that states what each kind
+        among them means. Both are empty when no failed run has a failure
+        record.
+    """
     counts: dict[str, Counter[str]] = {}
     for run in dataset.runs:
         if run.status == "failed" and run.failures:
             counts.setdefault(run.solver, Counter())[run.failures[-1].error.kind.value] += 1
-    return "; ".join(
+    if not counts:
+        return "", ""
+    breakdown = "; ".join(
         f"{entry.name} "
         + ", ".join(f"{number} {kind}" for kind, number in sorted(counts[entry.name].items()))
         for entry in dataset.solvers
         if entry.name in counts
     )
+    present = {kind for counter in counts.values() for kind in counter}
+    meanings = "; ".join(
+        f"{kind}: {meaning}" for kind, meaning in _FAILURE_KINDS.items() if kind in present
+    )
+    return breakdown, f"What each kind means: {meanings}."
 
 
 def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
@@ -661,14 +689,23 @@ def _time_limitations(scope: Scope, config: AnalysisConfig) -> list[Limitation]:
             f"median {statistics.median(concurrency):g}"
         )
     if parts:
+        stop = scope.dataset.protocol(scope.protocol).stop
+        if stop.max_evaluations is None and stop.max_iterations is None:
+            opening = (
+                f"Protocol {scope.protocol} gives every run the same wall-clock time, so a run "
+                "searches as far as the processor time it received in that time allows."
+            )
+        else:
+            opening = (
+                f"Protocol {scope.protocol} bounds a run by a time limit of {limit:g} s beside "
+                "its other limits, so a run that the time limit stops searched as far as the "
+                "processor time it received allows."
+            )
         found.append(
             Limitation(
                 "timing",
-                f"Protocol {scope.protocol} gives every run the same wall-clock time, so a run "
-                "searches as far as the processor time it received in that time allows. Over "
-                f"the {len(timed)} completed runs that lasted at least half of the time limit, "
-                + "; ".join(parts)
-                + ".",
+                f"{opening} Over the {len(timed)} completed runs that lasted at least half of "
+                "the time limit, " + "; ".join(parts) + ".",
             )
         )
     return found

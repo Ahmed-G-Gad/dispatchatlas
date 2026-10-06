@@ -90,9 +90,10 @@ def _timed(
     *,
     cpu: Mapping[str, float] | None = None,
     concurrent: Mapping[str, int] | None = None,
+    stop: StopCriteria = StopCriteria(time_limit=1.0),  # noqa: B008 - immutable
 ) -> Dataset:
     """Give the protocol a time limit of 1 s and each solver's runs the listed wall times."""
-    protocol = Protocol("p", StopCriteria(time_limit=1.0))
+    protocol = Protocol("p", stop)
     seen: dict[str, int] = {}
     runs = []
     for item in dataset.runs:
@@ -180,8 +181,34 @@ def test_the_timing_limitation_reports_the_processor_share_and_the_concurrency()
     assert "timing" not in {item.topic for item in quick.limitations}
 
 
-def _failed(dataset: Dataset, kinds: Mapping[str, Sequence[ErrorKind]]) -> Dataset:
-    """Give every failed run of a solver the next of its listed kinds as its last failure."""
+@pytest.mark.parametrize("bound", [{"max_evaluations": 50}, {"max_iterations": 50}])
+def test_the_timing_limitation_of_a_protocol_with_another_bound_does_not_call_the_time_equal(
+    bound: dict[str, int],
+) -> None:
+    walls = {"a": [1.0, 1.0, 1.0, 0.1], "b": [1.0, 1.0, 1.0, 1.0]}
+    stop = StopCriteria(time_limit=1.0, **bound)
+    dataset = _timed(make_dataset(CELLS), walls, cpu={"a": 0.98, "b": 0.5}, stop=stop)
+    (timing,) = [item for item in summarize(dataset).limitations if item.topic == "timing"]
+    assert "same wall-clock time" not in timing.message
+    assert timing.message.startswith(
+        "Protocol p bounds a run by a time limit of 1 s beside its other limits, so a run that "
+        "the time limit stops searched as far as the processor time it received allows. Over "
+        "the 7 completed runs that lasted at least half of the time limit, the processor share"
+    )
+    # Patience and a target bound no run in advance: the time limit stays the sole bound.
+    sole = StopCriteria(time_limit=1.0, patience=5, target=0.0)
+    dataset = _timed(make_dataset(CELLS), walls, cpu={"a": 0.98, "b": 0.5}, stop=sole)
+    (timing,) = [item for item in summarize(dataset).limitations if item.topic == "timing"]
+    assert timing.message.startswith("Protocol p gives every run the same wall-clock time, so")
+
+
+def _failed(
+    dataset: Dataset, kinds: Mapping[str, Sequence[ErrorKind]], first: ErrorKind | None = None
+) -> Dataset:
+    """Give every failed run of a solver the next of its listed kinds as its last failure.
+
+    With ``first``, every such run holds an earlier failed attempt of that kind.
+    """
     seen: dict[str, int] = {}
     runs = []
     for item in dataset.runs:
@@ -202,9 +229,21 @@ def _failed(dataset: Dataset, kinds: Mapping[str, Sequence[ErrorKind]]) -> Datas
                 error=RunError(kinds[item.solver][index], "ended"),
                 provenance=replace(done.provenance, attempt=2, wall_seconds=3.0),
             )
-            item = replace(item, failures=(failure,))  # noqa: PLW2901
+            earlier = () if first is None else (_earlier(failure, first),)
+            item = replace(item, failures=(*earlier, failure))  # noqa: PLW2901
         runs.append(item)
     return replace(dataset, runs=tuple(runs))
+
+
+def _earlier(failure: FailureRecord, kind: ErrorKind) -> FailureRecord:
+    """Return the first attempt of a run whose second attempt is ``failure``."""
+    provenance = replace(failure.provenance, attempt=1, wall_seconds=0.5)
+    return replace(
+        failure,
+        category=Category.RECOVERABLE,
+        error=RunError(kind, "ended"),
+        provenance=provenance,
+    )
 
 
 def test_the_failures_limitation_names_the_error_kinds_per_solver() -> None:
@@ -223,9 +262,14 @@ def test_the_failures_limitation_names_the_error_kinds_per_solver() -> None:
     assert failures.message == (
         "4 runs failed and 0 completed without a feasible schedule; each counts as the worst "
         "value. The failed runs by solver and by the kind of error of their last attempt: "
-        "a 1 exception, 2 timeout; b 1 worker-exit. An exception was raised by the solver or "
-        "by the checks of its result; the engine ended the attempts of every other kind."
+        "a 1 exception, 2 timeout; b 1 worker-exit. What each kind means: exception: the "
+        "solver, its preparation, or the checks of its result raised an exception; timeout: "
+        "the engine killed the worker at the hard limit of the run; worker-exit: the worker "
+        "process ended during the run, as after a crash in native code or when memory runs "
+        "out, and the engine does not know the cause."
     )
+    # A worker that ends on its own is not laid at the engine's door.
+    assert "the engine ended" not in failures.message
     rows = [row for row in _rows(dataset) if row["status"] == "failed"]
     assert [row["failure"] for row in rows if row["solver"] == "b"] == ["worker-exit"]
     assert {row["attempts"] for row in rows} == {2}
@@ -237,6 +281,75 @@ def test_the_failures_limitation_names_the_error_kinds_per_solver() -> None:
     assert {row["attempts"] for row in _rows(make_dataset(cells)) if row["status"] == "failed"} == {
         None
     }
+
+
+def test_the_failures_limitation_words_only_the_kinds_that_occur() -> None:
+    cells: Mapping[str, Mapping[str, Sequence[Entry]]] = {
+        "a": {"p1": ["failed", 5.0], "p2": ["failed", 5.0]},
+        "b": {"p1": [6.0, "failed"], "p2": [6.0, 6.0]},
+    }
+
+    def message(kinds: Mapping[str, Sequence[ErrorKind]]) -> str:
+        summary = summarize(_failed(make_dataset(cells), kinds))
+        (failures,) = [item for item in summary.limitations if item.topic == "failures"]
+        return failures.message
+
+    only = message({"a": [ErrorKind.EXCEPTION] * 2, "b": [ErrorKind.EXCEPTION]})
+    assert only.endswith(
+        "a 2 exception; b 1 exception. What each kind means: exception: the solver, its "
+        "preparation, or the checks of its result raised an exception."
+    )
+    others = message({"a": [ErrorKind.STARTUP, ErrorKind.TRANSFER], "b": [ErrorKind.TRANSFER]})
+    assert others.endswith(
+        "a 1 startup, 1 transfer; b 1 transfer. What each kind means: startup: the engine "
+        "killed a worker that had not begun the solve at the start-up limit; transfer: the run "
+        "could not be sent to a worker or rebuilt in it, as when its solver cannot be pickled."
+    )
+    assert "exception" not in others
+    assert "worker-exit" not in others
+
+
+def test_the_failures_limitation_counts_a_run_by_the_kind_of_its_last_attempt() -> None:
+    cells: Mapping[str, Mapping[str, Sequence[Entry]]] = {
+        "a": {"p1": ["failed", "failed"], "p2": [5.0, 5.0]},
+        "b": {"p1": [6.0, 6.0], "p2": [6.0, 6.0]},
+    }
+    kinds = {"a": [ErrorKind.TIMEOUT, ErrorKind.WORKER_EXIT]}
+    dataset = _failed(make_dataset(cells), kinds, first=ErrorKind.EXCEPTION)
+    assert all(len(run.failures) == 2 for run in dataset.runs if run.status == "failed")
+    (failures,) = [item for item in summarize(dataset).limitations if item.topic == "failures"]
+    # Each run failed first with an exception: only the kind that settled it is counted.
+    assert "attempt: a 1 timeout, 1 worker-exit. What each kind means: timeout:" in failures.message
+    assert "exception" not in failures.message
+    rows = [row for row in _rows(dataset) if row["status"] == "failed"]
+    assert [row["failure"] for row in rows] == ["timeout", "worker-exit"]
+    assert {row["attempts"] for row in rows} == {2}
+    assert {row["wall_seconds"] for row in rows} == {3.0}
+
+
+def test_the_row_of_a_failed_run_reads_one_attempt_and_claims_no_overrun() -> None:
+    cells: Mapping[str, Mapping[str, Sequence[Entry]]] = {
+        "a": {"p1": ["failed", 5.0], "p2": [5.0, 5.0]},
+        "b": {"p1": [6.0, 6.0], "p2": [6.0, 6.0]},
+    }
+    walls = {"a": [1.0, 1.0, 1.0], "b": [1.0, 1.0, 1.0, 1.0]}
+    timed = _timed(
+        make_dataset(cells), walls, cpu={"a": 0.5, "b": 0.5}, concurrent={"a": 2, "b": 2}
+    )
+    dataset = _failed(timed, {"a": [ErrorKind.EXCEPTION]}, first=ErrorKind.WORKER_EXIT)
+    (row,) = [row for row in _rows(dataset) if row["status"] == "failed"]
+    # Every measured cell describes the last failed attempt: 3 s of wall time, 0.5 s of processor.
+    assert (row["wall_seconds"], row["cpu_seconds"], row["attempts"]) == (3.0, 0.5, 2)
+    assert row["concurrent"] == 2
+    assert row["time_limit"] == 1.0
+    # The attempt did not end for its budget: no overrun and no processor share are claimed.
+    assert row["overrun_seconds"] is None
+    assert row["cpu_share"] is None
+    (failed,) = [run for run in dataset.runs if run.status == "failed"]
+    assert failed.cpu_share is None
+    done = [row for row in _rows(dataset) if row["status"] != "failed"]
+    assert {row["overrun_seconds"] for row in done} == {0.0}
+    assert {row["cpu_share"] for row in done} == {0.5}
 
 
 def test_the_overrun_tolerance_is_a_share_of_the_limit_that_is_not_negative() -> None:

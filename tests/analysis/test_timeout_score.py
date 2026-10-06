@@ -168,8 +168,9 @@ def test_the_summary_scores_killed_runs_as_the_worst_value_by_default() -> None:
     assert limitations["failures"] == (
         "6 runs failed and 0 completed without a feasible schedule; each counts as the worst "
         "value. The failed runs by solver and by the kind of error of their last attempt: "
-        "b 1 startup, 5 timeout. An exception was raised by the solver or by the checks of its "
-        "result; the engine ended the attempts of every other kind."
+        "b 1 startup, 5 timeout. What each kind means: timeout: the engine killed the worker at "
+        "the hard limit of the run; startup: the engine killed a worker that had not begun the "
+        "solve at the start-up limit."
     )
     assert limitations["startup"] == (
         "1 of the failed runs ended at the start-up limit: their worker did not begin the "

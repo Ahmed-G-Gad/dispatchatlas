@@ -157,17 +157,26 @@ class Run:
 
     @property
     def cpu_share(self) -> float | None:
-        """Processor seconds of the last attempt over its wall seconds, or ``None``.
+        """Processor seconds of the completing attempt over its wall seconds, or ``None``.
 
-        A share below 1 means the executing process waited, for a processor
-        or otherwise; a share above 1 means the solver ran threads. ``None``
-        when either time was not measured or the wall time is zero. The
-        processor time of a process advances in steps, of about 16
-        milliseconds on Windows, so the share of a run shorter than a few
-        tenths of a second is coarse.
+        The processor seconds are those of the process that executed the
+        attempt and, on POSIX systems, of the child processes it waited for.
+        A share below 1 means that this process was not computing for part
+        of the run: it waited for a processor, slept, or left the work to
+        another process whose time the record does not hold, as a solver
+        does on Windows when its backend runs as a program of its own. The
+        share alone does not say which. A share above 1 means the solver ran
+        threads or child processes side by side.
+
+        ``None`` for a run that did not complete, and when either time was
+        not measured or the wall time is zero. The processor time of a
+        process advances in steps, of about 16 milliseconds on Windows, so
+        the share of a run shorter than a few tenths of a second is coarse.
         """
-        executed = self.provenance
-        if executed is None or executed.cpu_seconds is None or not executed.wall_seconds > 0.0:
+        if self.record is None:
+            return None
+        executed = self.record.provenance
+        if executed.cpu_seconds is None or not executed.wall_seconds > 0.0:
             return None
         return executed.cpu_seconds / executed.wall_seconds
 
