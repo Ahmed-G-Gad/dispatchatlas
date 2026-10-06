@@ -1,6 +1,13 @@
-# Sources of the continuum model, the workflow generators, and the WfCommons reader.
+# Sources of the continuum model, the workflow generators, and the WfCommons and Pegasus DAX readers.
 # The random task-graph generator of the workflow family is topcuoglu2002performance,
 # defined in solvers-rules.toml.
+
+[bharathi2008characterization]
+authors = "S. Bharathi, A. Chervenak, E. Deelman, G. Mehta, M.-H. Su and K. Vahi"
+year = 2008
+title = "Characterization of scientific workflows"
+venue = "Proceedings of the Third Workshop on Workflows in Support of Large-Scale Science (WORKS), 1-10"
+doi = "10.1109/WORKS.2008.4723958"
 
 [coleman2022wfcommons]
 authors = "T. Coleman, H. Casanova, L. Pottier, M. Kaushik, E. Deelman and R. Ferreira da Silva"
@@ -8,6 +15,13 @@ year = 2022
 title = "WfCommons: A framework for enabling scientific workflow research and development"
 venue = "Future Generation Computer Systems 128:16-27"
 doi = "10.1016/j.future.2021.09.043"
+
+[deelman2015pegasus]
+authors = "E. Deelman, K. Vahi, G. Juve, M. Rynge, S. Callaghan, P. J. Maechling, R. Mayani, W. Chen, R. Ferreira da Silva, M. Livny and K. Wenger"
+year = 2015
+title = "Pegasus, a workflow management system for science automation"
+venue = "Future Generation Computer Systems 46:17-35"
+doi = "10.1016/j.future.2014.10.008"
 
 [fan2007power]
 authors = "X. Fan, W.-D. Weber and L. A. Barroso"
@@ -22,6 +36,13 @@ year = 2017
 title = "iFogSim: A toolkit for modeling and simulation of resource management techniques in the Internet of Things, Edge and Fog computing environments"
 venue = "Software: Practice and Experience 47(9):1275-1296"
 doi = "10.1002/spe.2509"
+
+[juve2013characterizing]
+authors = "G. Juve, A. Chervenak, E. Deelman, S. Bharathi, G. Mehta and K. Vahi"
+year = 2013
+title = "Characterizing and profiling scientific workflows"
+venue = "Future Generation Computer Systems 29(3):682-692"
+doi = "10.1016/j.future.2012.08.015"
 
 [kang2017neurosurgeon]
 authors = "Y. Kang, J. Hauswald, C. Gao, A. Rovinski, T. Mudge, J. Mars and L. Tang"

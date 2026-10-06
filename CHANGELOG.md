@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lateness, energy, and cost objectives, open to plugins.
 - Benchmark families for shop, parallel-machine, project, task-graph, and
   edge-fog-cloud continuum problems; Taillard's suites rebuilt from their
-  published seeds; readers for OR-Library, FJS, PSPLIB, and WfCommons files;
-  instance catalogs with SHA-256 manifests; and descriptive instance features.
+  published seeds; readers for OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
+  DAX files; instance catalogs with SHA-256 manifests; and descriptive
+  instance features.
 - Solvers from dispatching rules, list scheduling, and constructive
   heuristics to local search, population and swarm methods, multi-objective
   evolutionary algorithms, learning methods, hyper-heuristics, exact CP-SAT,

@@ -45,6 +45,8 @@ Benchmark families, published suites, instance-file readers, catalogs, and insta
 
 ::: dispatchatlas.benchmarks.wfcommons
 
+::: dispatchatlas.benchmarks.pegasus
+
 ::: dispatchatlas.benchmarks.catalog
 
 ::: dispatchatlas.benchmarks.characterize

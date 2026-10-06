@@ -22,6 +22,7 @@ from dispatchatlas.benchmarks.catalog import build_catalog, catalogs, load_direc
 from dispatchatlas.benchmarks.characterize import features
 from dispatchatlas.benchmarks.continuum import three_tier_platform
 from dispatchatlas.benchmarks.formats import load_instance
+from dispatchatlas.benchmarks.pegasus import read_pegasus_dax
 from dispatchatlas.benchmarks.registry import (
     PLUGIN_GROUP,
     FamilyInfo,
@@ -52,6 +53,7 @@ __all__ = [
     "load_instance",
     "load_plugins",
     "materialize",
+    "read_pegasus_dax",
     "read_wfcommons",
     "taillard_flow_shop",
     "taillard_job_shop",

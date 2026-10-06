@@ -90,6 +90,21 @@ problem = build_problem("one-request", platform, [request], due_factor=2.0)
 `read_wfcommons` maps a recorded execution of a real scientific workflow, in
 the WfCommons format (Coleman et al. 2022), onto such a platform.
 
+`read_pegasus_dax` does the same for a Pegasus DAX file (Deelman et al. 2015),
+the XML format of the synthetic Montage, CyberShake, Epigenomics, LIGO
+Inspiral, and SIPHT workflows of Bharathi et al. (2008) and Juve et al. (2013).
+Every job becomes a task whose `runtime` is its work, and every parent-child
+pair becomes a dependency that carries the sizes the parent gives the files it
+writes and the child reads. A file that is not UTF-8 text, or that has a
+document type or entity declaration, a negative runtime, or a negative size, is
+refused:
+
+```python
+from dispatchatlas.benchmarks import read_pegasus_dax, three_tier_platform
+
+montage = read_pegasus_dax("Montage_25.xml", three_tier_platform())
+```
+
 ## Taillard's instances
 
 Taillard (1993) defined his 120 flow-shop, 80 job-shop, and 60 open-shop

@@ -117,9 +117,9 @@ explains its options with `--help`.
 - **10 published suites**: Taillard's flow, job, and open shops, rebuilt
   offline from their published seeds, and the OR-Library job and flow shops,
   Brandimarte's flexible job shops, and PSPLIB J30 to J120, read from the files
-  you download. Readers for the OR-Library, FJS, PSPLIB, and WfCommons formats;
-  instance catalogs written to disk with SHA-256 manifests; descriptive
-  features of every instance.
+  you download. Readers for the OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
+  DAX formats; instance catalogs written to disk with SHA-256 manifests;
+  descriptive features of every instance.
 - **72 solvers**: dispatching rules and list heuristics such as HEFT;
   constructive heuristics such as NEH and beam search; local search from hill
   climbing and simulated annealing to tabu search, iterated greedy, and ALNS;
