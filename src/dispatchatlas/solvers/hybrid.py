@@ -125,6 +125,14 @@ class RestrictedNeighbourhoodSearch:
         if not self.call_limit > 0.0:
             raise ValueError("call_limit must be positive")
 
+    def prepare(self) -> None:
+        """Import OR-Tools and the model, which the first call in a process pays for.
+
+        Raises:
+            MissingDependencyError: If OR-Tools is not installed.
+        """
+        _load_cpsat()
+
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         """Improve the incumbent window by window until a stop criterion fires.
 

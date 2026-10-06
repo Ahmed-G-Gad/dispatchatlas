@@ -18,7 +18,9 @@ clock: :func:`attempt` calls the solver inside
 :func:`~dispatchatlas.core.clock.clock_origin`, so the time limit and the
 elapsed time of every solver cover everything the solver does from the start
 of the attempt, including what it does before its search starts, such as
-building an evaluator or a model or importing a backend.
+building an evaluator or a model. What a solver does once in a process, such
+as importing a backend, is done before that instant by :func:`prepare`, so
+that it shortens the search of no run.
 
 :func:`observe` adds what the time and the trace of the attempt show: a wall
 time beyond the time limit, an elapsed time the engine's clock contradicts,
@@ -32,6 +34,7 @@ are returned with the completion, logged, and stored in the run record.
 
 from __future__ import annotations
 
+import importlib
 import itertools
 import math
 import time
@@ -71,6 +74,8 @@ __all__ = [
     "engine_failure",
     "exception_error",
     "observe",
+    "prepare",
+    "prepare_task",
     "utc_now",
 ]
 
@@ -233,29 +238,91 @@ def classify(error: BaseException) -> Category:
     return Category.TERMINAL if isinstance(error, DispatchAtlasError) else Category.RECOVERABLE
 
 
-def attempt(task: Task, worker: str = "main") -> Result:
-    """Execute one attempt of a run.
+def prepare(solver: Solver) -> None:
+    """Do what a solver does once in a process before it can solve.
 
-    The solver is called inside
-    :func:`~dispatchatlas.core.clock.clock_origin`, whose origin is the
-    instant the wall time of the attempt counts from, so the solver's
-    elapsed time and time limit count from the same instant. A completion
-    carries the notes of :func:`describe` and :func:`observe`.
+    The first call of a solver in a process may pay a cost that no later
+    call pays: the import of a backend, or of a module that loads on first
+    use. Paid inside a run, that cost would shorten the search of the first
+    run of every process and of no other. This function pays it outside any
+    run: it imports :mod:`numpy.random`, which NumPy loads on first use, and
+    calls the ``prepare`` method of the solver when the solver defines one.
 
-    Exceptions raised by the solver or by the checks of its result become a
-    :class:`Failure`. ``KeyboardInterrupt`` and ``SystemExit`` propagate.
+    Args:
+        solver: The solver about to be called.
+    """
+    importlib.import_module("numpy.random")
+    hook = getattr(solver, "prepare", None)
+    if callable(hook):
+        hook()
+
+
+def prepare_task(task: Task, worker: str = "main") -> Failure | None:
+    """Prepare the solver of an attempt, before the clock of the attempt starts.
 
     Args:
         task: The attempt.
         worker: Where it executes, for the measurement.
 
     Returns:
+        ``None``, or the failure of the attempt when :func:`prepare` raised.
+    """
+    started, clock = utc_now(), time.perf_counter()
+    try:
+        prepare(task.solver)
+    except Exception as error:
+        measurement = Measurement(
+            started,
+            utc_now(),
+            time.perf_counter() - clock,
+            worker=worker,
+            hard_limit=task.hard_limit,
+        )
+        return Failure(
+            task.run_id,
+            task.attempt,
+            classify(error),
+            exception_error(error),
+            measurement,
+            solve_started=False,
+        )
+    return None
+
+
+def attempt(task: Task, worker: str = "main", origin: float | None = None) -> Result:
+    """Execute one attempt of a run.
+
+    The solver is prepared first (:func:`prepare_task`), outside the time of the
+    attempt. It is then called inside
+    :func:`~dispatchatlas.core.clock.clock_origin`, whose origin is the
+    instant the wall time of the attempt counts from, so the solver's
+    elapsed time and time limit count from the same instant. A completion
+    carries the notes of :func:`describe` and :func:`observe`.
+
+    Exceptions raised by the solver, by its preparation, or by the checks of
+    its result become a :class:`Failure`. ``KeyboardInterrupt`` and
+    ``SystemExit`` propagate.
+
+    Args:
+        task: The attempt.
+        worker: Where it executes, for the measurement.
+        origin: The instant the attempt counts from, as
+            :func:`time.perf_counter` counts, for a caller that has prepared
+            the solver with :func:`prepare_task` and times the attempt from an
+            instant of its own. By default the attempt prepares the solver
+            and counts from the instant that is done.
+
+    Returns:
         The completion or the failure.
     """
+    if origin is None:
+        failure = prepare_task(task, worker)
+        if failure is not None:
+            return failure
     started = utc_now()
     measured = _peak_rss_resettable()
     cpu = time.process_time()
-    with clock_origin() as clock:
+    with clock_origin(origin) as clock:
         try:
             result = task.solver.solve(task.problem, task.stop, task.seed)
         except Exception as error:

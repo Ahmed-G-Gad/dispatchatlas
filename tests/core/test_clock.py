@@ -47,7 +47,7 @@ def test_the_origin_ends_with_the_block_when_the_block_raises() -> None:
 def test_an_origin_that_is_not_a_past_reading_of_the_clock_is_refused(ahead: float) -> None:
     # A reading of another clock, such as time.time(), lies far ahead of perf_counter.
     with (
-        pytest.raises(ValueError, match="past reading of time.perf_counter"),
+        pytest.raises(ValueError, match="a clock origin must be a past reading"),
         clock_origin(time.perf_counter() + ahead),
     ):
         pass

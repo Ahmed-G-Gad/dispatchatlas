@@ -27,6 +27,7 @@ from dispatchatlas.campaigns import (
 from dispatchatlas.campaigns.config import THREAD_VARIABLES
 from dispatchatlas.campaigns.processors import allowed_cpus
 from dispatchatlas.core import FEATURES, Problem, SolverError, SolveResult, SolverInfo, StopCriteria
+from dispatchatlas.core.clock import clock_origin, clock_start
 from dispatchatlas.core.solver import TracePoint
 from dispatchatlas.solvers import SolverRegistry, default_registry
 from dispatchatlas.solvers.rules import InputOrder, RandomSearch
@@ -368,7 +369,86 @@ class Scripted:
         return replace(result, trace=tuple(points), elapsed=elapsed)
 
 
+_PAID: set[str] = set()
+"""The keys whose one-off cost this process has paid."""
+
+
+def _pay_once(key: str, seconds: float) -> None:
+    """Sleep ``seconds`` the first time ``key`` is seen in this process, as a first import does."""
+    if key not in _PAID:
+        _PAID.add(key)
+        time.sleep(seconds)
+
+
+@dataclass(frozen=True)
+class ColdStart:
+    """Pays ``seconds`` once in a process, inside its first solve there, then samples orders."""
+
+    seconds: float = 0.25
+    key: str = "cold"
+    info: ClassVar[SolverInfo] = _info("test-cold-start")
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        _pay_once(self.key, self.seconds)
+        return RandomSearch().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """Pays ``seconds`` once in a process, in ``prepare`` when that is called first.
+
+    With ``broken`` set, ``prepare`` raises as a solver whose backend is missing does.
+    """
+
+    seconds: float = 0.25
+    key: str = "prepared"
+    broken: bool = False
+    info: ClassVar[SolverInfo] = _info("test-prepared")
+
+    def prepare(self) -> None:
+        if self.broken:
+            raise SolverError("the backend cannot be loaded")
+        _pay_once(self.key, self.seconds)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        _pay_once(self.key, self.seconds)
+        return RandomSearch().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class Phased:
+    """Runs two searches in turn, each with half of the time limit.
+
+    With ``own_origin`` set, each search runs inside a clock origin of its
+    own, so its half counts from its start; otherwise both count from the
+    origin the caller set.
+    """
+
+    own_origin: bool = True
+    info: ClassVar[SolverInfo] = _info("test-phased")
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        assert stop.time_limit is not None
+        began = clock_start()
+        half = replace(stop, time_limit=stop.time_limit / 2.0)
+        results = []
+        for phase in range(2):
+            with clock_origin() if self.own_origin else contextlib.nullcontext():
+                results.append(RandomSearch().solve(problem, half, seed + phase))
+        best = min(results, key=lambda result: result.value or 0.0)
+        first, second = results
+        return replace(
+            best,
+            evaluations=first.evaluations + second.evaluations,
+            elapsed=time.perf_counter() - began,
+            extras={"first": first.evaluations, "second": second.evaluations},
+        )
+
+
 TEST_SOLVERS = (
+    ColdStart,
+    Prepared,
+    Phased,
     SlowSetup,
     Tardy,
     Scripted,

@@ -336,7 +336,15 @@ class SolverInfo:
 
 @runtime_checkable
 class Solver(Protocol):
-    """The interface every solver implements."""
+    """The interface every solver implements.
+
+    A solver may also define ``prepare()``, a method without arguments that
+    returns nothing and does what the solver does once in a process before it
+    can solve, such as importing a backend. A caller that times a run calls
+    it before the clock of the run starts, as the campaign engine does, so
+    that this work is inside the time limit of no run. ``solve`` works
+    whether or not ``prepare`` was called.
+    """
 
     @property
     def info(self) -> SolverInfo:

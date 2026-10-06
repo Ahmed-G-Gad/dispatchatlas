@@ -7,6 +7,7 @@ third-party package.
 
 from __future__ import annotations
 
+import importlib
 import math
 from dataclasses import dataclass
 from typing import ClassVar
@@ -142,12 +143,9 @@ class CpSat:
         require_features(self.info, problem)
         require_bounded(self.info, stop)
         objective = primary_objective(problem, OBJECTIVES, self.info.id)
-        try:
-            from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - loads OR-Tools
-        except ModuleNotFoundError as error:
-            if (error.name or "").partition(".")[0] != "ortools":
-                raise
-            raise MissingDependencyError("ortools", "exact", "The cp-sat solver") from error
+        _load_model()
+        from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - loads OR-Tools
+
         clock = Clock(stop.time_limit)
         return _cpsat.solve(
             problem,
@@ -159,3 +157,21 @@ class CpSat:
             relative_gap=self.relative_gap,
             log=self.log,
         )
+
+    def prepare(self) -> None:
+        """Import OR-Tools and the model, which the first call in a process pays for.
+
+        Raises:
+            MissingDependencyError: If OR-Tools is not installed.
+        """
+        _load_model()
+
+
+def _load_model() -> None:
+    """Import the module of the model, which loads OR-Tools, or explain what is missing."""
+    try:
+        importlib.import_module("dispatchatlas.solvers.exact._cpsat")
+    except ModuleNotFoundError as error:
+        if (error.name or "").partition(".")[0] != "ortools":
+            raise
+        raise MissingDependencyError("ortools", "exact", "The cp-sat solver") from error

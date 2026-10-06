@@ -28,6 +28,7 @@ bounds every completion time of an optimal schedule.
 
 from __future__ import annotations
 
+import importlib
 import math
 import os
 import re
@@ -281,6 +282,8 @@ class TimeIndexedMilp:
             status = Status.FEASIBLE
             reason = StopReason.COMPLETED if outcome.proven else limited
             bound = None if bound is None else min(bound, value)
+        # One reading of the clock: the time of the trace point is the elapsed time.
+        elapsed = clock.elapsed
         return exact_result(
             self.info,
             problem,
@@ -288,12 +291,23 @@ class TimeIndexedMilp:
             status=status,
             schedule=schedule,
             stop_reason=reason,
-            elapsed=clock.elapsed,
+            elapsed=elapsed,
             bound=bound,
             evaluations=1,
-            trace=(TracePoint(clock.elapsed, 1, 0, value),),
+            trace=(TracePoint(elapsed, 1, 0, value),),
             extras=extras,
         )
+
+    def prepare(self) -> None:
+        """Import PuLP and the backend, which the first call in a process pays for.
+
+        Raises:
+            MissingDependencyError: If PuLP or the chosen backend is missing.
+        """
+        _runner(self.backend, _import_pulp())
+        package = _PACKAGES.get(self.backend)
+        if package is not None:
+            importlib.import_module(package)
 
 
 def _import_pulp() -> Any:
@@ -590,6 +604,9 @@ class _Outcome:
 
 type _Runner = Callable[[Any, Any, float | None, int, float], _Outcome]
 
+_PACKAGES = {"highs": "highspy", "gurobi": "gurobipy", "scip": "pyscipopt"}
+"""The Python package of every backend that has one."""
+
 
 def _runner(backend: str, pulp: Any) -> _Runner:
     """Return the function that solves a PuLP problem with ``backend``.
@@ -604,10 +621,9 @@ def _runner(backend: str, pulp: Any) -> _Runner:
             return _solve_cbc(pulp, lp, limit, threads, gap, path)
 
         return cbc
-    packages = {"highs": "highspy", "gurobi": "gurobipy", "scip": "pyscipopt"}
-    if find_spec(packages[backend]) is None:
+    if find_spec(_PACKAGES[backend]) is None:
         raise MissingDependencyError(
-            packages[backend], backend, f"The milp solver's {backend} backend"
+            _PACKAGES[backend], backend, f"The milp solver's {backend} backend"
         )
     return {"highs": _solve_highs, "gurobi": _solve_gurobi, "scip": _solve_scip}[backend]
 

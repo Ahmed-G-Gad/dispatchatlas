@@ -71,6 +71,7 @@ from dispatchatlas.campaigns.execution import (
     attempt,
     engine_failure,
     exception_error,
+    prepare_task,
     utc_now,
 )
 from dispatchatlas.campaigns.processors import affinity_cpus, confined, describe_cpus
@@ -369,6 +370,13 @@ def _serve(message: tuple[Any, ...], name: str, held: list[Any], connection: Con
         hard_limit=job.hard_limit,
         record_schedule=job.record_schedule,
     )
+    # What the solver does once in a process comes before the start of the
+    # solve, so the start-up limit covers it and no run's time limit does.
+    failure = prepare_task(task, name)
+    if failure is not None:
+        return failure
+    # One instant is the start of the solve for the hard limit, the reporter,
+    # the wall time of the attempt, and every clock of the solver.
     begun = time.perf_counter()
     with contextlib.ExitStack() as stack:
         if task.hard_limit is not None:
@@ -377,7 +385,7 @@ def _serve(message: tuple[Any, ...], name: str, held: list[Any], connection: Con
             )
             stack.enter_context(listening(reporter.note))
         connection.send(("started", (task.run_id, task.attempt, begun, utc_now())))
-        return attempt(task, name)
+        return attempt(task, name, origin=begun)
 
 
 class _Reporter:
