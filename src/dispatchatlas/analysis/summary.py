@@ -474,8 +474,8 @@ def _design_limitations(
         )
     if killed:
         scored = (
-            f"those {holding} are scored by that incumbent, a value their solver reported and "
-            "no schedule confirms, and the others count as the worst value"
+            "a run holding one is scored by it, a value its solver reported and no schedule "
+            "confirms, and the others count as the worst value"
             if rescored
             else "each counts as the worst value"
         )

@@ -152,9 +152,9 @@ def test_the_summary_scores_killed_runs_by_their_incumbent_when_asked() -> None:
     )
     assert limitations["timeouts"] == (
         "4 runs were killed at their hard limit and never completed, 2 of them holding a "
-        "feasible incumbent; with timeout_score 'incumbent' those 2 are scored by that "
-        "incumbent, a value their solver reported and no schedule confirms, and the others "
-        "count as the worst value."
+        "feasible incumbent; with timeout_score 'incumbent' a run holding one is scored by "
+        "it, a value its solver reported and no schedule confirms, and the others count as "
+        "the worst value."
     )
     (row,) = [item for item in summary.pairwise if {item.left, item.right} == {"a", "b"}]
     assert sorted((row.wins, row.losses)) == [2, 3]

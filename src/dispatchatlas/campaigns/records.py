@@ -424,8 +424,8 @@ class Provenance:
             the solve, where the platform can reset and read it (Linux).
             It includes the interpreter and the loaded libraries.
         worker: ``"main"`` for the sequential backend, else the worker slot.
-        hard_limit: Seconds after which the run would have been killed, or
-            ``None`` when no hard limit was armed.
+        hard_limit: Seconds after the start of its solve at which the run
+            would have been killed, or ``None`` when it had no hard limit.
         cpu: Index of the processor the worker was pinned to, or ``None``
             when it ran on any processor the session's process may use.
         concurrent: Runs executing in the session when this one was handed

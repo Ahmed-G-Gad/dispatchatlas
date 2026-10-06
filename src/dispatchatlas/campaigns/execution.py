@@ -77,8 +77,8 @@ class Task:
         solver: A solver instance built with the campaign's parameters.
         stop: Stop criteria of the run's protocol.
         seed: Seed of the run.
-        hard_limit: Seconds after which the process backend kills the run, or
-            ``None``.
+        hard_limit: Seconds after the start of the solve at which the process
+            backend kills the run, or ``None``.
         record_schedule: Whether to return the schedule for the record.
     """
 
