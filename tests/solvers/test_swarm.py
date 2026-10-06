@@ -333,6 +333,114 @@ def test_progress_is_the_budget_fraction_used_after_initialisation(stop, expecte
     assert seen == pytest.approx(expected)
 
 
+@dataclass(frozen=True)
+class Delayed(SwarmMethod):
+    """Records the budget progress and loses ``delay`` seconds in iteration ``at``."""
+
+    seen: list[float] | None = None
+    delay: float = 0.0
+    at: int = 1
+
+    info: ClassVar[SolverInfo] = method_info("delayed", "Delayed", "Moves one member.")
+
+    def step(self, swarm: Swarm) -> None:
+        assert self.seen is not None
+        self.seen.append(swarm.progress)
+        if swarm.iteration == self.at:
+            swarm.search._started -= self.delay
+        swarm.replace(0, swarm.rng.random(swarm.dimension))
+
+
+def _delayed(stop: StopCriteria, *, delay: float, at: int = 1):
+    seen: list[float] = []
+    method = Delayed(population_size=20, seen=seen, delay=delay, at=at)
+    result = method.solve(random_problem(1, tasks=6, max_modes=1, pools=0), stop)
+    return seen, result
+
+
+def test_the_time_limit_plays_no_part_in_a_deterministic_schedule():
+    counted = StopCriteria(time_limit=10.0, max_evaluations=24)
+    seen, result = _delayed(counted, delay=5.0)
+    assert seen == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+    assert result.stop_reason is StopReason.EVALUATION_LIMIT
+    assert result.extras == {"schedule_clock": "evaluations", "schedule_progress": 1.0}
+
+    # The time limit ends the third of four iterations: the schedule stops short of its end.
+    seen, result = _delayed(StopCriteria(time_limit=10.0, max_iterations=4), delay=20.0, at=3)
+    assert seen == pytest.approx([0.0, 0.25, 0.5])
+    assert result.stop_reason is StopReason.TIME_LIMIT
+    assert result.extras == {"schedule_clock": "iterations", "schedule_progress": 0.75}
+
+
+def test_a_binding_schedule_follows_the_nearest_limit():
+    binding = StopCriteria(time_limit=10.0, max_evaluations=24, schedule="binding")
+    seen, result = _delayed(binding, delay=5.0)
+    assert seen == pytest.approx([0.0, 0.5, 0.5, 0.75, 1.0], abs=0.01)
+    assert result.extras == {"schedule_clock": "evaluations", "schedule_progress": 1.0}
+
+    timed = StopCriteria(time_limit=10.0, max_iterations=4, schedule="binding")
+    seen, result = _delayed(timed, delay=20.0, at=3)
+    assert seen == pytest.approx([0.0, 0.25, 0.5], abs=0.01)
+    assert result.stop_reason is StopReason.TIME_LIMIT
+    assert result.extras == {"schedule_clock": "time", "schedule_progress": 1.0}
+
+
+def test_a_schedule_follows_the_time_when_it_is_the_only_limit():
+    for schedule in ("deterministic", "binding"):
+        stop = StopCriteria(time_limit=10.0, schedule=schedule)
+        seen, result = _delayed(stop, delay=20.0, at=3)
+        assert seen == pytest.approx([0.0, 0.0, 0.0], abs=0.01)
+        assert result.extras == {"schedule_clock": "time", "schedule_progress": 1.0}
+
+
+def test_a_run_that_starts_no_iteration_records_no_schedule():
+    seen, result = _delayed(StopCriteria(max_evaluations=5), delay=0.0)
+    assert seen == []
+    assert result.extras == {}
+
+
+def _slow_start(monkeypatch, seconds: float) -> None:
+    """Make every swarm lose ``seconds`` after it measured its first iteration."""
+    advance = Swarm.advance
+
+    def slow_start(self: Swarm) -> None:
+        advance(self)
+        if self.search.iterations == 1:
+            self.search._started -= seconds
+
+    monkeypatch.setattr(Swarm, "advance", slow_start)
+
+
+@pytest.mark.parametrize("method", METHODS, ids=IDS)
+def test_a_slower_start_leaves_a_run_under_an_evaluation_limit_unchanged(method, monkeypatch):
+    problem = random_problem(4, tasks=10)
+    stop = StopCriteria(time_limit=60.0, max_evaluations=300)
+    reference = method().solve(problem, stop, seed=5)
+    assert reference.extras == {"schedule_clock": "evaluations", "schedule_progress": 1.0}
+
+    _slow_start(monkeypatch, 20.0)
+    slowed = method().solve(problem, stop, seed=5)
+    assert slowed.schedule == reference.schedule
+    assert slowed.objectives == reference.objectives
+    assert [(point.evaluations, point.value) for point in slowed.trace] == [
+        (point.evaluations, point.value) for point in reference.trace
+    ]
+    assert slowed.extras == reference.extras
+
+
+def test_a_registered_method_records_the_clock_of_a_binding_schedule(monkeypatch):
+    problem = random_problem(4, tasks=10)
+    binding = StopCriteria(time_limit=60.0, max_evaluations=300, schedule="binding")
+    counted = GreyWolfOptimizer().solve(problem, binding, seed=5)
+    assert counted.extras == {"schedule_clock": "evaluations", "schedule_progress": 1.0}
+
+    _slow_start(monkeypatch, 20.0)
+    timed = StopCriteria(time_limit=15.0, max_evaluations=10**6, schedule="binding")
+    ended = GreyWolfOptimizer().solve(problem, timed, seed=5)
+    assert ended.stop_reason is StopReason.TIME_LIMIT
+    assert ended.extras == {"schedule_clock": "time", "schedule_progress": 1.0}
+
+
 @pytest.mark.parametrize("method", METHODS, ids=IDS)
 def test_every_rule_improves_a_shifted_sphere(method):
     solver = method()

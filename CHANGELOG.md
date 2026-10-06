@@ -120,9 +120,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `seed_namespace` separates the run seeds of campaigns that share a seed.
   The stop criteria state in the field `schedule` which clock a parameter
   schedule follows, `"deterministic"` or `"binding"`, and a solver that
-  follows one records `schedule_clock` and `schedule_progress` in the extras
-  of its result; under a time limit with `"binding"`, a run of an iterative
-  solver is not replayed. Each of these settings enters the config hash only
+  follows one, the swarm family included, records `schedule_clock` and
+  `schedule_progress` in the extras of its result; under a time limit with
+  `"binding"`, a run of an iterative solver is not replayed. Each of these
+  settings enters the config hash only
   when it is set to other than its default, so a campaign file without them
   keeps its config hash, seeds, and run ids.
 - `dispatchatlas.campaigns.fairness.assess_outcomes` compares the completed

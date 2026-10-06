@@ -186,7 +186,9 @@ random state. Hence:
   ends the run first. With `"binding"`, every set limit counts: the schedule
   reaches its end at whichever limit ends the run, and under a time limit the
   run depends on the machine. With the time limit as the only limit, both
-  follow the elapsed time. Such a solver records in the `extras` of its
+  follow the elapsed time. The swarm family counts the same limits and
+  measures them from the end of its initial population (`Swarm.progress`).
+  Such a solver records in the `extras` of its
   result `schedule_clock`, the limit that places the end of the run on the
   schedule (`evaluations`, `iterations`, or `time`), and `schedule_progress`,
   that place between 0 and 1.

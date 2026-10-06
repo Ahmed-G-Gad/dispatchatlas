@@ -40,9 +40,14 @@ middle of the range.
 budget ``T`` of their paper, such as a coefficient falling from 2 to 0. Here
 ``t / T`` is :attr:`Swarm.progress`: the fraction of the budget used since the
 initial population was evaluated, measured when the iteration starts. It is the
-largest of the fractions of the iteration, evaluation, and time limits that are
-set, so the schedules work with any single bounded stop criterion. Under a time
-limit it depends on the clock, like the run itself.
+largest of the fractions of the evaluation, iteration, and time limits that the
+``schedule`` of the stop criteria counts, so the schedules work with any single
+bounded stop criterion. With ``"deterministic"`` the time limit counts only when
+it is the only limit, so a run under an evaluation or iteration limit follows
+the same schedule on every machine. With ``"binding"`` every set limit counts,
+and under a time limit the schedule depends on the clock, like the run itself.
+A run records which clock its schedule followed in the extras of its result
+(:meth:`Swarm.schedule_extras`).
 """
 
 from __future__ import annotations
@@ -57,7 +62,7 @@ from typing import ClassVar, Literal
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from dispatchatlas.core.model import Problem
+from dispatchatlas.core.model import Problem, Scalar
 from dispatchatlas.core.solver import SolveResult, SolverInfo, StopCriteria
 from dispatchatlas.solvers.encoding import VectorEncoding
 from dispatchatlas.solvers.evaluation import Score
@@ -291,6 +296,7 @@ class Swarm:
         self._elite: list[tuple[Score, int, Vector]] = []
         self._serial = 0
         self._origin = (0, 0.0)
+        self._measured = False
 
     @property
     def iteration(self) -> int:
@@ -314,6 +320,29 @@ class Swarm:
         """
         self.search.next_iteration()
         self.progress = self._budget_used()
+        self._measured = True
+
+    def schedule_extras(self) -> dict[str, Scalar]:
+        """Return which clock the schedule followed and where the run stands on it.
+
+        The keys are those a run that reads ``Search.progress`` records in the
+        extras of its result. ``schedule_clock`` is ``"evaluations"``,
+        ``"iterations"``, or ``"time"``: the limit whose fraction is the
+        largest among those the criteria's ``schedule`` counts, the first in
+        that order among equals. ``schedule_progress`` is that fraction, in
+        [0, 1], with every started iteration counted as used, so a value
+        below 1 says that the schedule did not reach its end.
+
+        Returns:
+            The two entries, or an empty dictionary when no iteration started
+            or no limit is set.
+        """
+        fractions = self._fractions(self.search.iterations) if self._measured else []
+        if not fractions:
+            return {}
+        largest = max(fraction for fraction, _ in fractions)
+        clock = next(clock for fraction, clock in fractions if fraction == largest)
+        return {"schedule_clock": clock, "schedule_progress": min(1.0, max(0.0, largest))}
 
     # ------------------------------------------------------------ evaluation
 
@@ -410,21 +439,33 @@ class Swarm:
             elite.pop()
 
     def _budget_used(self) -> float:
+        fractions = self._fractions(self.search.iterations - 1)
+        return min(1.0, max(0.0, *(fraction for fraction, _ in fractions))) if fractions else 0.0
+
+    def _fractions(self, iterations: int) -> list[tuple[float, str]]:
+        """Return the fraction used of every limit the schedule counts, with its clock.
+
+        The evaluation and time fractions are measured from the end of the
+        initial population, and the iteration fraction is ``iterations`` over
+        the iteration limit. The time limit counts only when the criteria's
+        schedule reads the elapsed time
+        (:attr:`~dispatchatlas.core.solver.StopCriteria.schedule_timed`).
+        """
         search = self.search
         stop = search.stop
         evaluations, elapsed = self._origin
-        fractions: list[float] = []
-        if stop.max_iterations is not None:
-            fractions.append((search.iterations - 1) / stop.max_iterations)
+        fractions: list[tuple[float, str]] = []
         if stop.max_evaluations is not None:
             remaining = stop.max_evaluations - evaluations
             spent = search.evaluations - evaluations
-            fractions.append(spent / remaining if remaining > 0 else 1.0)
-        if stop.time_limit is not None:
+            fractions.append((spent / remaining if remaining > 0 else 1.0, "evaluations"))
+        if stop.max_iterations is not None:
+            fractions.append((iterations / stop.max_iterations, "iterations"))
+        if stop.schedule_timed and stop.time_limit is not None:
             remaining_time = stop.time_limit - elapsed
             spent_time = search.elapsed - elapsed
-            fractions.append(spent_time / remaining_time if remaining_time > 0.0 else 1.0)
-        return min(1.0, max(0.0, *fractions)) if fractions else 0.0
+            fractions.append((spent_time / remaining_time if remaining_time > 0.0 else 1.0, "time"))
+        return fractions
 
 
 @dataclass(frozen=True)
@@ -476,7 +517,7 @@ class SwarmMethod(ABC):
             swarm = Swarm(search, self.population_size, rule=self.rule, modes=self.modes)
             swarm.initialize()
             iterate(self, swarm)
-        return search.result()
+        return search.result(swarm.schedule_extras())
 
     @abstractmethod
     def step(self, swarm: Swarm) -> None:
