@@ -9,9 +9,12 @@ recomputes every objective from the schedule. It returns plain data, a
 
 Measurements cover the solve alone: wall time with :func:`time.perf_counter`;
 CPU time of the executing process with :func:`time.process_time`, which
-includes any threads the solver starts; and, on Linux, the peak resident
-memory of the process during the solve, read from ``/proc/self/status`` after
-resetting it through ``/proc/self/clear_refs``.
+includes any threads the solver starts, plus, on POSIX systems, the CPU time
+of the child processes the solver started and waited for, from
+:func:`os.times`; and, on Linux, the peak resident memory of the process
+during the solve, read from ``/proc/self/status`` after resetting it through
+``/proc/self/clear_refs``. On Windows the CPU time of a child process, such
+as a backend that runs as a program of its own, is not in the measurement.
 
 The instant the wall time counts from is also the origin of the solver's
 clock: :func:`attempt` calls the solver inside
@@ -37,6 +40,7 @@ from __future__ import annotations
 import importlib
 import itertools
 import math
+import os
 import time
 import traceback
 from dataclasses import dataclass, replace
@@ -154,7 +158,9 @@ class Measurement:
         started: UTC start time in ISO 8601.
         finished: UTC end time in ISO 8601.
         wall_seconds: Wall-clock seconds.
-        cpu_seconds: CPU seconds of the executing process, if measured.
+        cpu_seconds: CPU seconds of the executing process, if measured, and
+            on POSIX systems also of the child processes it waited for
+            during the attempt.
         peak_rss_bytes: Peak resident memory of the executing process, if measured.
         worker: Where the attempt executed: ``"main"`` or a worker slot.
         hard_limit: The hard limit armed for the attempt, if any.
@@ -335,7 +341,7 @@ def attempt(task: Task, worker: str = "main", origin: float | None = None) -> Re
             return failure
     started = utc_now()
     measured = _peak_rss_resettable()
-    cpu = time.process_time()
+    cpu = _cpu_seconds()
     with clock_origin(origin) as clock:
         try:
             result = task.solver.solve(task.problem, task.stop, task.seed)
@@ -607,7 +613,7 @@ def _measurement(
     started: str, clock: float, cpu: float, measured: bool, worker: str, hard_limit: float | None
 ) -> Measurement:
     wall = time.perf_counter() - clock
-    cpu_seconds = time.process_time() - cpu
+    cpu_seconds = _cpu_seconds() - cpu
     return Measurement(
         started=started,
         finished=utc_now(),
@@ -617,6 +623,16 @@ def _measurement(
         worker=worker,
         hard_limit=hard_limit,
     )
+
+
+def _cpu_seconds() -> float:
+    """Return the CPU seconds of this process and of the children it has waited for.
+
+    The children's part is what :func:`os.times` reports, which is zero on
+    Windows.
+    """
+    times = os.times()
+    return time.process_time() + times.children_user + times.children_system
 
 
 def _peak_rss_resettable() -> bool:

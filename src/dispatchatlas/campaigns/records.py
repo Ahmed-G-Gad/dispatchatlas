@@ -419,8 +419,10 @@ class Provenance:
             the hand-over when the solve never began, until the engine ended
             it.
         cpu_seconds: CPU seconds the executing process spent on the solve,
-            including any threads the solver started. ``None`` when not
-            measured.
+            including any threads the solver started and, on POSIX systems,
+            the child processes the solver started and waited for. On
+            Windows the time of child processes is not included. ``None``
+            when not measured.
         peak_rss_bytes: Peak resident memory of the executing process during
             the solve, where the platform can reset and read it (Linux).
             It includes the interpreter and the loaded libraries.

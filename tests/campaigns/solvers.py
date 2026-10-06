@@ -393,6 +393,19 @@ class Timeless:
         return replace(result, trace=trace, elapsed=elapsed)
 
 
+@dataclass(frozen=True)
+class Delegating:
+    """Schedules the listed order after a child process has computed for ``seconds``."""
+
+    seconds: float = 0.3
+    info: ClassVar[SolverInfo] = _info("test-delegating", stochastic=False, iterative=False)
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        code = f"import time\nwhile time.process_time() < {self.seconds!r}:\n    pass\n"
+        subprocess.run([sys.executable, "-c", code], check=True)
+        return InputOrder().solve(problem, stop, seed)
+
+
 _PAID: set[str] = set()
 """The keys whose one-off cost this process has paid."""
 
@@ -470,6 +483,7 @@ class Phased:
 
 
 TEST_SOLVERS = (
+    Delegating,
     Timeless,
     ColdStart,
     Prepared,
