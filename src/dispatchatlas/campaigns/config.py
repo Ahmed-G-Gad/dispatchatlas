@@ -56,6 +56,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_FACTOR",
     "GRACE_SECONDS",
     "SCHEMA_VERSION",
+    "STARTUP_SECONDS",
     "THREAD_VARIABLES",
     "Campaign",
     "CatalogSource",
@@ -86,7 +87,14 @@ GRACE_SECONDS = 5.0
 """Default seconds a run may exceed ``timeout_factor * time_limit`` before it is killed.
 
 The grace lets a solver that honours its limit finish the step it is in and
-return its result, and covers the time a worker needs to receive the run.
+return its result.
+"""
+
+STARTUP_SECONDS = 120.0
+"""Default seconds a worker process has, from the hand-over of a run, to begin its solve.
+
+They cover the start of the worker's interpreter, the loading of plugins, and
+the rebuilding of the solver and the problem, on a machine that may be busy.
 """
 
 CPU_RESERVE = 1
@@ -489,8 +497,8 @@ class Execution:
             calling process may use minus :data:`CPU_RESERVE`. Must be 1 for
             the sequential backend.
         timeout_factor: A run whose protocol sets ``time_limit`` is killed
-            after ``timeout_factor * time_limit + grace`` seconds. At least
-            1. ``None`` disables hard limits.
+            ``timeout_factor * time_limit + grace`` seconds after its solve
+            begins. At least 1. ``None`` disables hard limits.
         grace: Seconds added to the hard limit.
         retries: Further attempts for a run whose failure may be transient.
         record_schedules: Store every run's best schedule in its record. Its
@@ -510,6 +518,10 @@ class Execution:
             environment of the calling process as it is, so it accepts only
             the default, which then states nothing about that process: set
             the variables before Python starts to limit such a run.
+        startup_limit: Seconds a worker process has, from the hand-over of a
+            run, to begin its solve. A worker that takes longer is killed,
+            and the attempt is a start-up failure, which ``retries`` covers
+            and which is no timeout of the solver. Positive.
     """
 
     backend: str = "process"
@@ -520,6 +532,7 @@ class Execution:
     record_schedules: bool = True
     affinity: Literal["inherit", "pin"] | tuple[int, ...] = "inherit"
     threads_per_worker: int = 1
+    startup_limit: float = STARTUP_SECONDS
 
     def __post_init__(self) -> None:
         if self.backend not in BACKENDS:
@@ -538,6 +551,10 @@ class Execution:
                 self, "timeout_factor", _check_number(self.timeout_factor, "timeout_factor", 1.0)
             )
         object.__setattr__(self, "grace", _check_number(self.grace, "grace", 0.0))
+        startup = _check_number(self.startup_limit, "startup_limit", 0.0)
+        if startup <= 0.0:
+            raise ConfigError(f"startup_limit must be positive, got {self.startup_limit!r}")
+        object.__setattr__(self, "startup_limit", startup)
         _check_integer(self.retries, "retries", 0)
         if not isinstance(self.record_schedules, bool):
             raise ConfigError(
@@ -625,6 +642,7 @@ class Execution:
             "record_schedules": self.record_schedules,
             "affinity": self.affinity if isinstance(self.affinity, str) else list(self.affinity),
             "threads_per_worker": self.threads_per_worker,
+            "startup_limit": self.startup_limit,
         }
 
 

@@ -9,7 +9,8 @@ version:
   schedule as ``[task, mode, start, end]`` rows unless the campaign disables
   it, and the :class:`Provenance` of the attempt that produced it.
 - ``dispatchatlas.failure/1`` (:class:`FailureRecord`): one failed attempt,
-  with its error and :class:`Category`.
+  with its error and :class:`Category`, and, for a run killed at its hard
+  limit, the last :class:`Incumbent` its search had reported.
 - ``dispatchatlas.session/1`` (:class:`SessionRecord`): one invocation of the
   runner, with its execution settings and the environment it ran in.
 
@@ -49,6 +50,7 @@ __all__ = [
     "Category",
     "ErrorKind",
     "FailureRecord",
+    "Incumbent",
     "Outcome",
     "ProblemRef",
     "Provenance",
@@ -77,8 +79,10 @@ class Category(StrEnum):
     Typed DispatchAtlas errors (an invalid configuration, a feature the solver
     does not model, a missing optional dependency) and hard timeouts are
     **terminal**: the instance, seed, and budget are fixed, so another attempt
-    would fail the same way. Any other exception, and a worker process that
-    dies, is **recoverable**: memory pressure or an I/O error may not recur.
+    would fail the same way. Any other exception, a worker process that dies,
+    and a worker that does not begin the solve within the start-up limit are
+    **recoverable**: memory pressure, an I/O error, or a busy machine may not
+    recur.
     """
 
     TERMINAL = "terminal"
@@ -91,7 +95,9 @@ class ErrorKind(StrEnum):
     EXCEPTION = "exception"
     """The solver, or the checks of its result, raised an exception."""
     TIMEOUT = "timeout"
-    """The run passed its hard time limit and its worker was killed."""
+    """The solve passed its hard time limit and its worker was killed."""
+    STARTUP = "startup"
+    """The worker did not begin the solve within the start-up limit and was killed."""
     WORKER_EXIT = "worker-exit"
     """The worker process died during the run."""
     TRANSFER = "transfer"
@@ -407,7 +413,10 @@ class Provenance:
         session: Number of the runner session that executed it.
         started: UTC start time in ISO 8601.
         finished: UTC end time in ISO 8601.
-        wall_seconds: Wall-clock seconds of the solve.
+        wall_seconds: Wall-clock seconds of the solve. For an attempt the
+            engine ended, the seconds from the start of the solve, or from
+            the hand-over when the solve never began, until the engine ended
+            it.
         cpu_seconds: CPU seconds the executing process spent on the solve,
             including any threads the solver started. ``None`` when not
             measured.
@@ -422,6 +431,13 @@ class Provenance:
         concurrent: Runs executing in the session when this one was handed
             to its worker: itself, the runs already executing, and the runs
             handed over with it. ``None`` when the record does not state it.
+        waited_seconds: Seconds from the hand-over of the attempt to its
+            worker until the supervising process learned that the solve had
+            begun. They hold the start of the worker's interpreter and the
+            loading of plugins, for a worker that started for this attempt,
+            and the rebuilding of the solver and the problem. ``None`` when
+            the solve never began, for the sequential backend, and when the
+            record does not state it.
     """
 
     attempt: int
@@ -435,6 +451,7 @@ class Provenance:
     hard_limit: float | None = None
     cpu: int | None = None
     concurrent: int | None = None
+    waited_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the provenance as a JSON-ready dictionary."""
@@ -450,14 +467,15 @@ class Provenance:
             "hard_limit": self.hard_limit,
             "cpu": self.cpu,
             "concurrent": self.concurrent,
+            "waited_seconds": self.waited_seconds,
         }
 
     @classmethod
     def from_dict(cls, document: object) -> Provenance:
         """Build provenance from :meth:`to_dict` output.
 
-        The fields ``cpu`` and ``concurrent`` may be absent, and are then
-        ``None``.
+        The fields ``cpu``, ``concurrent``, and ``waited_seconds`` may be
+        absent, and are then ``None``.
         """
         fields = _Fields(document, "a provenance block")
         rss = fields.raw("peak_rss_bytes")
@@ -473,6 +491,7 @@ class Provenance:
             hard_limit=fields.optional_number("hard_limit"),
             cpu=fields.absent_or_integer("cpu"),
             concurrent=fields.absent_or_integer("concurrent"),
+            waited_seconds=fields.absent_or_number("waited_seconds"),
         )
 
 
@@ -617,6 +636,66 @@ class RunError:
 
 
 @dataclass(frozen=True)
+class Incumbent:
+    """The best candidate a search had reported when its run was killed.
+
+    The values are the ones the solver's search computed. No schedule comes
+    with them, so they are not checked as the result of a completed run is.
+
+    Attributes:
+        objective: The objective the search optimised.
+        value: The candidate's value of that objective.
+        objectives: Every objective of the problem for the candidate, by name.
+        feasible: Whether the search found the candidate feasible.
+        evaluations: Candidates the search had evaluated when it found this one.
+        iteration: Main-loop iteration in which the search found it.
+        elapsed: Seconds from the start of the search until it found this one.
+    """
+
+    objective: str
+    value: float
+    objectives: Mapping[str, float]
+    feasible: bool
+    evaluations: int
+    iteration: int
+    elapsed: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the incumbent as a JSON-ready dictionary."""
+        return {
+            "objective": self.objective,
+            "value": self.value,
+            "objectives": dict(self.objectives),
+            "feasible": self.feasible,
+            "evaluations": self.evaluations,
+            "iteration": self.iteration,
+            "elapsed": self.elapsed,
+        }
+
+    @classmethod
+    def from_dict(cls, document: object) -> Incumbent:
+        """Build an incumbent from :meth:`to_dict` output.
+
+        Raises:
+            SerializationError: If the document is malformed or holds a value
+                that is not finite.
+        """
+        fields = _Fields(document, "an incumbent")
+        return cls(
+            objective=fields.text("objective"),
+            value=fields.number("value"),
+            objectives={
+                _text(name, "an objective name"): _number(value, f"objective {name!r}")
+                for name, value in fields.mapping("objectives").items()
+            },
+            feasible=fields.boolean("feasible"),
+            evaluations=fields.integer("evaluations"),
+            iteration=fields.integer("iteration"),
+            elapsed=fields.number("elapsed"),
+        )
+
+
+@dataclass(frozen=True)
 class FailureRecord:
     """One failed attempt of a run.
 
@@ -633,6 +712,14 @@ class FailureRecord:
         error: What ended the attempt.
         provenance: How the attempt executed. CPU time and memory are only
             known when the attempt raised an exception.
+        solve_started: Whether the solve had begun when the attempt ended.
+            ``False`` for an attempt that ended while its worker was starting
+            or receiving the run. ``None`` when the record does not state it.
+        last_incumbent: For a run killed at its hard limit, the last
+            candidate its search had reported. ``None`` when it had reported
+            none, because the solver does not run inside
+            :class:`~dispatchatlas.solvers.search.Search` or had evaluated
+            nothing, and for every other failure.
     """
 
     run_id: str
@@ -646,9 +733,12 @@ class FailureRecord:
     category: Category
     error: RunError
     provenance: Provenance
+    solve_started: bool | None = None
+    last_incumbent: Incumbent | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the record as a JSON-ready document."""
+        incumbent = self.last_incumbent
         return {
             "schema": FAILURE_SCHEMA,
             "run_id": self.run_id,
@@ -662,11 +752,16 @@ class FailureRecord:
             "category": self.category.value,
             "error": self.error.to_dict(),
             "provenance": self.provenance.to_dict(),
+            "solve_started": self.solve_started,
+            "last_incumbent": None if incumbent is None else incumbent.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, document: object) -> FailureRecord:
         """Build a record from :meth:`to_dict` output.
+
+        The fields ``solve_started`` and ``last_incumbent`` may be absent,
+        and are then ``None``.
 
         Raises:
             SerializationError: If the document is not a failure record of
@@ -675,6 +770,7 @@ class FailureRecord:
         fields = _Fields(document, "a failure record")
         _require_schema(fields, FAILURE_SCHEMA)
         category = fields.text("category")
+        incumbent = fields.absent_or_raw("last_incumbent")
         return cls(
             run_id=fields.text("run_id"),
             campaign=fields.text("campaign"),
@@ -687,6 +783,8 @@ class FailureRecord:
             category=_build("a failure record", lambda: Category(category)),
             error=RunError.from_dict(fields.raw("error")),
             provenance=Provenance.from_dict(fields.raw("provenance")),
+            solve_started=fields.absent_or_boolean("solve_started"),
+            last_incumbent=None if incumbent is None else Incumbent.from_dict(incumbent),
         )
 
 
@@ -804,6 +902,15 @@ class _Fields:
 
     def absent_or_integer(self, key: str) -> int | None:
         return None if self._document.get(key) is None else self.integer(key)
+
+    def absent_or_number(self, key: str) -> float | None:
+        return None if self._document.get(key) is None else self.number(key)
+
+    def absent_or_boolean(self, key: str) -> bool | None:
+        return None if self._document.get(key) is None else self.boolean(key)
+
+    def absent_or_raw(self, key: str) -> Any:
+        return self._document.get(key)
 
     def boolean(self, key: str) -> bool:
         value = self.raw(key)

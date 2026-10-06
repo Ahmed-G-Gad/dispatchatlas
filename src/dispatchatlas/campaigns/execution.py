@@ -29,6 +29,7 @@ from pathlib import Path
 from dispatchatlas.campaigns.records import (
     Category,
     ErrorKind,
+    Incumbent,
     Outcome,
     RunError,
     schedule_digest,
@@ -108,6 +109,10 @@ class Measurement:
         concurrent: Runs executing when the attempt was handed to where it
             executes, itself included. ``None`` for an attempt that was
             never handed over.
+        waited_seconds: Seconds from the hand-over of the attempt to its
+            worker until the supervising process learned that the solve had
+            begun. ``None`` when the solve never began, and for the
+            sequential backend.
     """
 
     started: str
@@ -119,6 +124,7 @@ class Measurement:
     hard_limit: float | None = None
     cpu: int | None = None
     concurrent: int | None = None
+    waited_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +161,9 @@ class Failure:
         category: Whether another attempt may succeed.
         error: What ended the attempt.
         measurement: How the attempt executed.
+        solve_started: Whether the solve had begun when the attempt ended.
+        last_incumbent: The last candidate the search of a run killed at its
+            hard limit had reported, if any.
     """
 
     run_id: str
@@ -162,6 +171,8 @@ class Failure:
     category: Category
     error: RunError
     measurement: Measurement
+    solve_started: bool | None = None
+    last_incumbent: Incumbent | None = None
 
 
 type Result = Completion | Failure
@@ -205,7 +216,12 @@ def attempt(task: Task, worker: str = "main") -> Result:
     except Exception as error:
         measurement = _measurement(started, clock, cpu, measured, worker, task.hard_limit)
         return Failure(
-            task.run_id, task.attempt, classify(error), exception_error(error), measurement
+            task.run_id,
+            task.attempt,
+            classify(error),
+            exception_error(error),
+            measurement,
+            solve_started=True,
         )
     measurement = _measurement(started, clock, cpu, measured, worker, task.hard_limit)
     try:
@@ -213,7 +229,12 @@ def attempt(task: Task, worker: str = "main") -> Result:
         result_hash = outcome.result_hash()
     except Exception as error:
         return Failure(
-            task.run_id, task.attempt, classify(error), exception_error(error), measurement
+            task.run_id,
+            task.attempt,
+            classify(error),
+            exception_error(error),
+            measurement,
+            solve_started=True,
         )
     return Completion(
         run_id=task.run_id,
@@ -308,14 +329,25 @@ def engine_failure(
     kind: ErrorKind,
     message: str,
     measurement: Measurement,
+    *,
+    solve_started: bool | None = None,
+    last_incumbent: Incumbent | None = None,
 ) -> Failure:
     """Return the failure of an attempt that the engine, not the solver, ended.
 
-    Timeouts and failed transfers are terminal; a worker that dies is
-    recoverable.
+    Timeouts and failed transfers are terminal; a worker that dies, and one
+    that does not begin the solve within the start-up limit, are recoverable.
     """
-    category = Category.RECOVERABLE if kind is ErrorKind.WORKER_EXIT else Category.TERMINAL
-    return Failure(run_id, attempt_number, category, RunError(kind, message), measurement)
+    recoverable = kind in (ErrorKind.WORKER_EXIT, ErrorKind.STARTUP)
+    return Failure(
+        run_id,
+        attempt_number,
+        Category.RECOVERABLE if recoverable else Category.TERMINAL,
+        RunError(kind, message),
+        measurement,
+        solve_started=solve_started,
+        last_incumbent=last_incumbent,
+    )
 
 
 def exception_error(error: BaseException, kind: ErrorKind = ErrorKind.EXCEPTION) -> RunError:

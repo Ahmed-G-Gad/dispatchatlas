@@ -360,6 +360,7 @@ class _Books:
             hard_limit=measured.hard_limit,
             cpu=measured.cpu,
             concurrent=measured.concurrent,
+            waited_seconds=measured.waited_seconds,
         )
         identity: dict[str, Any] = {
             "run_id": planned.run_id,
@@ -393,7 +394,12 @@ class _Books:
             _LOG.debug("%s: %s = %s", where, result.outcome.objective, result.outcome.value)
             return None
         failure = FailureRecord(
-            **identity, category=result.category, error=result.error, provenance=provenance
+            **identity,
+            category=result.category,
+            error=result.error,
+            provenance=provenance,
+            solve_started=result.solve_started,
+            last_incumbent=result.last_incumbent,
         )
         self.store.write_failure(failure)
         self.errors += 1
