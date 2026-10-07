@@ -384,12 +384,16 @@ class Ledger:
             then those at the paths of failed attempts in path order.
         kept: The valid records under ``superseded/`` of planned runs
             without a valid record at their paths, in plan order.
+        unreadable: The files under ``failures/`` that cannot be read as
+            records of failed attempts, in path order. They count as no
+            attempt of any run.
     """
 
     completed: frozenset[str] = frozenset()
     failures: Mapping[str, tuple[FailureRecord, ...]] = field(default_factory=dict)
     stale: tuple[Stale, ...] = ()
     kept: tuple[Kept, ...] = ()
+    unreadable: tuple[Path, ...] = ()
 
     def restored(self) -> Ledger:
         """Return the ledger as it stands once every kept record is back at its path.
@@ -402,6 +406,7 @@ class Ledger:
             self.completed | {item.run_id for item in self.kept},
             self.failures,
             tuple(item for item in self.stale if item.path not in paths),
+            unreadable=self.unreadable,
         )
 
     def next_attempt(self, run_id: str) -> int:
@@ -598,6 +603,20 @@ class Store:
         the seed its run has in that plan counts, as one made with a seed a
         session recorded as replaced does.
         """
+        return self._ledger(plan, None)
+
+    def holdings(self, plan: Plan) -> tuple[Ledger, dict[str, RunRecord]]:
+        """Read the ledger of a plan together with the valid records it counts.
+
+        Returns:
+            The ledger, as :meth:`ledger` returns it, and the record of every
+            run it lists as completed, by run id and in plan order. Each
+            record is read and checked once.
+        """
+        records: dict[str, RunRecord] = {}
+        return self._ledger(plan, records), records
+
+    def _ledger(self, plan: Plan, records: dict[str, RunRecord] | None) -> Ledger:
         seeds = _earlier_seeds(self.directory)
         if seeds is not None and (self.directory / PLAN_FILE).is_file():
             try:
@@ -613,20 +632,24 @@ class Store:
         for run in plan.runs:
             path = _planned_path(self.directory, run)
             if path.is_file():
-                found = _stale(path, run, stated)
-                if found is None:
+                found = _examined(path, run, stated)
+                if not isinstance(found, Stale):
                     completed.add(run.run_id)
+                    if records is not None:
+                        records[run.run_id] = found
                     continue
                 stale.append(found)
             if aside and (back := self._kept(path, run, stated)) is not None:
                 kept.append(Kept(run.run_id, back, path))
         attempts = {_attempts_path(self.directory, run): run for run in plan.runs}
         failures: dict[str, list[FailureRecord]] = {}
+        unreadable: list[Path] = []
         for path in sorted((self.directory / FAILURES).rglob("*.json")):
             try:
                 failure = _parse(path, FailureRecord.from_dict)
             except SerializationError as error:
                 _LOG.warning("ignoring %s: %s", path, error)
+                unreadable.append(path)
                 continue
             if failure.config_hash == plan.config_hash and plan.has_run(failure.run_id):
                 failures.setdefault(failure.run_id, []).append(failure)
@@ -655,6 +678,7 @@ class Store:
             },
             tuple(stale),
             tuple(kept),
+            tuple(unreadable),
         )
 
     def _kept(self, path: Path, run: PlannedRun, stated: _Stated) -> Path | None:
@@ -1014,6 +1038,12 @@ def _stated_id(found: str, run_id: str) -> str:
 
 def _stale(path: Path, run: PlannedRun, stated: _Stated) -> Stale | None:
     """Return why the file at ``path`` is not the valid record of a planned run, if it is not."""
+    found = _examined(path, run, stated)
+    return found if isinstance(found, Stale) else None
+
+
+def _examined(path: Path, run: PlannedRun, stated: _Stated) -> RunRecord | Stale:
+    """Return the valid record of a planned run at ``path``, or why the file is none."""
     try:
         record = _parse(path, RunRecord.from_dict)
     except SerializationError as error:
@@ -1021,7 +1051,7 @@ def _stale(path: Path, run: PlannedRun, stated: _Stated) -> Stale | None:
     foreign = _foreign(record.run_id, record.config_hash, run.run_id, stated.config_hash)
     issues = foreign or stated.issues(record, run)
     if not issues:
-        return None
+        return record
     changed = bool(foreign) and record.config_hash == stated.config_hash
     found = _stated_id(record.run_id, run.run_id)
     return Stale(run.run_id, run.problem, path, found, f"{issues} ({path})", changed)

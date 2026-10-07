@@ -66,6 +66,7 @@ from dispatchatlas.core.validation import check_schedule
 __all__ = [
     "CLOCK_MARGIN_SECONDS",
     "CLOCK_MARGIN_SHARE",
+    "OBSERVATION_KINDS",
     "OVERRUN_MARGIN",
     "Completion",
     "Failure",
@@ -77,6 +78,7 @@ __all__ = [
     "describe",
     "engine_failure",
     "exception_error",
+    "observations",
     "observe",
     "overran",
     "utc_now",
@@ -487,28 +489,140 @@ def overran(wall_seconds: float, limit: float, margin: float = OVERRUN_MARGIN) -
     return wall_seconds > limit + max(CLOCK_MARGIN_SECONDS, margin * limit)
 
 
+OBSERVATION_KINDS: tuple[str, ...] = (
+    "overrun",
+    "early-stop",
+    "elapsed",
+    "trace-time",
+    "trace-evaluations",
+    "trace-value",
+    "no-trace",
+)
+"""The kinds of fact :func:`observations` finds in a completed attempt, in its order."""
+
+
+def observations(
+    outcome: Outcome, stop: StopCriteria, wall_seconds: float, *, iterative: bool
+) -> tuple[tuple[str, str], ...]:
+    """Return what the time and the trace of a completed attempt show, each with its kind.
+
+    One fact is returned for each of these, under the kind named first:
+
+    - ``overrun``: the wall time the engine measured passes the time limit
+      by more than :data:`OVERRUN_MARGIN` of the limit and by more than
+      :data:`CLOCK_MARGIN_SECONDS`;
+    - ``early-stop``: the solver stopped for its time limit while that wall
+      time is below the limit by more than :data:`CLOCK_MARGIN_SECONDS` and
+      by more than :data:`CLOCK_MARGIN_SHARE` of the limit, as when a solver
+      gives a search a share of its limit that counts from the start of the
+      attempt;
+    - ``elapsed``: the elapsed time the solver reports differs from that
+      wall time by more than :data:`CLOCK_MARGIN_SECONDS` and by more than
+      :data:`CLOCK_MARGIN_SHARE` of it;
+    - ``trace-time``: the trace holds a negative time, times that decrease,
+      or a time beyond the elapsed time the solver reports, one fact for
+      each of the three;
+    - ``trace-evaluations``: the evaluation counts of the trace decrease;
+    - ``trace-value``: the last value of the trace differs from the value of
+      the outcome;
+    - ``no-trace``: an iterative solver returned a schedule and no trace.
+
+    The facts follow from the outcome, the stop criteria, and the wall time
+    alone, so they can be derived again from a run record.
+
+    Args:
+        outcome: The checked outcome of the attempt.
+        stop: The stop criteria the solver received.
+        wall_seconds: Wall-clock seconds of the solve, on the engine's clock.
+        iterative: Whether the solver runs until a stop criterion fires.
+
+    Returns:
+        Pairs of a kind, one of :data:`OBSERVATION_KINDS`, and the fact in
+        words; empty when nothing is found.
+    """
+    found: list[tuple[str, str]] = []
+    limit = stop.time_limit
+    if limit is not None:
+        if overran(wall_seconds, limit):
+            found.append(
+                (
+                    "overrun",
+                    f"the run took {wall_seconds:.6g} s of wall time under a time limit of "
+                    f"{limit:g} s, {wall_seconds / limit:.3g} times the limit",
+                )
+            )
+        early = wall_seconds < limit - max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * limit)
+        if early and outcome.stop_reason is StopReason.TIME_LIMIT:
+            found.append(
+                (
+                    "early-stop",
+                    f"the solver stopped for its time limit after {wall_seconds:.6g} s of wall "
+                    f"time, under a time limit of {limit:g} s",
+                )
+            )
+    elapsed = outcome.elapsed
+    margin = max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * wall_seconds)
+    if abs(wall_seconds - elapsed) > margin:
+        found.append(
+            (
+                "elapsed",
+                f"the solver reports {elapsed:.6g} s elapsed, the engine measured "
+                f"{wall_seconds:.6g} s of wall time",
+            )
+        )
+    trace = outcome.trace
+    if not trace:
+        if iterative and outcome.schedule_digest is not None:
+            found.append(
+                ("no-trace", "the solver is iterative and returned a schedule without a trace")
+            )
+        return tuple(found)
+    times = [point.elapsed for point in trace]
+    if min(times) < 0.0:
+        found.append(("trace-time", f"the trace holds a negative time ({min(times)!r} s)"))
+    fall = next(((a, b) for a, b in itertools.pairwise(times) if b < a), None)
+    if fall is not None:
+        found.append(
+            ("trace-time", f"the times of the trace decrease (from {fall[0]!r} s to {fall[1]!r} s)")
+        )
+    if max(times) > elapsed + _TRACE_TIME_TOLERANCE:
+        found.append(
+            (
+                "trace-time",
+                f"the trace holds a time ({max(times)!r} s) beyond the elapsed time the solver "
+                f"reports ({elapsed!r} s)",
+            )
+        )
+    counts = [point.evaluations for point in trace]
+    drop = next(((a, b) for a, b in itertools.pairwise(counts) if b < a), None)
+    if drop is not None:
+        found.append(
+            (
+                "trace-evaluations",
+                f"the evaluation counts of the trace decrease (from {drop[0]} to {drop[1]})",
+            )
+        )
+    last = trace[-1].value
+    if outcome.value is not None and not math.isclose(
+        last, outcome.value, rel_tol=_TRACE_VALUE_TOLERANCE, abs_tol=_TRACE_VALUE_TOLERANCE
+    ):
+        found.append(
+            (
+                "trace-value",
+                f"the last value of the trace ({last!r}) differs from the value of the outcome "
+                f"({outcome.value!r})",
+            )
+        )
+    return tuple(found)
+
+
 def observe(
     outcome: Outcome, stop: StopCriteria, wall_seconds: float, *, iterative: bool
 ) -> tuple[str, ...]:
-    """Return what the time and the trace of a completed attempt show.
+    """Return what the time and the trace of a completed attempt show, as notes.
 
-    One note is returned for each of these facts:
-
-    - the wall time the engine measured passes the time limit by more than
-      :data:`OVERRUN_MARGIN` of the limit and by more than
-      :data:`CLOCK_MARGIN_SECONDS`;
-    - the solver stopped for its time limit while that wall time is below the
-      limit by more than :data:`CLOCK_MARGIN_SECONDS` and by more than
-      :data:`CLOCK_MARGIN_SHARE` of the limit, as when a solver gives a
-      search a share of its limit that counts from the start of the attempt;
-    - the elapsed time the solver reports differs from that wall time by more
-      than :data:`CLOCK_MARGIN_SECONDS` and by more than
-      :data:`CLOCK_MARGIN_SHARE` of it;
-    - the trace holds a negative time, times that decrease, or a time beyond
-      the elapsed time the solver reports;
-    - the evaluation counts of the trace decrease;
-    - the last value of the trace differs from the value of the outcome;
-    - an iterative solver returned a schedule and no trace.
+    The notes are the facts of :func:`observations`, in words and in its
+    order.
 
     Args:
         outcome: The checked outcome of the attempt.
@@ -519,56 +633,8 @@ def observe(
     Returns:
         The notes, empty when nothing is found.
     """
-    notes: list[str] = []
-    limit = stop.time_limit
-    if limit is not None:
-        if overran(wall_seconds, limit):
-            notes.append(
-                f"the run took {wall_seconds:.6g} s of wall time under a time limit of "
-                f"{limit:g} s, {wall_seconds / limit:.3g} times the limit"
-            )
-        early = wall_seconds < limit - max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * limit)
-        if early and outcome.stop_reason is StopReason.TIME_LIMIT:
-            notes.append(
-                f"the solver stopped for its time limit after {wall_seconds:.6g} s of wall "
-                f"time, under a time limit of {limit:g} s"
-            )
-    elapsed = outcome.elapsed
-    margin = max(CLOCK_MARGIN_SECONDS, CLOCK_MARGIN_SHARE * wall_seconds)
-    if abs(wall_seconds - elapsed) > margin:
-        notes.append(
-            f"the solver reports {elapsed:.6g} s elapsed, the engine measured "
-            f"{wall_seconds:.6g} s of wall time"
-        )
-    trace = outcome.trace
-    if not trace:
-        if iterative and outcome.schedule_digest is not None:
-            notes.append("the solver is iterative and returned a schedule without a trace")
-        return tuple(notes)
-    times = [point.elapsed for point in trace]
-    if min(times) < 0.0:
-        notes.append(f"the trace holds a negative time ({min(times)!r} s)")
-    fall = next(((a, b) for a, b in itertools.pairwise(times) if b < a), None)
-    if fall is not None:
-        notes.append(f"the times of the trace decrease (from {fall[0]!r} s to {fall[1]!r} s)")
-    if max(times) > elapsed + _TRACE_TIME_TOLERANCE:
-        notes.append(
-            f"the trace holds a time ({max(times)!r} s) beyond the elapsed time the solver "
-            f"reports ({elapsed!r} s)"
-        )
-    counts = [point.evaluations for point in trace]
-    drop = next(((a, b) for a, b in itertools.pairwise(counts) if b < a), None)
-    if drop is not None:
-        notes.append(f"the evaluation counts of the trace decrease (from {drop[0]} to {drop[1]})")
-    last = trace[-1].value
-    if outcome.value is not None and not math.isclose(
-        last, outcome.value, rel_tol=_TRACE_VALUE_TOLERANCE, abs_tol=_TRACE_VALUE_TOLERANCE
-    ):
-        notes.append(
-            f"the last value of the trace ({last!r}) differs from the value of the outcome "
-            f"({outcome.value!r})"
-        )
-    return tuple(notes)
+    facts = observations(outcome, stop, wall_seconds, iterative=iterative)
+    return tuple(text for _, text in facts)
 
 
 def engine_failure(
