@@ -112,6 +112,9 @@ CODE_POLICIES = ("warn", "refuse")
 PROBLEM_POLICIES = ("rerun", "refuse")
 """Values of ``on_changed_problem``, the default first."""
 
+LOG_LEVELS = ("inherit", "info", "debug")
+"""Values of ``log_level``, the default first."""
+
 THREAD_VARIABLES = (
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
@@ -558,9 +561,22 @@ class Execution:
             is warned about and recorded under either value.
         on_changed_problem: What a session does when the directory holds
             the record of a planned run made on another version of its
-            problem. ``"rerun"`` moves the record aside and runs the run
-            again; ``"refuse"`` ends the session before it moves or
-            writes anything.
+            problem. ``"rerun"`` runs the run again and moves the record
+            aside when the new one is written; ``"refuse"`` ends the
+            session before it moves or writes anything.
+        log_level: Which records of the library's loggers the session log
+            receives beside the engine's own, which it receives from the
+            level ``INFO``. ``"inherit"`` leaves the loggers as they are:
+            the log receives what they let through, which is ``WARNING``
+            and higher unless the application lowered a level, and in a
+            worker process unless something configured logging there.
+            ``"info"`` and ``"debug"`` lower the library's loggers to that
+            level for the session, in the calling process and in every
+            worker, while the handlers of the application show what they
+            showed before. A lowered level costs time inside a run: every
+            record of a solver from that level on is made and handed over,
+            so a solver that logs in its loop does less work in the same
+            time limit.
     """
 
     backend: str = "process"
@@ -574,6 +590,7 @@ class Execution:
     startup_limit: float = STARTUP_SECONDS
     on_changed_code: Literal["warn", "refuse"] = "warn"
     on_changed_problem: Literal["rerun", "refuse"] = "rerun"
+    log_level: Literal["inherit", "info", "debug"] = "inherit"
 
     def __post_init__(self) -> None:
         if self.backend not in BACKENDS:
@@ -600,6 +617,7 @@ class Execution:
         for key, allowed in (
             ("on_changed_code", CODE_POLICIES),
             ("on_changed_problem", PROBLEM_POLICIES),
+            ("log_level", LOG_LEVELS),
         ):
             if getattr(self, key) not in allowed:
                 raise ConfigError(
@@ -694,6 +712,7 @@ class Execution:
             "startup_limit": self.startup_limit,
             "on_changed_code": self.on_changed_code,
             "on_changed_problem": self.on_changed_problem,
+            "log_level": self.log_level,
         }
 
 

@@ -40,8 +40,18 @@ or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
   given the digest of the library source its session started on has every
   worker report the digest of the source it starts on: a worker on other
   source is warned about, and every run it completes carries a note. A
-  backend that is given a sink for log records has every worker send what
-  the library's loggers record in it, of :data:`WORKER_LOG_LEVEL` or higher.
+  backend that is given a sink for log records has every worker send the
+  records of :data:`WORKER_LOG_LEVEL` or higher that the library's loggers
+  let through in it, which a fresh worker does from ``WARNING``; given a
+  log level as well, the backend lowers the library's loggers of every
+  worker to it, and what the handlers of a worker show stays as it was.
+  The thread that logs never waits for the supervisor: a record goes to a
+  bounded queue that another thread of the worker sends in batches, a
+  record the queue has no room for is dropped and counted, and the
+  supervisor adds the count to the log. The supervisor spends at most
+  :data:`LOG_READ_SECONDS` on the log records of one worker before it
+  turns to the limits and the other workers, and log records do not
+  postpone a kill.
 
 Every result states how many runs were executing when its attempt was handed
 over (``concurrent``), the processor its worker is pinned to (``cpu``), and
@@ -65,6 +75,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from multiprocessing.connection import wait
+from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dispatchatlas.campaigns.config import STARTUP_SECONDS, THREAD_VARIABLES
@@ -85,7 +96,7 @@ from dispatchatlas.campaigns.processors import affinity_cpus, confined, describe
 from dispatchatlas.campaigns.records import Category, ErrorKind, Incumbent
 from dispatchatlas.campaigns.timeout import contain, detach, end_with_parent, kill, release
 from dispatchatlas.core.errors import ConfigError, SerializationError
-from dispatchatlas.core.logs import get_logger
+from dispatchatlas.core.logs import Lowered, get_logger
 from dispatchatlas.core.serialization import problem_from_dict, problem_to_dict
 from dispatchatlas.solvers.search import Improvement, listening
 
@@ -98,6 +109,7 @@ if TYPE_CHECKING:
     from dispatchatlas.core.model import Problem
 
 __all__ = [
+    "LOG_READ_SECONDS",
     "PROGRESS_INTERVAL",
     "STARTUP_ATTEMPTS",
     "WORKER_LOG_LEVEL",
@@ -115,7 +127,16 @@ PROGRESS_INTERVAL = 0.25
 """Fewest seconds between two incumbents a worker forwards to the supervisor."""
 
 WORKER_LOG_LEVEL = logging.INFO
-"""Lowest level of the log records a worker sends to the supervisor."""
+"""Lowest level of the log records a worker sends, unless the backend is given a lower one."""
+
+LOG_READ_SECONDS = 0.05
+"""Longest the supervisor handles the log records of one worker in one reading of its pipe."""
+
+_LOG_QUEUE = 10_000
+"""Log records a worker holds for sending; a record beyond them is dropped and counted."""
+
+_LOG_BATCH = 200
+"""Most log records a worker sends in one message."""
 
 type LogSink = Callable[[str, float, int, str, str], None]
 """Receives a record a worker logged: the worker's name, the time of the record in
@@ -169,6 +190,11 @@ class ProcessBackend:
             ``None`` compares nothing.
         log: Receives the records the workers log. ``None`` leaves them in
             the workers.
+        log_level: The level the library's loggers of every worker are
+            lowered to, so that ``log`` receives their records from that
+            level. ``None`` leaves the loggers as they are, and ``log``
+            receives what they let through of :data:`WORKER_LOG_LEVEL` or
+            higher. Without ``log`` nothing is lowered.
 
     Raises:
         ConfigError: If there is no worker, a worker has no thread, the
@@ -187,6 +213,7 @@ class ProcessBackend:
         startup_limit: float = STARTUP_SECONDS,
         source: str | None = None,
         log: LogSink | None = None,
+        log_level: int | None = None,
     ) -> None:
         if workers < 1:
             raise ConfigError("a process backend needs at least one worker")
@@ -205,6 +232,7 @@ class ProcessBackend:
         self.startup_limit = float(startup_limit)
         self.source = source
         self.log = log
+        self.log_level = log_level
 
     def run(self, queue: deque[Task]) -> Generator[Result]:
         """Execute tasks from ``queue`` until it is empty, yielding each result.
@@ -233,6 +261,7 @@ class ProcessBackend:
                 self.startup_limit,
                 source=self.source,
                 log=self.log,
+                log_level=self.log_level,
             )
             for number in range(1, count + 1)
         ]
@@ -269,10 +298,14 @@ class ProcessBackend:
                                 )
                             queue.appendleft(slot.release())
                             slot.close(graceful=False)
-                        elif isinstance(result, Completion | Failure):
+                            continue
+                        if isinstance(result, Completion | Failure):
                             failed_starts = 0
                             yield result
-                    elif slot.expired():
+                            continue
+                    # Whatever else its pipe still holds, such as log records, a
+                    # task that is past its limit after the reading is killed now.
+                    if slot.task is not None and slot.expired():
                         yield slot.expire()
             finished = True
         finally:
@@ -289,6 +322,7 @@ def backend_for(
     startup_limit: float = STARTUP_SECONDS,
     source: str | None = None,
     log: LogSink | None = None,
+    log_level: int | None = None,
 ) -> Backend:
     """Return the backend of the given name.
 
@@ -301,8 +335,10 @@ def backend_for(
             run, to report that the solve begins.
         source: The digest of the library source the session started on,
             for the worker processes to compare theirs with.
-        log: Receives the records the worker processes log. The sequential
-            backend has no worker process and uses neither.
+        log: Receives the records the worker processes log.
+        log_level: The level the library's loggers of every worker process
+            are lowered to, or ``None`` to leave them. The sequential
+            backend has no worker process and uses none of the three.
 
     Raises:
         ConfigError: If the name is unknown, or the sequential backend gets
@@ -322,6 +358,7 @@ def backend_for(
             startup_limit=startup_limit,
             source=source,
             log=log,
+            log_level=log_level,
         )
     raise ConfigError(f"unknown backend {name!r}; use 'sequential' or 'process'")
 
@@ -344,21 +381,31 @@ class _Job:
 
 
 def _worker_main(
-    connection: Connection, name: str, forward: bool = False, identify: bool = False
+    connection: Connection,
+    name: str,
+    forward: int | None = None,
+    lower: bool = False,
+    identify: bool = False,
 ) -> None:
     """Serve attempts sent over ``connection`` until it closes or sends ``None``.
 
-    With ``forward`` the worker sends what the library's loggers record in
-    it to the supervisor. With ``identify`` it reports the digest of the
-    library source it started on before it reports that it is ready.
+    With a level as ``forward`` the worker sends the records of that level
+    or higher that the library's loggers let through in it to the
+    supervisor, and with ``lower`` it first lowers those loggers to the
+    level, while its own handlers show what they showed
+    (:class:`~dispatchatlas.core.logs.Lowered`). The records of an attempt
+    are sent before its result. With ``identify`` the worker reports the
+    digest of the library source it started on before it reports that it
+    is ready.
     """
     detach()
     end_with_parent()
-    if forward:
-        logger = get_logger(LIBRARY)
-        logger.addHandler(_Forwarder(connection, WORKER_LOG_LEVEL))
-        if logger.getEffectiveLevel() > WORKER_LOG_LEVEL:
-            logger.setLevel(WORKER_LOG_LEVEL)
+    forwarder: _Forwarder | None = None
+    if forward is not None:
+        if lower:
+            Lowered((LIBRARY,), forward).apply()
+        forwarder = _Forwarder(connection, forward)
+        get_logger(LIBRARY).addHandler(forwarder)
     _load_installed_plugins()
     held: list[Any] = []  # [digest, problem] of the problem this worker keeps
     try:
@@ -367,6 +414,8 @@ def _worker_main(
         _send(connection, ("ready", affinity_cpus()))
         while (message := connection.recv()) is not None:
             result = _serve(message, name, held, connection)
+            if forwarder is not None:
+                forwarder.drain()
             try:
                 payload = pickle.dumps(("done", result), protocol=pickle.HIGHEST_PROTOCOL)
             except Exception as error:
@@ -393,22 +442,64 @@ def _send(connection: Connection, message: tuple[str, Any]) -> None:
 
 
 class _Forwarder(logging.Handler):
-    """Sends the records a worker logs to the supervisor.
+    """Hands the records a worker logs to the supervisor without holding the thread that logs.
 
     Each record travels as its time, its level, the name of its logger, and
-    its message with any traceback. A record that cannot be sent is dropped:
-    the run goes on.
+    its message with any traceback. The thread that logs puts it on a
+    queue of :data:`_LOG_QUEUE` records and goes on; a daemon thread sends
+    what is queued, at most :data:`_LOG_BATCH` records in a message, and
+    only that thread waits when the supervisor is slow to read. A record
+    the queue has no room for is dropped and counted, and the count travels
+    with the next message. A record that cannot be formatted is dropped
+    too: the run goes on.
     """
 
     def __init__(self, connection: Connection, level: int) -> None:
         super().__init__(level)
         self._connection = connection
+        self._queue: Queue[tuple[float, int, str, str]] = Queue(_LOG_QUEUE)
+        self._dropped = 0
+        self._counting = threading.Lock()
+        self._sending = threading.Lock()  # held from taking a batch off the queue to sending it
+        threading.Thread(target=self._forward, name="dispatchatlas-log", daemon=True).start()
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Send one record over the worker's pipe."""
-        with contextlib.suppress(Exception):
-            report = (record.created, record.levelno, record.name, self.format(record))
-            _send(self._connection, ("log", report))
+        """Queue one record for the supervisor."""
+        try:
+            item = (record.created, record.levelno, record.name, self.format(record))
+        except Exception:  # a record that cannot be formatted is dropped
+            return
+        try:
+            self._queue.put_nowait(item)
+        except Full:
+            with self._counting:
+                self._dropped += 1
+
+    def drain(self) -> None:
+        """Send what is queued now, in the calling thread."""
+        self._send([])
+
+    def _forward(self) -> None:
+        """Send what is queued, as it arrives, until the pipe closes."""
+        while self._send([self._queue.get()]):
+            pass
+
+    def _send(self, batch: list[tuple[float, int, str, str]]) -> bool:
+        """Send ``batch`` and what is queued behind it; return whether the pipe is open."""
+        with self._sending:
+            while True:
+                with contextlib.suppress(Empty):
+                    while len(batch) < _LOG_BATCH:
+                        batch.append(self._queue.get_nowait())
+                with self._counting:
+                    dropped, self._dropped = self._dropped, 0
+                if not batch and not dropped:
+                    return True
+                try:
+                    _send(self._connection, ("log", (batch, dropped)))
+                except (OSError, ValueError):
+                    return False
+                batch = []
 
 
 def _load_installed_plugins() -> None:
@@ -724,10 +815,16 @@ class _Slot:
         *,
         source: str | None = None,
         log: LogSink | None = None,
+        log_level: int | None = None,
     ) -> None:
         self.name = f"worker-{number}"
         self._source = source
         self._log = log
+        # The lowest level the worker sends, and whether it lowers its loggers to it.
+        self._forward: int | None = None
+        self._lower = log is not None and log_level is not None
+        if log is not None:
+            self._forward = WORKER_LOG_LEVEL if log_level is None else log_level
         self._note: str | None = None  # what every run of this worker is noted with
         self.cpu = cpu
         self.concurrent: int | None = None
@@ -775,7 +872,7 @@ class _Slot:
         parent, child = self._context.Pipe(duplex=True)
         process = self._context.Process(
             target=_worker_main,
-            args=(child, self.name, self._log is not None, self._source is not None),
+            args=(child, self.name, self._forward, self._lower, self._source is not None),
             name=f"dispatchatlas-{self.name}",
         )
         try:
@@ -875,11 +972,16 @@ class _Slot:
 
         A report that the worker is ready sends it the task that waits for
         it. A report that the solve begins arms the hard limit of the running
-        task, and a report of an incumbent is kept for its failure record. A
-        record the worker logged goes to the sink of the backend, and the
+        task, and a report of an incumbent is kept for its failure record. The
+        records the worker logged go to the sink of the backend, and the
         digest of the source the worker started on is compared with the
         session's: every run a worker on other source completes carries a
         note that says so.
+
+        The reading ends once it has handled log records for
+        :data:`LOG_READ_SECONDS`, whatever the pipe still holds, so a worker
+        that logs without pause keeps the supervisor from neither the
+        limits nor the other workers.
 
         Returns:
             The result of the task; ``None`` when only reports arrived; a
@@ -891,6 +993,7 @@ class _Slot:
                 processors than the slot's.
         """
         closed = False
+        begun = time.perf_counter()
         try:
             while self.connection.poll():
                 kind, payload = self.connection.recv()
@@ -911,6 +1014,8 @@ class _Slot:
                     continue
                 if kind == "log":
                     self._logged(payload)
+                    if time.perf_counter() - begun >= LOG_READ_SECONDS:
+                        return None
                     continue
                 if kind == "source":
                     self._identify(payload)
@@ -965,17 +1070,34 @@ class _Slot:
         self.deadline = None if task.hard_limit is None else now + task.hard_limit
 
     def _logged(self, report: object) -> None:
-        """Hand a record the worker logged to the sink; ignore any other report."""
-        if self._log is None or not isinstance(report, tuple) or len(report) != 4:
+        """Hand the records the worker logged to the sink; ignore any other report.
+
+        A report holds the records and the number of records the worker
+        dropped since its last report, which the sink receives as a warning.
+        """
+        if self._log is None or not isinstance(report, tuple) or len(report) != 2:
             return
-        created, level, name, message = report
-        if (
-            isinstance(created, float)
-            and isinstance(level, int)
-            and isinstance(name, str)
-            and isinstance(message, str)
-        ):
-            self._log(self.name, created, level, name, message)
+        records, dropped = report
+        for item in records if isinstance(records, list) else ():
+            if not isinstance(item, tuple) or len(item) != 4:
+                continue
+            created, level, name, message = item
+            if (
+                isinstance(created, float)
+                and isinstance(level, int)
+                and isinstance(name, str)
+                and isinstance(message, str)
+            ):
+                self._log(self.name, created, level, name, message)
+        if isinstance(dropped, int) and dropped > 0:
+            self._log(
+                self.name,
+                time.time(),
+                logging.WARNING,
+                _LOG.name,
+                f"{dropped} log record(s) of the worker were dropped: it logged faster than "
+                "they could be handed over",
+            )
 
     def _identify(self, found: object) -> None:
         """Compare the source the worker started on with the session's; warn when they differ."""

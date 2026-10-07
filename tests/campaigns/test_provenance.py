@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing
 import re
+import subprocess
+import sys
+import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
@@ -16,8 +22,11 @@ from dispatchatlas.benchmarks import generate
 from dispatchatlas.campaigns import (
     Campaign,
     Execution,
+    FamilySource,
     FileSource,
+    Protocol,
     SolverSpec,
+    backends,
     environment,
     planning,
     read_failures,
@@ -29,7 +38,7 @@ from dispatchatlas.campaigns import (
 )
 from dispatchatlas.campaigns.estimation import estimate
 from dispatchatlas.campaigns.io import campaign_from_dict, campaign_to_dict
-from dispatchatlas.campaigns.records import RunRecord, SessionRecord, SessionStatus
+from dispatchatlas.campaigns.records import ErrorKind, RunRecord, SessionRecord, SessionStatus
 from dispatchatlas.campaigns.runner import session_changes
 from dispatchatlas.campaigns.store import (
     FAILURES,
@@ -43,7 +52,7 @@ from dispatchatlas.campaigns.store import (
 )
 from dispatchatlas.core import ConfigError, Problem, SerializationError, SolveResult, SolverInfo
 from dispatchatlas.core.io import read_json
-from dispatchatlas.core.logs import SessionLog, get_logger
+from dispatchatlas.core.logs import Lowered, SessionLog, get_logger
 from dispatchatlas.core.serialization import problem_from_dict, problem_to_dict, save_problem
 from dispatchatlas.core.solver import StopCriteria
 from dispatchatlas.solvers import SolverRegistry
@@ -51,13 +60,13 @@ from dispatchatlas.solvers.rules import InputOrder
 from tests.campaigns.solvers import registry, tiny_campaign
 
 LINE = re.compile(
-    r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (INFO|WARNING|ERROR) dispatchatlas\S*: "
+    r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (DEBUG|INFO|WARNING|ERROR) dispatchatlas\S*: "
 )
 
 
 @dataclass(frozen=True)
 class Chatty:
-    """Input order, which logs a warning and a detail in every solve."""
+    """Input order, which logs a warning, a line, and a detail in every solve."""
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="test-chatty",
@@ -71,13 +80,47 @@ class Chatty:
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         logger = get_logger("tests.chatty")
         logger.warning("solving %s with seed %d", problem.id, seed)
+        logger.info("working on %s", problem.id)
         logger.debug("a detail of %s", problem.id)
+        return InputOrder().solve(problem, stop, seed)
+
+
+@dataclass(frozen=True)
+class Counter:
+    """Loops for ``seconds``, whatever its stop criteria say, and writes how often it looped.
+
+    With ``chatty`` every iteration logs a line at the level INFO. The
+    count goes to the file ``chatty`` or ``silent`` under ``marker``.
+    """
+
+    marker: str = ""
+    seconds: float = 0.3
+    chatty: bool = True
+    info: ClassVar[SolverInfo] = SolverInfo(
+        id="test-counter",
+        name="test-counter",
+        family="random-sampling",
+        summary="A solver that counts its iterations and may log each one.",
+        stochastic=False,
+        iterative=True,
+    )
+
+    def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
+        logger = get_logger("tests.counter")
+        count = 0
+        begun = time.perf_counter()
+        while time.perf_counter() - begun < self.seconds:
+            if self.chatty:
+                logger.info("iteration %d", count)
+            count += 1
+        (Path(self.marker) / ("chatty" if self.chatty else "silent")).write_text(str(count))
         return InputOrder().solve(problem, stop, seed)
 
 
 def _registry() -> SolverRegistry:
     solvers = registry()
     solvers.register(Chatty)
+    solvers.register(Counter)
     return solvers
 
 
@@ -153,10 +196,33 @@ def test_the_policies_are_optional_execution_keys() -> None:
     )
     assert read.config_hash == campaign.config_hash
     # A campaign document written without the keys reads with their defaults.
-    earlier = {k: v for k, v in document["execution"].items() if not k.startswith("on_changed")}
+    optional = ("on_changed_code", "on_changed_problem", "log_level")
+    earlier = {k: v for k, v in document["execution"].items() if k not in optional}
     assert campaign_from_dict({**document, "execution": earlier}) == campaign
     with pytest.raises(ConfigError, match="on_changed_code"):
         campaign_from_dict({**document, "execution": {**earlier, "on_changed_code": "never"}})
+
+
+def test_the_log_level_is_an_optional_execution_key(tmp_path: Path) -> None:
+    assert Execution().log_level == "inherit"
+    with pytest.raises(ConfigError, match="log_level must be one of"):
+        Execution(log_level="warning")  # type: ignore[arg-type]
+    campaign = tiny_campaign()
+    document = campaign_to_dict(campaign)
+    assert document["execution"]["log_level"] == "inherit"
+    detailed = campaign_from_dict(
+        {**document, "execution": {**document["execution"], "log_level": "debug"}}
+    )
+    assert detailed.execution.log_level == "debug"
+    assert detailed.config_hash == campaign.config_hash
+    with pytest.raises(ConfigError, match="log_level"):
+        campaign_from_dict({**document, "execution": {**document["execution"], "log_level": 10}})
+    # A resume under another level names the change as one of the execution settings.
+    first = run(campaign, tmp_path, registry=REGISTRY, max_runs=0)
+    run(detailed, tmp_path, registry=REGISTRY, max_runs=0)
+    assert _fields(read_sessions(first.directory)[1]) == {
+        "execution.log_level": ("inherit", "debug", "execution")
+    }
 
 
 # -------------------------------------------------------- resume comparison
@@ -702,7 +768,7 @@ def test_records_and_sessions_that_lack_the_optional_fields_load_and_resume(
     hashes = {record.run_id: record.result_hash for record in read_runs(summary.directory)}
 
     def without_policies(execution: dict[str, Any]) -> None:
-        for key in ("on_changed_code", "on_changed_problem"):
+        for key in ("on_changed_code", "on_changed_problem", "log_level"):
             execution.pop(key)
 
     def stripped_session(document: dict[str, Any]) -> None:
@@ -744,14 +810,16 @@ def test_records_and_sessions_that_lack_the_optional_fields_load_and_resume(
 # -------------------------------------------------------------- session log
 
 
+@pytest.mark.parametrize("level", ["inherit", "info", "debug"])
 def test_a_session_writes_a_log_file_with_time_stamps(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, quiet_library: logging.Logger
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, quiet_library: logging.Logger, level: str
 ) -> None:
-    library, level = quiet_library, quiet_library.level
-    campaign = tiny_campaign(solvers=(SolverSpec("test-chatty"),), replicates=1)
+    library, earlier = quiet_library, quiet_library.level
+    campaign = tiny_campaign(solvers=(SolverSpec("test-chatty"),), replicates=1, log_level=level)
     summary = run(campaign, tmp_path, registry=REGISTRY)
     lines = (summary.directory / LOGS / "session-1.log").read_text().splitlines()
     assert all(LINE.match(line) for line in lines)
+    # The engine's own lines are in the file from INFO under every setting.
     assert (
         sum("session 1: 2 of 2 runs to attempt, sequential backend" in line for line in lines) == 1
     )
@@ -759,20 +827,33 @@ def test_a_session_writes_a_log_file_with_time_stamps(
         sum(" WARNING dispatchatlas.tests.chatty: solving flow-shop" in line for line in lines) == 2
     )
     assert lines[-1].endswith("session 1 finished: 2 completed, 0 failed, 0 pending")
-    assert not any("a detail of" in line for line in lines)
+    # A solver's records are in it from the level its logger lets through, which the
+    # campaign can lower.
+    assert sum(" INFO dispatchatlas.tests.chatty: working on" in line for line in lines) == (
+        0 if level == "inherit" else 2
+    )
+    assert sum(" DEBUG dispatchatlas.tests.chatty: a detail" in line for line in lines) == (
+        2 if level == "debug" else 0
+    )
     # The handlers of the application show what they showed before, and the level is restored.
-    assert library.level == level
+    assert library.level == earlier
+    assert logging.getLogger("dispatchatlas.campaigns").level == logging.NOTSET
     assert {record.levelno for record in caplog.records} == {logging.WARNING}
     assert Store(summary.directory).log_path(1) == summary.directory / LOGS / "session-1.log"
     run(campaign, tmp_path, registry=REGISTRY)
     assert sorted(_files(summary.directory / LOGS)) == ["session-1.log", "session-2.log"]
 
 
+@pytest.mark.parametrize("level", ["inherit", "info"])
 def test_the_log_file_holds_what_a_worker_logs(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, level: str
 ) -> None:
     campaign = tiny_campaign(
-        solvers=(SolverSpec("test-chatty"),), replicates=1, backend="process", workers=1
+        solvers=(SolverSpec("test-chatty"),),
+        replicates=1,
+        backend="process",
+        workers=1,
+        log_level=level,
     )
     with caplog.at_level(logging.INFO, logger="dispatchatlas"):
         summary = run(campaign, tmp_path, registry=REGISTRY)
@@ -784,6 +865,14 @@ def test_the_log_file_holds_what_a_worker_logs(
         flags=re.MULTILINE,
     )
     assert found == ["flow-shop-3x2-1", "flow-shop-3x2-2"]
+    # A worker starts with the default level: its records below WARNING are made, and
+    # sent, only when the campaign lowers the level.
+    detailed = re.findall(
+        r"^\S+Z INFO dispatchatlas\.tests\.chatty: \[worker-1\] working on (\S+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    assert detailed == ([] if level == "inherit" else ["flow-shop-3x2-1", "flow-shop-3x2-2"])
     assert "a detail of" not in text
     # The record of a worker goes to the file, and to no handler of this process.
     assert not any(record.name.endswith("tests.chatty") for record in caplog.records)
@@ -810,20 +899,28 @@ def test_a_worker_that_starts_on_other_source_is_reported_and_its_runs_noted(
         assert note.endswith("than the session (digest ffffffffffff)")
 
 
+class _Collector(logging.Handler):
+    """Keeps the records it is given."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.seen.append(record)
+
+    def messages(self) -> list[str]:
+        return [record.getMessage() for record in self.seen]
+
+
 def test_a_session_log_leaves_other_handlers_as_they_were(
     tmp_path: Path, quiet_library: logging.Logger
 ) -> None:
     library = quiet_library
-    seen: list[logging.LogRecord] = []
-
-    class Collector(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            seen.append(record)
-
-    collector = Collector()
+    collector = _Collector()
     library.addHandler(collector)
     try:
-        with SessionLog() as log:
+        with SessionLog(lowered=("dispatchatlas",)) as log:
             get_logger("tests.early").info("kept until the file is named")
             log.open(tmp_path / "logs" / "a.log")
             get_logger("tests.late").warning("written at once")
@@ -839,8 +936,350 @@ def test_a_session_log_leaves_other_handlers_as_they_were(
         "WARNING dispatchatlas.elsewhere: from another process",
     ]
     assert lines[2].startswith("1970-01-01T00:00:01.500Z ")
-    assert [record.getMessage() for record in seen] == ["written at once", "after the block"]
+    assert collector.messages() == ["written at once", "after the block"]
     assert collector.filters == []
     with SessionLog():
         get_logger("tests.unnamed").warning("no file is named")
     assert sorted(path.name for path in (tmp_path / "logs").iterdir()) == ["a.log"]
+    # Without a lowered logger the file receives what the loggers let through anyway.
+    with SessionLog() as log:
+        log.open(tmp_path / "logs" / "b.log")
+        get_logger("tests.plain").info("not made")
+        get_logger("tests.plain").warning("made")
+        assert library.level == logging.WARNING
+    assert [
+        line.split(" ", 2)[2] for line in (tmp_path / "logs" / "b.log").read_text().splitlines()
+    ] == ["dispatchatlas.tests.plain: made"]
+
+
+def test_lowered_loggers_show_no_more_and_the_loggers_of_the_application_no_less(
+    quiet_library: logging.Logger,
+) -> None:
+    # The usual configuration of an application: a handler on the root logger, the root
+    # at WARNING, and its own logger at INFO.
+    root, library = logging.getLogger(), quiet_library
+    application = logging.getLogger("tests_provenance_application")
+    engine = logging.getLogger("dispatchatlas.campaigns")
+    verbose = get_logger("tests.verbose")
+    shown, below, received = _Collector(), _Collector(), _Collector()
+    levels = (root.level, application.level, engine.level, verbose.level)
+    root.setLevel(logging.WARNING)
+    application.setLevel(logging.INFO)
+    engine.setLevel(logging.ERROR)  # a level of its own, above the library's
+    verbose.setLevel(logging.DEBUG)  # a logger the application asked details of
+    root.addHandler(shown)
+    verbose.addHandler(below)
+    try:
+        lowered = Lowered(("dispatchatlas", "dispatchatlas.campaigns"), logging.INFO)
+        with lowered:
+            assert (library.level, engine.level) == (logging.INFO, logging.INFO)
+            library.addHandler(received)  # as the session's file: added after, so not filtered
+            application.info("of the application")
+            get_logger("tests.solver").info("of a solver")
+            get_logger("tests.solver").warning("a warning of a solver")
+            engine.info("of the engine")
+            engine.warning("a warning of the engine")
+            engine.error("an error of the engine")
+            verbose.debug("a detail that was asked for")
+            lowered.apply()  # applying twice changes nothing
+        library.removeHandler(received)
+        assert (library.level, engine.level) == (logging.WARNING, logging.ERROR)
+        assert shown.filters == below.filters == []
+        application.info("after the block")
+        engine.warning("below the level of the engine again")
+    finally:
+        root.removeHandler(shown)
+        verbose.removeHandler(below)
+        library.removeHandler(received)
+        for logger, level in zip((root, application, engine, verbose), levels, strict=True):
+            logger.setLevel(level)
+    # The handlers of the application show what they would show without the block.
+    assert shown.messages() == [
+        "of the application",
+        "a warning of a solver",
+        "an error of the engine",
+        "a detail that was asked for",
+        "after the block",
+    ]
+    assert below.messages() == ["a detail that was asked for"]
+    # The lowered loggers made every record from INFO.
+    assert received.messages() == [
+        "of a solver",
+        "a warning of a solver",
+        "of the engine",
+        "a warning of the engine",
+        "an error of the engine",
+        "a detail that was asked for",
+    ]
+    # Loggers that let the level through already are left alone.
+    library.setLevel(logging.DEBUG)
+    with Lowered(("dispatchatlas",), logging.INFO):
+        assert library.level == logging.DEBUG
+    assert library.level == logging.DEBUG
+
+
+def test_a_log_file_is_buffered_and_limited(tmp_path: Path, quiet_library: logging.Logger) -> None:
+    path = tmp_path / "burst.log"
+    with SessionLog() as log:
+        log.open(path)
+        for number in range(3):
+            log.write(float(number), logging.INFO, "dispatchatlas.elsewhere", f"line {number}")
+        # A burst below WARNING waits in the buffer behind its first record.
+        assert path.read_text().count("\n") == 1
+        log.write(3.0, logging.WARNING, "dispatchatlas.elsewhere", "a warning")
+        assert path.read_text().count("\n") == 4
+        log.write(4.0, logging.INFO, "dispatchatlas.elsewhere", "the last line")
+    assert path.read_text().splitlines()[-1].endswith("INFO dispatchatlas.elsewhere: the last line")
+    # Past the limit records are counted, and the last line states how many were left out.
+    limited = tmp_path / "limited.log"
+    with SessionLog(limit=300) as log:
+        log.open(limited)
+        for number in range(50):
+            log.write(float(number), logging.WARNING, "dispatchatlas.elsewhere", f"line {number}")
+    lines = limited.read_text().splitlines()
+    written = len(lines) - 1
+    assert 1 <= written < 50
+    assert sum(len(line) + 1 for line in lines[:-1]) < 300 + len(lines[-2]) + 1
+    assert lines[-1].endswith(
+        f"WARNING dispatchatlas.core.logs: {50 - written} later record(s) were left out: "
+        "the file reached its limit of 300 characters"
+    )
+    assert LINE.match(lines[-1])
+
+
+class _Pipe:
+    """The sending end of a worker's pipe, which holds every message until it is opened."""
+
+    def __init__(self) -> None:
+        self.open = threading.Event()
+        self.sent: list[tuple[str, Any]] = []
+
+    def send(self, message: tuple[str, Any]) -> None:
+        self.open.wait()
+        self.sent.append(message)
+
+
+def test_a_worker_that_logs_never_waits_for_the_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backends, "_LOG_QUEUE", 20)
+    monkeypatch.setattr(backends, "_LOG_BATCH", 8)
+    pipe = _Pipe()
+    forwarder = backends._Forwarder(pipe, logging.INFO)  # type: ignore[arg-type]
+    logger = logging.getLogger("tests_provenance_forwarder")
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+    logger.addHandler(forwarder)
+
+    def log() -> None:
+        for number in range(200):
+            logger.info("record %d", number)
+        logger.debug("below the level of the forwarder")
+
+    try:
+        # The supervisor reads nothing: the thread that logs goes on all the same.
+        logging_thread = threading.Thread(target=log, daemon=True)
+        logging_thread.start()
+        logging_thread.join(20.0)
+        assert not logging_thread.is_alive(), "the thread that logs waits for the supervisor"
+        assert pipe.sent == []
+        pipe.open.set()
+        forwarder.drain()
+    finally:
+        pipe.open.set()
+        logger.removeHandler(forwarder)
+    assert {kind for kind, _ in pipe.sent} == {"log"}
+    records = [record for _, (batch, _) in pipe.sent for record in batch]
+    dropped = sum(count for _, (_, count) in pipe.sent)
+    assert all(len(batch) <= 8 for _, (batch, _) in pipe.sent)
+    # Every record was either handed over, in order, or counted as dropped.
+    assert len(records) + dropped == 200
+    assert 20 <= len(records) <= 29  # the queue, and the batch its thread held meanwhile
+    numbers = [int(message.split()[1]) for _, _, _, message in records]
+    assert numbers == sorted(numbers)
+    assert all(
+        (level, name) == (logging.INFO, "tests_provenance_forwarder")
+        for _, level, name, _ in records
+    )
+
+
+def test_the_supervisor_reads_the_log_records_of_a_worker_in_bounded_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[tuple[str, float, int, str, str]] = []
+    context = multiprocessing.get_context("spawn")
+    ours, theirs = context.Pipe(duplex=True)
+    slot = backends._Slot(
+        1, context, {}, None, 60.0, log=lambda *record: received.append(record), log_level=None
+    )
+    slot._connection = ours
+    slot._process = SimpleNamespace(exitcode=None)  # type: ignore[assignment]
+    try:
+        record = (1.5, logging.WARNING, "dispatchatlas.tests", "a warning")
+        for _ in range(5):
+            theirs.send(("log", ([record, record], 0)))
+        theirs.send(("log", ([], 3)))
+        # With no time for log records, one reading handles one message and returns.
+        monkeypatch.setattr(backends, "LOG_READ_SECONDS", 0.0)
+        assert slot.collect() is None
+        assert len(received) == 2
+        assert slot.readable()
+        # With time, it handles everything the pipe holds.
+        monkeypatch.setattr(backends, "LOG_READ_SECONDS", 60.0)
+        assert slot.collect() is None
+        assert not slot.readable()
+    finally:
+        ours.close()
+        theirs.close()
+    assert received[:10] == [("worker-1", *record)] * 10
+    (worker, _, level, name, message) = received[10]
+    assert (worker, level, name) == (
+        "worker-1",
+        logging.WARNING,
+        "dispatchatlas.campaigns.backends",
+    )
+    assert message.startswith("3 log record(s) of the worker were dropped")
+    assert len(received) == 11
+
+
+def test_a_solver_that_logs_below_the_level_loses_little_of_its_time(
+    tmp_path: Path, quiet_library: logging.Logger
+) -> None:
+    # Under the default setting a record below WARNING is not made, in the calling
+    # process and in a worker, so logging in the loop costs a fraction of the loop.
+    for backend in ("sequential", "process"):
+        marker = tmp_path / backend
+        marker.mkdir()
+        campaign = tiny_campaign(
+            backend,
+            solvers=(
+                SolverSpec("test-counter", "silent", {"marker": str(marker), "chatty": False}),
+                SolverSpec("test-counter", "chatty", {"marker": str(marker), "chatty": True}),
+            ),
+            instances=(FamilySource("flow-shop", (1,), {"jobs": 3, "machines": 2}),),
+            replicates=1,
+            backend=backend,
+        )
+        summary = run(campaign, tmp_path / "out", registry=REGISTRY)
+        assert summary.completed == 2
+        silent = int((marker / "silent").read_text())
+        chatty = int((marker / "chatty").read_text())
+        assert chatty > silent / 10, (backend, silent, chatty)
+        text = (summary.directory / LOGS / "session-1.log").read_text()
+        assert "tests.counter" not in text
+
+
+def test_a_solver_that_floods_the_log_is_killed_at_its_hard_limit(tmp_path: Path) -> None:
+    # The solver ignores its time limit for eight seconds and logs every iteration,
+    # which the campaign asks to record. Its hard limit is 0.5 + 0.5 = 1 second.
+    marker = tmp_path / "marker"
+    marker.mkdir()
+    campaign = tiny_campaign(
+        "flood",
+        solvers=(SolverSpec("test-counter", None, {"marker": str(marker), "seconds": 8.0}),),
+        protocols=(Protocol("timed", StopCriteria(time_limit=0.5)),),
+        instances=(FamilySource("flow-shop", (1,), {"jobs": 3, "machines": 2}),),
+        replicates=1,
+        backend="process",
+        workers=1,
+        timeout_factor=1.0,
+        grace=0.5,
+        log_level="info",
+    )
+    begun = time.perf_counter()
+    summary = run(campaign, tmp_path / "out", registry=REGISTRY)
+    elapsed = time.perf_counter() - begun
+    (failure,) = read_failures(summary.directory)
+    assert failure.error.kind is ErrorKind.TIMEOUT
+    assert failure.provenance.hard_limit == 1.0
+    # The kill follows the limit closely, and the session does not wait for the solver.
+    assert 1.0 <= failure.provenance.wall_seconds < 2.0
+    assert elapsed < 7.0
+    text = (summary.directory / LOGS / "session-1.log").read_text()
+    assert " INFO dispatchatlas.tests.counter: [worker-1] iteration 0" in text
+
+
+SCRIPT = '''
+"""An application that configures logging the usual way, in its main module."""
+
+import logging
+import sys
+from dataclasses import dataclass
+from typing import ClassVar
+
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
+logging.getLogger("myapp").setLevel(logging.INFO)
+
+from dispatchatlas.campaigns import Campaign, Execution, FamilySource, Protocol, SolverSpec, run
+from dispatchatlas.core import SolverInfo, StopCriteria
+from dispatchatlas.core.logs import get_logger
+from dispatchatlas.solvers import default_registry
+from dispatchatlas.solvers.rules import InputOrder
+
+
+@dataclass(frozen=True)
+class Talker:
+    info: ClassVar[SolverInfo] = SolverInfo(
+        id="talker",
+        name="talker",
+        family="random-sampling",
+        summary="A solver that logs while it solves.",
+        stochastic=False,
+        iterative=False,
+    )
+
+    def solve(self, problem, stop, seed=0):
+        logging.getLogger("myapp").info("APP-INFO %s", problem.id)
+        get_logger("talker").info("LIB-INFO %s", problem.id)
+        get_logger("talker").warning("LIB-WARNING %s", problem.id)
+        return InputOrder().solve(problem, stop, seed)
+
+
+if __name__ == "__main__":
+    backend, level, root = sys.argv[1:4]
+    solvers = default_registry(plugins=False)
+    solvers.register(Talker)
+    campaign = Campaign(
+        id="talk",
+        seed=1,
+        instances=(FamilySource("flow-shop", (1,), {"jobs": 3, "machines": 2}),),
+        solvers=(SolverSpec("talker"),),
+        protocols=(Protocol("evals", StopCriteria(max_evaluations=5)),),
+        replicates=1,
+        execution=Execution(backend=backend, workers=1, log_level=level),
+    )
+    logging.getLogger("myapp").info("APP-INFO before")
+    run(campaign, root, registry=solvers)
+    logging.getLogger("myapp").info("APP-INFO after")
+'''
+
+
+@pytest.mark.parametrize(
+    ("backend", "level"), [("sequential", "inherit"), ("process", "inherit"), ("process", "info")]
+)
+def test_standard_error_is_the_same_with_the_session_log(
+    tmp_path: Path, backend: str, level: str
+) -> None:
+    script = tmp_path / "application.py"
+    script.write_text(SCRIPT, encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, str(script), backend, level, str(tmp_path / "out")],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=tmp_path,
+    )
+    shown = [line for line in completed.stderr.splitlines() if "APP-INFO" in line or "LIB-" in line]
+    # What the application's handler shows without a session log: the records of its
+    # own logger from INFO, in this process and in a worker, whose main module is the
+    # application's as well, and the library's from WARNING.
+    assert shown == [
+        "INFO myapp APP-INFO before",
+        "INFO myapp APP-INFO flow-shop-3x2-1",
+        "WARNING dispatchatlas.talker LIB-WARNING flow-shop-3x2-1",
+        "INFO myapp APP-INFO after",
+    ]
+    text = (tmp_path / "out" / "talk" / LOGS / "session-1.log").read_text()
+    assert ("LIB-INFO flow-shop-3x2-1" in text) == (level == "info")
+    assert "LIB-WARNING flow-shop-3x2-1" in text
+    assert "APP-INFO" not in text

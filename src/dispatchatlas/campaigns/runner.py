@@ -27,10 +27,14 @@ is until the new record is written, and is then moved under ``superseded/``;
 a record kept there that is the valid record of a planned run again, because
 its problem was restored, is moved back when a session starts.
 
-Each session also writes ``logs/session-<n>.log``: every record of level
-``INFO`` or higher that the library logs while :func:`run` works, in this
-process and in its worker processes, each with its UTC time. What the
-handlers of the application show does not change.
+Each session also writes ``logs/session-<n>.log``, each line with the UTC
+time of its record. The log holds what the engine itself logs while
+:func:`run` works, from the level ``INFO``, and what the other loggers of the
+library let through, in this process and in its worker processes: ``WARNING``
+and higher unless the application lowered a level. The execution key
+``log_level`` lowers those loggers for the session, at the cost that a
+solver which logs in its loop then pays inside its time limit. What the
+handlers of the application show does not change either way.
 
 Progress is logged through :mod:`dispatchatlas.core.logs`: a line when the
 session starts, one at most every :data:`PROGRESS_INTERVAL` seconds while it
@@ -41,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import time
 from collections import deque
@@ -57,7 +62,7 @@ from dispatchatlas.campaigns.config import (
     Execution,
     available_cpus,
 )
-from dispatchatlas.campaigns.environment import capture_environment, sample_load
+from dispatchatlas.campaigns.environment import LIBRARY, capture_environment, sample_load
 from dispatchatlas.campaigns.execution import Completion, Result, Task, utc_now
 from dispatchatlas.campaigns.planning import PlannedRun, Prepared, prepare
 from dispatchatlas.campaigns.processors import affinity_cpus, describe_cpus
@@ -89,6 +94,12 @@ PROGRESS_INTERVAL = 10.0
 """Seconds between progress lines while a session runs."""
 
 _LOG = get_logger(__name__)
+
+_ENGINE = __name__.rpartition(".")[0]
+"""Name of the logger above the loggers of the engine's modules."""
+
+_LOG_LEVELS = {"inherit": None, "info": logging.INFO, "debug": logging.DEBUG}
+"""The level each value of ``log_level`` lowers the library's loggers to, if any."""
 
 _UNCOMPARED = ("on_changed_code", "on_changed_problem")
 """Execution settings that say what a session does about a difference, and are no difference."""
@@ -197,7 +208,11 @@ def run(
             and the session is marked interrupted.
     """
     execution = overridden(campaign.execution, backend, workers, affinity)
-    with SessionLog() as log:
+    # The engine's loggers record from INFO for the session log. The other loggers
+    # of the library keep their levels unless the campaign asks for a lower one.
+    level = _LOG_LEVELS[execution.log_level]
+    lowered = (_ENGINE,) if level is None else (LIBRARY, _ENGINE)
+    with SessionLog(min(level or logging.INFO, logging.INFO), lowered=lowered) as log:
         prepared = prepare(campaign, registry=registry, families=families)
         plan = prepared.plan
         count = execution.worker_count()
@@ -232,6 +247,7 @@ def run(
                 startup_limit=execution.startup_limit,
                 source=environment["library"]["source_digest"],
                 log=from_worker,
+                log_level=level,
             )
             started, clock = utc_now(), time.perf_counter()
             load: dict[str, Any] = {"start": sample_load()} if pending else {}

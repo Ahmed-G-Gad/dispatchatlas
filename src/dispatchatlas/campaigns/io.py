@@ -121,6 +121,7 @@ _EXECUTION_KEYS = (
     "threads_per_worker",
     "on_changed_code",
     "on_changed_problem",
+    "log_level",
 )
 
 
@@ -366,6 +367,7 @@ def _execution(value: object, where: str) -> Execution:
         "threads_per_worker": _integer,
         "on_changed_code": _string,
         "on_changed_problem": _string,
+        "log_level": _string,
     }
     for key, read in readers.items():
         item = table.get(key)
