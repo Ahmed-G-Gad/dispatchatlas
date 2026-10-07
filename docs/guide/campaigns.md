@@ -394,7 +394,9 @@ of one campaign.
   next. One found sooner after a report waits for the rest of the 0.25
   seconds, and is missing from the record if the worker is killed before
   then, or if the solver, right after finding it, enters a call that keeps
-  the interpreter lock until the kill. Reporting costs the search about half
+  the interpreter lock until the kill. The reports of a run end with its
+  solve: one that falls due as the search returns is not sent, and the
+  result of the run follows at once. Reporting costs the search about half
   a microsecond per improvement and, at most once every 0.25 seconds, one
   computation of the incumbent's objective values and one message on the
   pipe, however often the solver improves; the measured run time of a search

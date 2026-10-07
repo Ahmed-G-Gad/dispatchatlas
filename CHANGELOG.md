@@ -79,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the worst value or by the incumbent it held at its time limit, never by
   one found after it; the runs table says what every run is scored by, and
   the limitations count the killed runs, those that reported an incumbent
-  after their time limit, and the runs that ended at the start-up limit. A
+  after their time limit, and the runs that ended at the start-up limit. The
+  reports of a run end with its solve and never hold back its result. A
   kill ends every process the solver started, on Windows through a job
   object for each worker, and a worker ends itself when its supervising
   process is gone.
