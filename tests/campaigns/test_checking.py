@@ -26,6 +26,7 @@ from dispatchatlas.campaigns import (
     check_campaign,
     read_plan,
     run,
+    store,
 )
 from dispatchatlas.campaigns.checking import CODES, SEVERITIES
 from dispatchatlas.campaigns.execution import OBSERVATION_KINDS, observations, observe
@@ -37,8 +38,10 @@ from dispatchatlas.campaigns.store import (
     RUNS,
     SESSIONS,
     SUPERSEDED,
+    failure_path,
 )
 from dispatchatlas.core import ConfigError, StopCriteria, StopReason, save_problem
+from dispatchatlas.core.io import read_json
 from dispatchatlas.core.solver import TracePoint
 from tests.campaigns.damage import edit, fail, read, rewrite
 from tests.campaigns.solvers import registry, tiny_campaign
@@ -199,8 +202,11 @@ def test_what_is_no_directory_or_no_floor_is_refused(directory: Path, tmp_path: 
     for floor in (0, -1, 1.5, True):
         with pytest.raises(ConfigError, match="replicate_floor"):
             check(directory, replicate_floor=floor)
-    with pytest.raises(ConfigError, match="overrun_tolerance"):
-        check(directory, overrun_tolerance=-0.1)
+    # A tolerance that is no share is refused before anything of the directory is read.
+    (directory / PLAN_FILE).unlink()
+    for tolerance in (-0.1, float("nan"), "1", True):
+        with pytest.raises(ConfigError, match="overrun_tolerance"):
+            check(directory, overrun_tolerance=tolerance)
 
 
 def test_a_directory_without_its_runs_folder_is_checked(directory: Path) -> None:
@@ -269,6 +275,49 @@ def test_a_missing_plan_ends_the_check(directory: Path) -> None:
     assert [finding.code for finding in report.findings] == ["plan-unreadable"]
     assert (report.campaign, dict(report.counts), report.ok) == (None, {}, False)
     assert report.config_hash is not None
+
+
+def test_a_plan_file_the_system_does_not_let_read_ends_the_check(directory: Path) -> None:
+    (directory / PLAN_FILE).unlink()
+    (directory / PLAN_FILE).mkdir()
+    report = check(directory)
+    assert [finding.code for finding in report.findings] == ["plan-unreadable"]
+    message = one(report, "plan-unreadable").message
+    assert message.startswith(
+        f"plan.json cannot be read as a plan: the operating system does not let read "
+        f"{directory / PLAN_FILE} ("
+    )
+    assert message.endswith("Nothing else of the directory can be checked.")
+
+
+def test_a_file_the_system_does_not_let_read_is_a_finding_and_no_error(
+    directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A folder at the path of a failed attempt cannot be read as a file.
+    folder = failure_path(directory, "hc", "flow-shop-3x2-1", 0, "evals", attempt=1)
+    folder.mkdir(parents=True)
+    report = check(directory)
+    assert [finding.code for finding in report.of("blocking")] == ["files-inaccessible"]
+    assert str(folder) in one(report, "files-inaccessible").message
+    assert (report.ok, dict(report.counts), report.campaign) == (False, {}, "tiny")
+    folder.rmdir()
+    assert check(directory).findings == ()
+
+    # A record that another process keeps locked, as a session that is writing can.
+    locked = directory / RUNS / RECORD
+
+    def refuse(path: Path) -> Any:
+        if Path(path) == locked:
+            raise PermissionError(13, "Permission denied", str(path))
+        return read_json(path)
+
+    monkeypatch.setattr(store, "read_json", refuse)
+    report = check(directory, replan=False)
+    assert [finding.code for finding in report.of("blocking")] == ["files-inaccessible"]
+    message = one(report, "files-inaccessible").message
+    assert f"the operating system does not let read {locked} (Permission denied)" in message
+    assert "were not checked" in message
+    assert dict(report.counts) == {}
 
 
 def test_a_plan_of_another_config_hash_blocks(directory: Path) -> None:

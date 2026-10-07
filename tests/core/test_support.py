@@ -123,6 +123,21 @@ def test_json_documents_are_sorted_and_end_with_a_newline(tmp_path: Path) -> Non
         read_json(tmp_path / "bad.json")
 
 
+def test_a_read_the_system_refuses_names_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = atomic_write_json(tmp_path / "doc.json", {})
+
+    def refuse(self: Path, encoding: str | None = None) -> str:
+        # What a read of an open file under another process's lock raises: no file name.
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", refuse)
+    with pytest.raises(PermissionError) as caught:
+        read_json(path)
+    assert caught.value.filename == str(path)
+
+
 def test_a_failed_write_keeps_the_old_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "keep.txt"
     atomic_write_text(target, "old\n")

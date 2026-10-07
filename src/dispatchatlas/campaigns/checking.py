@@ -68,6 +68,7 @@ from dispatchatlas.campaigns.store import (
     Ledger,
     Stale,
     Store,
+    Strays,
     read_sessions,
     read_strays,
 )
@@ -98,6 +99,11 @@ CODES: Mapping[str, tuple[Severity, str]] = {
     "plan-inconsistent": (
         "blocking",
         "plan.json holds a run of a problem, solver, or protocol it does not list, or an id twice.",
+    ),
+    "files-inaccessible": (
+        "blocking",
+        "The operating system does not let read a file of the directory, so its runs, files, "
+        "records, and sessions were not checked.",
     ),
     "plan-foreign": ("blocking", "plan.json states another config hash than campaign.json."),
     "plan-differs": ("blocking", "plan.json is not the plan the stored campaign gives."),
@@ -349,7 +355,8 @@ class CheckReport:
             by failures), ``unsettled`` (failed and owed an attempt),
             ``unattempted``, ``invalid`` (a file at the path that is no
             valid record), and ``set_aside`` (the valid record lies under
-            ``superseded/``). Empty when the plan cannot be read.
+            ``superseded/``). Empty when the check ended at the plan or at
+            a file the operating system does not let read.
     """
 
     directory: Path
@@ -451,8 +458,12 @@ def check_campaign(
             to the built-in families and plugins.
 
     Returns:
-        The report. With an unreadable plan it holds the findings on the
-        campaign file and the plan only.
+        The report. With a plan that cannot be read, or whose runs name
+        what it does not list, it holds the findings on the campaign file
+        and the plan only and no counts. When the operating system does not
+        let read a record, a file of a failed attempt, or a folder, as it
+        can while a session writes into the directory, the report says so
+        in a blocking finding and holds no counts either.
 
     Raises:
         ConfigError: If ``directory`` is no directory, or ``replicate_floor``
@@ -465,6 +476,9 @@ def check_campaign(
     floor = replicate_floor
     if floor is not None and (isinstance(floor, bool) or not isinstance(floor, int) or floor < 1):
         raise ConfigError(f"replicate_floor must be a positive integer, got {floor!r}")
+    tolerance = overrun_tolerance
+    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not tolerance >= 0:
+        raise ConfigError(f"overrun_tolerance must be zero or a positive number, got {tolerance!r}")
     found = _Findings()
     campaign, recorded = _recipe(folder, found)
     try:
@@ -500,10 +514,20 @@ def check_campaign(
             entries,
         )
     sessions = _sessions(folder, found)
-    ledger, records = Store(folder).holdings(plan)
+    try:
+        ledger, records = Store(folder).holdings(plan)
+        strays = read_strays(folder)
+    except (SerializationError, OSError) as error:
+        found.add(
+            "files-inaccessible",
+            f"The files of the directory cannot all be read: {_why(error)}. Its runs, files, "
+            "records, and sessions were not checked. A session that is writing into the "
+            "directory can keep a file from being read for a moment.",
+        )
+        return CheckReport(folder, plan.campaign, plan.config_hash, found.ordered())
     states = _states(folder, plan, ledger, _max_attempts(campaign, sessions))
     _check_runs(plan, ledger, states, found)
-    _check_files(folder, plan, ledger, found)
+    _check_files(folder, plan, ledger, strays, found)
     _check_records(plan, records, overrun_tolerance, found)
     _check_hard_limits(plan, records, ledger, found)
     if sessions is not None:
@@ -581,7 +605,7 @@ def _why(error: SerializationError | OSError) -> str:
         return f"{error.filename} does not exist"
     if isinstance(error, OSError):
         reason = error.strerror or type(error).__name__
-        return f"the operating system does not let read {error.filename} ({reason})"
+        return f"the operating system does not let read {error.filename or 'a file'} ({reason})"
     return str(error)
 
 
@@ -998,7 +1022,9 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
 # -------------------------------------------------------------------- files
 
 
-def _check_files(folder: Path, plan: Plan, ledger: Ledger, found: _Findings) -> None:
+def _check_files(
+    folder: Path, plan: Plan, ledger: Ledger, strays: Strays, found: _Findings
+) -> None:
     kinds: dict[str, list[str]] = {}
     for stale in ledger.stale:
         where = _relative(stale.path, folder)
@@ -1049,7 +1075,6 @@ def _check_files(folder: Path, plan: Plan, ledger: Ledger, found: _Findings) -> 
             f"count as no attempt: {len(ledger.unreadable)}.",
             (_relative(path, folder) for path in ledger.unreadable),
         )
-    strays = read_strays(folder)
     for paths, code, text in (
         (
             strays.unplanned,

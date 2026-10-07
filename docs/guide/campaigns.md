@@ -802,6 +802,13 @@ with all of its items. Planning the campaign again loads every problem, so it
 needs the campaign's instance files and solvers; `--no-replan` leaves that
 comparison out and says so in a note.
 
+A directory can be checked while a session of the campaign writes into it.
+The report is then of that moment: a run that is executing counts as
+unattempted, the temporary file of a record being written can show as
+`files-stray`, and a file that the operating system does not let read while
+it is written ends the check with the blocking finding `files-inaccessible`,
+which names the file. Check the directory again once the session has ended.
+
 <!-- dispatchatlas:check-findings -->
 
 `dispatchatlas analyze` and `load_dataset` run the same check, without

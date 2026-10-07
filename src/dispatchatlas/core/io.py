@@ -60,9 +60,16 @@ def read_json(path: Path) -> Any:
 
     Raises:
         SerializationError: If the file is not UTF-8 text or not valid JSON.
+        OSError: If the file cannot be opened or read. The error names the
+            file in its ``filename``, also when the operating system
+            refuses the read of an open file and names none.
     """
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as error:
+        if error.filename is None:
+            error.filename = str(path)
+        raise
     except UnicodeDecodeError as error:
         raise SerializationError(f"{path} is not UTF-8 text: {error}") from error
     except json.JSONDecodeError as error:

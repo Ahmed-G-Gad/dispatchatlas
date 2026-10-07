@@ -173,7 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their runs, and solvers without a record, with the pairs the plan excludes
   listed apart; files at the paths of planned runs that are no valid records,
   valid records under `superseded/`, records of runs the plan does not hold,
-  and unreadable files; traces that cannot be read against time or that end
+  unreadable files, and a file that the operating system does not let read,
+  which is a blocking finding and no error; traces that cannot be read against time or that end
   at another value than the outcome, and records of iterative solvers
   without a trace; wall times beyond the time limit by solver with the
   largest ratio, hard limits that differ within a protocol, and divergent
