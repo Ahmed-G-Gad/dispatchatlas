@@ -49,7 +49,8 @@ def test_a_solver_that_computes_in_a_child_process_is_measured_where_the_system_
     None
 ):
     measurement = _attempt(Delegating(seconds=0.3)).measurement
-    assert measurement.wall_seconds >= 0.3
+    # The child times its own 0.3 s; the two clocks may differ by a tick.
+    assert measurement.wall_seconds >= 0.25
     assert measurement.cpu_seconds is not None
     if sys.platform == "win32":
         # Windows reports no time of child processes: the solver's own process was idle.

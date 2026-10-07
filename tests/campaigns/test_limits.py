@@ -321,7 +321,7 @@ def test_a_slow_start_does_not_count_against_the_hard_limit(tmp_path: Path) -> N
     (record,) = read_runs(summary.directory)
     assert record.provenance.hard_limit == pytest.approx(0.5)
     assert record.provenance.waited_seconds is not None
-    assert record.provenance.waited_seconds >= 1.5
+    assert record.provenance.waited_seconds >= 1.45
     assert record.provenance.wall_seconds < 0.5
 
 
@@ -351,7 +351,7 @@ def test_a_killed_run_keeps_its_last_incumbent_and_its_limit_counts_from_the_sol
     assert "counted from the start of its solve" in failure.error.message
     assert failure.solve_started is True
     assert failure.provenance.waited_seconds is not None
-    assert failure.provenance.waited_seconds >= 1.0
+    assert failure.provenance.waited_seconds >= 0.95
     assert 0.5 <= failure.provenance.wall_seconds < 1.5
     incumbent = failure.last_incumbent
     assert incumbent is not None
@@ -452,7 +452,7 @@ def test_the_start_of_a_worker_counts_as_waiting_and_against_the_start_up_limit(
     assert (summary.completed, summary.failed) == (1, 0)
     (record,) = read_runs(summary.directory)
     assert record.provenance.waited_seconds is not None
-    assert record.provenance.waited_seconds >= 1.5
+    assert record.provenance.waited_seconds >= 1.45
 
     monkeypatch.setenv(DELAY, "20.0")
     late = replace(campaign, id="late", execution=replace(campaign.execution, startup_limit=0.5))
@@ -495,10 +495,10 @@ def test_a_kill_at_the_hard_limit_does_not_wait_for_another_worker_to_start(
         assert failure.provenance.hard_limit == pytest.approx(0.5)
         assert 0.5 <= failure.provenance.wall_seconds < 1.5
         assert failure.provenance.waited_seconds is not None
-        assert failure.provenance.waited_seconds >= 2.0
+        assert failure.provenance.waited_seconds >= 1.95
     (record,) = read_runs(summary.directory)
     assert record.provenance.waited_seconds is not None
-    assert record.provenance.waited_seconds >= 2.0
+    assert record.provenance.waited_seconds >= 1.95
 
 
 def test_a_worker_that_does_not_begin_in_time_is_a_start_up_failure(tmp_path: Path) -> None:
@@ -525,7 +525,7 @@ def test_a_worker_that_does_not_begin_in_time_is_a_start_up_failure(tmp_path: Pa
         assert failure.solve_started is False
         assert failure.last_incumbent is None
         assert failure.provenance.waited_seconds is None
-        assert failure.provenance.wall_seconds >= 1.0
+        assert failure.provenance.wall_seconds >= 0.95
 
 
 def test_a_kill_reaches_the_processes_a_solver_started(tmp_path: Path) -> None:

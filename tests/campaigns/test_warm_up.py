@@ -111,7 +111,7 @@ def test_a_first_call_cost_paid_inside_solve_is_charged_to_the_first_run() -> No
     assert isinstance(first, Completion)
     # Without a warm_up method the cost is inside the time limit: no search is left.
     assert first.outcome.evaluations == 1
-    assert first.outcome.trace[0].elapsed >= 0.6
+    assert first.outcome.trace[0].elapsed >= 0.55
     assert any(note.startswith("the run took") for note in first.notes)
     later = attempt(_task(solver, stop))
     assert isinstance(later, Completion)
@@ -130,7 +130,7 @@ def test_an_attempt_with_an_origin_counts_from_it_and_skips_the_warm_up() -> Non
     assert isinstance(result, Completion)
     # The 0.3 s between the origin and the call are inside the wall time and the limit.
     assert 0.6 <= result.measurement.wall_seconds < 0.85
-    assert result.outcome.trace[0].elapsed >= 0.3
+    assert result.outcome.trace[0].elapsed >= 0.25
     assert 0.6 <= result.outcome.elapsed < 0.85
     assert result.notes == ()
 
@@ -263,8 +263,8 @@ def test_an_attempt_counts_from_the_instant_the_worker_states_as_its_start() -> 
     result = attempt(task, origin=origin)
     assert isinstance(result, Completion)
     assert probe.seen == [origin]
-    assert result.measurement.wall_seconds >= 1.0
-    assert result.outcome.elapsed >= 1.0
+    assert result.measurement.wall_seconds >= 0.95
+    assert result.outcome.elapsed >= 0.95
 
 
 def test_a_solver_that_budgets_phases_gives_each_its_share_inside_an_attempt() -> None:

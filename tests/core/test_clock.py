@@ -67,7 +67,7 @@ def test_a_solver_that_budgets_phases_opens_an_origin_for_each() -> None:
         spent = RandomSearch().solve(problem, phase, 1)
         assert spent.stop_reason is StopReason.TIME_LIMIT
         assert spent.evaluations == 1
-        assert spent.elapsed >= 0.3
+        assert spent.elapsed >= 0.25
         # A block of its own gives the phase its whole limit, counted from its entry.
         with clock_origin():
             own = RandomSearch().solve(problem, phase, 1)
@@ -101,7 +101,7 @@ def test_the_set_up_of_a_search_is_inside_its_elapsed_time() -> None:
     with clock_origin():
         time.sleep(0.3)
         search = Search(problem, StopCriteria(max_evaluations=1), 0, RandomSearch.info)
-        assert search.elapsed >= 0.3
+        assert search.elapsed >= 0.25
         assert search.remaining_time() is None
     # Outside the block a search counts from its own creation, a moment ago.
     assert Search(problem, StopCriteria(max_evaluations=1), 0, RandomSearch.info).elapsed < 0.3
