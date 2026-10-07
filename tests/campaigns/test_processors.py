@@ -165,6 +165,30 @@ def _foreign() -> int:
     return next(index for index in itertools.count() if index not in allowed)
 
 
+@pytest.fixture(params=["told", "untold"])
+def affinity(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> tuple[tuple[int, ...], list[int] | None]:
+    """The processors a new process inherits, and what a session records as the allowed ones.
+
+    A session records their indices where the operating system tells which processors a
+    process is confined to, and ``None`` where it does not. The first case is a platform
+    that tells them and is skipped on any other. The second case is one that does not:
+    where the system does tell them, the reading in this process is replaced by one that
+    fails, while a worker process still reads its own.
+    """
+    inherited = allowed_cpus()
+    if request.param == "told":
+        if pinning_refusal() is not None:
+            pytest.skip("the platform does not tell which processors a process may use")
+        assert affinity_cpus() == inherited
+        return inherited, list(inherited)
+    for module in (processors_module, environment_module, runner_module):
+        monkeypatch.setattr(module, "affinity_cpus", lambda: None)
+    assert allowed_cpus() == tuple(range(os.cpu_count() or 1))
+    return inherited, None
+
+
 # ------------------------------------------------------ the allowed processors
 
 
@@ -197,13 +221,18 @@ def test_a_narrowed_affinity_is_what_the_process_counts() -> None:
 
 
 def test_the_environment_records_the_allowed_processors_and_the_thread_variables(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, affinity: tuple[tuple[int, ...], list[int] | None]
 ) -> None:
+    _, recorded = affinity
     monkeypatch.setenv("OMP_NUM_THREADS", "4")
     monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
     environment = capture_environment()
-    assert environment["cpu"]["allowed"] == list(allowed_cpus())
-    assert environment["cpu"]["available"] == len(allowed_cpus())
+    # The indices where the system tells them; elsewhere none, and the count of the machine.
+    assert environment["cpu"]["allowed"] == recorded
+    assert environment["cpu"]["available"] == (
+        (os.cpu_count() or 1) if recorded is None else len(recorded)
+    )
+    assert environment["cpu"]["logical"] == os.cpu_count()
     assert set(environment["threads"]) == set(THREAD_VARIABLES)
     assert environment["threads"]["OMP_NUM_THREADS"] == "4"
     assert environment["threads"]["MKL_NUM_THREADS"] is None
@@ -320,8 +349,11 @@ def test_pinning_is_refused_where_the_platform_cannot_pin(monkeypatch: pytest.Mo
 
 
 def test_one_worker_starts_with_the_thread_limits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    affinity: tuple[tuple[int, ...], list[int] | None],
 ) -> None:
+    inherited, recorded = affinity
     monkeypatch.setenv("OMP_NUM_THREADS", "4")
     monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
     summary = run(_probes("one"), tmp_path, registry=REGISTRY)
@@ -329,7 +361,7 @@ def test_one_worker_starts_with_the_thread_limits(
     assert len(records) == 2
     assert {item.outcome.extras["thread_variables"] for item in records} == {_limits(1)}
     assert {item.outcome.extras["cpus"] for item in records} == {
-        ",".join(str(index) for index in allowed_cpus())
+        ",".join(str(index) for index in inherited)
     }
     assert {
         (item.provenance.worker, item.provenance.cpu, item.provenance.concurrent)
@@ -340,7 +372,7 @@ def test_one_worker_starts_with_the_thread_limits(
     (session,) = read_sessions(summary.directory)
     assert session.environment["threads"]["OMP_NUM_THREADS"] == "4"
     assert session.environment["threads"]["MKL_NUM_THREADS"] is None
-    assert session.environment["cpu"]["allowed"] == list(allowed_cpus())
+    assert session.environment["cpu"]["allowed"] == recorded
     assert (session.execution.affinity, session.execution.threads_per_worker) == ("inherit", 1)
 
 
