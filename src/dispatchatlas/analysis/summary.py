@@ -27,7 +27,8 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    bootstrap interval when no failure makes it infinite, and Cohen's d_z, as
    Carrasco et al. (2020) recommend.
 6. **Limitations.** What qualifies the results: failed or missing runs,
-   with the failed ones by solver and kind of error,
+   with the missing ones by cell of solver and problem and
+   the failed ones by solver and kind of error,
    runs whose worker did not begin the solve in time,
    runs killed at their hard limit and how they are scored,
    what the plan notes on the protocol, such as solvers declared
@@ -37,8 +38,12 @@ algorithms over several problems (Demšar 2006; Derrac et al. 2011):
    the processor share and the concurrency the runs of a protocol with a
    time limit executed under,
    problems left out of the ranks, too few shared problems for the paired
-   test to reach significance, cells below a replicate floor, and tests that
-   could not run.
+   test to reach significance, cells below a replicate floor, tests that
+   could not run, and what the check of the campaign directory found beyond
+   these (:func:`~dispatchatlas.campaigns.checking.check_campaign`), such as
+   an altered campaign file, cells with records for only some of their
+   runs, traces that cannot be read against time, or sessions on other
+   code.
 
 Two scores tie when they are equal within
 :data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`. A tied pair enters
@@ -462,11 +467,18 @@ def _design_limitations(
     counts = scope.dataset.counts()
     planned = len(scope.dataset.runs)
     if counts["missing"]:
+        cells = Counter(
+            (run.solver, run.problem) for run in scope.dataset.runs if run.status == "missing"
+        )
+        named = _shown(
+            [f"{solver} on {problem} ({count})" for (solver, problem), count in cells.items()]
+        )
         found.append(
             Limitation(
                 "campaign",
                 f"{counts['missing']} of {planned} planned runs have no record yet; they count "
-                "as failures.",
+                f"as failures. They belong to {len(cells)} cells of solver and problem, each "
+                f"with its number of such runs: {named}.",
             )
         )
     killed = [run for run in scope.dataset.runs if run.killed]
@@ -525,6 +537,7 @@ def _design_limitations(
     ).protocol(scope.protocol)
     found.extend(_fairness_limitations(scope, outcomes))
     found.extend(_time_limitations(scope, config, outcomes))
+    found.extend(_check_limitations(scope))
     left_out = [problem for problem in problems if problem not in blocks]
     if left_out and len(scope.dataset.solvers) > 1:
         found.append(
@@ -568,6 +581,64 @@ def _design_limitations(
                     "problem: " + ", ".join(below) + ".",
                 )
             )
+    return found
+
+
+_ITEMS_SHOWN = 12
+"""Cells or items a limitation names before it counts the rest."""
+
+_OWN_FINDINGS = frozenset(
+    {
+        "runs-unattempted",
+        "runs-failed",
+        "stop-reasons-diverge",
+        "budget-overrun",
+        "replicates-below-floor",
+    }
+)
+"""The findings of the campaign check that the analysis states in limitations of its own.
+
+They are, in the same order, the topics ``campaign``, ``failures``,
+``stop-reasons``, ``budget``, and ``replicates``, which count over the
+analysed solvers and problems and with the settings of the analysis.
+"""
+
+
+def _shown(items: Sequence[str]) -> str:
+    """Join the first items of a list, and count the others."""
+    more = len(items) - _ITEMS_SHOWN
+    return "; ".join(items[:_ITEMS_SHOWN]) + (f"; and {more} more" if more > 0 else "")
+
+
+def _check_limitations(scope: Scope) -> list[Limitation]:
+    """Carry what the check of the campaign directory found and the analysis does not state.
+
+    The dataset holds the report of
+    :func:`~dispatchatlas.campaigns.checking.check_campaign` when it was
+    loaded from a directory. Each of its blocking findings and limitations
+    becomes a limitation whose topic is the code of the finding, unless it
+    concerns another protocol than the analysed one or is one the analysis
+    states itself (``_OWN_FINDINGS``). Notes are left out. A finding
+    covers the whole campaign directory, whatever solvers and problems the
+    analysis selects.
+    """
+    report = scope.dataset.check
+    if report is None:
+        return []
+    found: list[Limitation] = []
+    for finding in report.findings:
+        if finding.severity == "note" or finding.code in _OWN_FINDINGS:
+            continue
+        if finding.protocol not in (None, scope.protocol):
+            continue
+        listed = f" The items concerned: {_shown(finding.items)}." if finding.items else ""
+        weight = (
+            " The check of the campaign directory counts this as blocking: the results are "
+            "not ready to be used."
+            if finding.severity == "blocking"
+            else ""
+        )
+        found.append(Limitation(finding.code, f"{finding.message}{listed}{weight}"))
     return found
 
 

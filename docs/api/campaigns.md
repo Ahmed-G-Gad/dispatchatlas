@@ -34,4 +34,6 @@ Campaign configuration and files, planning, fairness, estimation, execution, rec
 
 ::: dispatchatlas.campaigns.environment
 
+::: dispatchatlas.campaigns.checking
+
 ::: dispatchatlas.campaigns.replaying

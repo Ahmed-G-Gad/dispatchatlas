@@ -25,6 +25,11 @@ run, and may hold the incumbent its search had reported when its time limit
 passed. It stays a failed run in every count; an analysis that asks for it
 scores the run by that incumbent instead of the worst value. What its search
 found after the time limit is never a score.
+
+:func:`load_dataset` also checks the directory
+(:func:`~dispatchatlas.campaigns.checking.check_campaign`) and keeps the
+report in :attr:`Dataset.check`, from which the analysis takes the findings
+it does not report itself.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Literal
 
+from dispatchatlas.campaigns.checking import CheckReport, check_campaign
 from dispatchatlas.campaigns.config import Protocol
 from dispatchatlas.campaigns.planning import Plan, PlannedProblem
 from dispatchatlas.campaigns.records import (
@@ -49,9 +55,12 @@ from dispatchatlas.campaigns.records import (
 )
 from dispatchatlas.campaigns.store import read_failures, read_plan, read_runs, read_sessions
 from dispatchatlas.core.errors import ConfigError
+from dispatchatlas.core.logs import get_logger
 from dispatchatlas.core.solver import TracePoint
 
 __all__ = ["RUN_STATUSES", "Dataset", "Run", "RunStatus", "load_dataset"]
+
+_LOG = get_logger(__name__)
 
 type RunStatus = Literal["succeeded", "infeasible", "failed", "missing"]
 """The outcome of a planned run, see the module documentation."""
@@ -234,6 +243,10 @@ class Dataset:
         problems: The selected problems, in plan order.
         protocols: The selected protocols, in campaign order.
         sessions: The runner sessions that produced the results.
+        check: What the check of the campaign directory found when the
+            dataset was loaded, for the whole directory whatever the
+            selection. ``None`` for a dataset that was not loaded from a
+            directory or was loaded without the check.
     """
 
     plan: Plan
@@ -242,6 +255,7 @@ class Dataset:
     problems: tuple[PlannedProblem, ...]
     protocols: tuple[Protocol, ...]
     sessions: tuple[SessionRecord, ...] = field(default=(), compare=False)
+    check: CheckReport | None = field(default=None, compare=False)
 
     @property
     def campaign(self) -> str:
@@ -342,7 +356,15 @@ class Dataset:
             and run.solver in solver_names
             and run.problem in problem_ids
         )
-        return Dataset(self.plan, runs, kept_solvers, kept_problems, kept_protocols, self.sessions)
+        return Dataset(
+            self.plan,
+            runs,
+            kept_solvers,
+            kept_problems,
+            kept_protocols,
+            self.sessions,
+            self.check,
+        )
 
     @cached_property
     def _cells(self) -> Mapping[tuple[str, str, str], tuple[Run, ...]]:
@@ -354,15 +376,23 @@ class Dataset:
         }
 
 
-def load_dataset(directory: str | Path) -> Dataset:
+def load_dataset(directory: str | Path, *, check: bool = True) -> Dataset:
     """Read a campaign directory into a dataset.
 
     Args:
         directory: A campaign directory, ``<root>/<campaign id>``, as
             :func:`dispatchatlas.campaigns.run` writes it.
+        check: Check the directory with
+            :func:`~dispatchatlas.campaigns.checking.check_campaign` and keep
+            the report in :attr:`Dataset.check`. The check reads every
+            record once more. It does not derive the plan again from the
+            stored campaign, which would need the campaign's instance files
+            and solvers; ``dispatchatlas campaign check`` does. A blocking
+            finding is logged as a warning.
 
     Returns:
-        Every planned run with its status, record, and failed attempts.
+        Every planned run with its status, record, and failed attempts, and
+        the report of the check.
 
     Raises:
         SerializationError: If the plan or a record is missing, malformed,
@@ -391,6 +421,15 @@ def load_dataset(directory: str | Path) -> Dataset:
                 failures=failed,
             )
         )
+    report = check_campaign(folder, replan=False) if check else None
+    if report is not None and not report.ok:
+        blocking = report.of("blocking")
+        _LOG.warning(
+            "%s has %d blocking finding(s), so its results are not ready to be used: %s",
+            folder,
+            len(blocking),
+            ", ".join(dict.fromkeys(finding.code for finding in blocking)),
+        )
     return Dataset(
         plan=plan,
         runs=tuple(runs),
@@ -398,6 +437,7 @@ def load_dataset(directory: str | Path) -> Dataset:
         problems=plan.problems,
         protocols=plan.protocols,
         sessions=read_sessions(folder),
+        check=report,
     )
 
 
