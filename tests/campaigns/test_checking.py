@@ -77,8 +77,20 @@ def timed_directory(timed: Path, tmp_path: Path) -> Path:
     return shutil.copytree(timed, tmp_path / timed.name)
 
 
+OPEN_STATES = ("unattempted", "unsettled", "invalid", "set_aside")
+"""The states of a planned run that no report without a blocking finding may count."""
+
+
 def check(directory: Path, **options: Any) -> CheckReport:
-    return check_campaign(directory, registry=REGISTRY, **options)
+    """Check a directory, and that a report that blocks nothing leaves no planned run open."""
+    report = check_campaign(directory, registry=REGISTRY, **options)
+    assert not report.ok or not any(report.counts.get(state) for state in OPEN_STATES)
+    assert (
+        not report.counts
+        or sum(number for state, number in report.counts.items() if state != "planned")
+        == (report.counts["planned"])
+    )
+    return report
 
 
 def codes(report: CheckReport) -> set[str]:
@@ -277,6 +289,258 @@ def test_a_plan_that_the_campaign_does_not_give_blocks(directory: Path) -> None:
     again = check(directory, replan=False)
     assert "plan-differs" not in codes(again)
     assert {"plan-not-compared", "plan-digest-differs"} <= codes(again)
+
+
+def _other_protocol(document: dict[str, Any]) -> None:
+    document["protocols"].append({**document["protocols"][0], "name": "other"})
+    document["runs"][0]["protocol"] = "other"
+
+
+@pytest.mark.parametrize(
+    ("change", "items"),
+    [
+        (
+            lambda document: document.update(campaign="other"),
+            ["campaign: 'other' in the plan file, 'tiny' in the derived plan"],
+        ),
+        (
+            lambda document: document.update(seed=99),
+            ["seed: 99 in the plan file, 11 in the derived plan"],
+        ),
+        (
+            lambda document: document.update(replicates=7),
+            ["replicates: 7 in the plan file, 2 in the derived plan"],
+        ),
+        (
+            lambda document: document.update(replicate_timed=True),
+            ["replicate_timed: True in the plan file, False in the derived plan"],
+        ),
+        (
+            lambda document: document.update(seed_namespace="x"),
+            ["seed_namespace: 'x' in the plan file, None in the derived plan"],
+        ),
+        (
+            lambda document: document["problems"][0].update(objectives=["total_flow_time"]),
+            ["problems that differ in objectives (1): flow-shop-3x2-1"],
+        ),
+        (
+            lambda document: document["problems"][1].update(tasks=99),
+            ["problems that differ in tasks (1): flow-shop-3x2-2"],
+        ),
+        (
+            lambda document: document["problems"][0].update(digest="0" * 64),
+            ["problems that differ in digest (1): flow-shop-3x2-1"],
+        ),
+        (
+            lambda document: document["problems"].reverse(),
+            ["problems in another order than in the derived plan"],
+        ),
+        (
+            lambda document: document["solvers"][2].update(label="other"),
+            ["solvers that differ in label (1): hc"],
+        ),
+        (
+            lambda document: document["solvers"][1].update(stochastic=False, family="other"),
+            [
+                "solvers that differ in family (1): random-search",
+                "solvers that differ in stochastic (1): random-search",
+            ],
+        ),
+        (
+            lambda document: document["solvers"].append({**document["solvers"][0], "name": "more"}),
+            ["solvers of the plan file that are not in the derived plan (1): more"],
+        ),
+        (
+            lambda document: document["protocols"][0]["stop"].update(max_evaluations=16),
+            ["protocols that differ in stop (1): evals"],
+        ),
+        (
+            _other_protocol,
+            [
+                "runs with another protocol in the derived plan (1): input-order on "
+                "flow-shop-3x2-1 under other, replicate 0",
+                "protocols of the plan file that are not in the derived plan (1): other",
+            ],
+        ),
+        (
+            lambda document: document["runs"][0].update(seed=1),
+            ["runs with another seed in the derived plan (1): input-order on flow-shop-3x2-1"],
+        ),
+        (
+            lambda document: document["runs"][0].update(replicate=5),
+            ["runs with another replicate in the derived plan (1): input-order on"],
+        ),
+        (
+            lambda document: document["runs"][0].update(solver="hc"),
+            ["runs with another solver in the derived plan (1): hc on flow-shop-3x2-1"],
+        ),
+        (
+            lambda document: document["runs"][0].update(problem="flow-shop-3x2-2"),
+            ["runs with another problem in the derived plan (1): input-order on flow-shop-3x2-2"],
+        ),
+        (
+            lambda document: document["runs"].reverse(),
+            ["runs in another order than in the derived plan"],
+        ),
+        (
+            lambda document: document["runs"].append({**document["runs"][0], "run_id": "0" * 16}),
+            ["runs of the stored plan that are not in the derived plan (1): input-order on"],
+        ),
+    ],
+    ids=[
+        "campaign",
+        "seed",
+        "replicates",
+        "replicate-timed",
+        "seed-namespace",
+        "objectives",
+        "tasks",
+        "digest",
+        "problem-order",
+        "label",
+        "solver-metadata",
+        "solver-added",
+        "stop",
+        "run-protocol",
+        "run-seed",
+        "run-replicate",
+        "run-solver",
+        "run-problem",
+        "run-order",
+        "run-added",
+    ],
+)
+def test_every_field_of_the_plan_is_compared_with_the_derived_plan(
+    directory: Path, change: Callable[[dict[str, Any]], object], items: list[str]
+) -> None:
+    edit(directory / PLAN_FILE, change)
+    report = check(directory)
+    found = one(report, "plan-differs").items
+    assert len(found) == len(items)
+    for expected, item in zip(items, found, strict=True):
+        assert item.startswith(expected)
+    assert not report.ok
+
+
+def test_a_field_of_a_solver_entry_the_plan_does_not_state_is_not_compared(directory: Path) -> None:
+    edit(directory / PLAN_FILE, lambda document: document["solvers"][0].pop("threads"))
+    assert "plan-differs" not in codes(check(directory))
+
+
+def test_exclusions_and_caveats_of_another_plan_block_and_another_wording_is_noted(
+    tmp_path: Path,
+) -> None:
+    deadlines = random_problem(10, tasks=6, max_modes=1, pools=0, deadlines=True)
+    save_problem(deadlines, tmp_path / "deadlines.json")
+    campaign = replace(
+        tiny_campaign(
+            solvers=(SolverSpec("random-search"), SolverSpec("test-no-deadlines")),
+            instances=(FileSource(Path("deadlines.json")),),
+        ),
+        base=tmp_path,
+        objectives=("makespan", "total_flow_time"),
+    )
+    directory = run(campaign, tmp_path / "out", registry=REGISTRY).directory
+    assert "plan-entries-differ" not in codes(check(directory))
+    held = read_plan(directory)
+    assert (len(held.exclusions), len(held.caveats)) == (1, 1)
+
+    # Another wording of a reason or of a message is the plan the campaign gives.
+    edit(directory / PLAN_FILE, lambda document: document["exclusions"][0].update(reason="so"))
+    report = check(directory)
+    assert report.ok
+    assert one(report, "plan-entries-differ").items == ("exclusions[0].reason",)
+    edit(directory / PLAN_FILE, lambda document: document["caveats"][0].update(message="so"))
+    report = check(directory)
+    assert report.ok
+    assert one(report, "plan-entries-differ").items == (
+        "the message or the reference of a caveat, another in the plan derived again",
+        "exclusions[0].reason",
+    )
+    # The message of a caveat is a field of the plan, compared only with a derived plan.
+    assert one(check(directory, replan=False), "plan-entries-differ").items == (
+        "exclusions[0].reason",
+    )
+
+    # Other features, pairs, or subjects of a caveat are another plan.
+    edit(directory / PLAN_FILE, lambda document: document["exclusions"][0].update(features=["x"]))
+    edit(directory / PLAN_FILE, lambda document: document["caveats"][0].update(solver="other"))
+    assert one(check(directory), "plan-differs").items == (
+        f"exclusions for other features of the problem (1): test-no-deadlines on {deadlines.id}",
+        "caveats on other solvers and problems than in the derived plan",
+    )
+    edit(directory / PLAN_FILE, lambda document: document["exclusions"].clear())
+    assert one(check(directory), "plan-differs").items[0] == (
+        "pairs of problem and solver excluded in one plan and not in the other: 1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "item"),
+    [
+        (lambda document: document.update(runs_digest="0" * 64), "runs_digest"),
+        (lambda document: document["fairness"].update(fair=False), "fairness.fair"),
+        (
+            lambda document: document["protocols"][0].update(parities=["time"]),
+            "protocols[evals].parities",
+        ),
+        (lambda document: document.update(unread=1), "unread"),
+    ],
+    ids=["runs-digest", "fairness", "parities", "unread"],
+)
+def test_derived_entries_of_the_plan_file_that_its_plan_does_not_give_are_noted(
+    directory: Path, change: Callable[[dict[str, Any]], object], item: str
+) -> None:
+    assert read_plan(directory).to_dict()["fairness"]["fair"]
+    edit(directory / PLAN_FILE, change)
+    # The entries are derived from the plan the file holds, so no plan is derived for them.
+    for replan in (True, False):
+        report = check(directory, replan=replan)
+        finding = one(report, "plan-entries-differ")
+        assert finding.items == (item,)
+        assert "Entries that differ: 1." in finding.message
+        assert report.ok
+
+
+@pytest.mark.parametrize(
+    ("change", "item"),
+    [
+        (
+            lambda document: document["runs"][3].update(protocol="ghost"),
+            "1 run of a protocol the plan does not list (ghost): random-search on "
+            "flow-shop-3x2-1 under ghost, replicate 1",
+        ),
+        (
+            lambda document: document["solvers"].pop(0),
+            "2 runs of a solver the plan does not list (input-order): input-order on "
+            "flow-shop-3x2-1 under evals, replicate 0; input-order on flow-shop-3x2-2 under "
+            "evals, replicate 0",
+        ),
+        (
+            lambda document: document["problems"].pop(),
+            "5 runs of a problem the plan does not list (flow-shop-3x2-2): ",
+        ),
+        (
+            lambda document: document["runs"].append(document["runs"][0]),
+            "runs listed more than once (1): ",
+        ),
+        (
+            lambda document: document["protocols"].append(document["protocols"][0]),
+            "protocols listed more than once (1): evals",
+        ),
+    ],
+    ids=["protocol", "solver", "problem", "run-twice", "protocol-twice"],
+)
+def test_a_plan_whose_runs_name_what_it_does_not_list_ends_the_check(
+    directory: Path, change: Callable[[dict[str, Any]], object], item: str
+) -> None:
+    edit(directory / PLAN_FILE, change)
+    for replan in (True, False):
+        report = check(directory, replan=replan)
+        assert [finding.code for finding in report.of("blocking")] == ["plan-inconsistent"]
+        (found,) = one(report, "plan-inconsistent").items
+        assert found.startswith(item)
+        assert (report.ok, dict(report.counts), report.campaign) == (False, {}, "tiny")
 
 
 def test_a_plan_that_cannot_be_derived_again_is_a_limitation(tmp_path: Path) -> None:

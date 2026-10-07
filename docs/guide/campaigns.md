@@ -717,10 +717,22 @@ not:
 
 - **The campaign file.** Whether `campaign.json` is there and still matches
   the config hash recorded with it.
-- **The plan.** Whether `plan.json` has the campaign's config hash, whether
-  it is the plan that the stored campaign gives when it is planned again on
-  this installation, whether it holds the runs and seeds the last session
-  executed (`plan_digest`), and whether the plan changed between sessions.
+- **The plan.** Whether `plan.json` lists the problem, the solver, and the
+  protocol of each of its runs and names nothing twice; a plan that does not
+  ends the check. Whether it has the campaign's config hash, and whether it
+  is the plan that the stored campaign gives when it is planned again on
+  this installation. Every field is compared, and each difference names its
+  field: the campaign id, the seed and its namespace, the replicates, each
+  field of each problem, solver, and protocol, the problem, solver,
+  protocol, replicate, and seed of each run, the order of each list, the
+  excluded pairs with their features, and the caveats. Whether it holds the
+  runs and seeds the last session executed (`plan_digest`), and whether the
+  plan changed between sessions. The entries that the library derives from a
+  plan and writes for readers of the file, such as `runs_digest`, the
+  `parities` of a protocol, `fairness`, and the `reason` of an exclusion,
+  are compared with what the file's own plan gives. The library derives them
+  again wherever it reads a plan, so a difference there, and another wording
+  of a caveat, is a note.
 - **The planned runs.** Every run needs a valid record or failures that
   settle it. A run with neither was never attempted, and one whose failures
   the campaign's `retries` do not settle is owed another attempt: both block.

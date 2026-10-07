@@ -38,6 +38,7 @@ that executed the counted attempts.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ from typing import Any, Literal
 
 from dispatchatlas.benchmarks.registry import FamilyRegistry
 from dispatchatlas.campaigns import fairness, planning
+from dispatchatlas.campaigns.compatibility import Caveat
 from dispatchatlas.campaigns.config import Campaign
 from dispatchatlas.campaigns.execution import OVERRUN_MARGIN, observations
 from dispatchatlas.campaigns.io import campaign_from_dict
@@ -66,7 +68,6 @@ from dispatchatlas.campaigns.store import (
     Ledger,
     Stale,
     Store,
-    read_plan,
     read_sessions,
     read_strays,
 )
@@ -94,6 +95,10 @@ CODES: Mapping[str, tuple[Severity, str]] = {
     "recipe-unreadable": ("blocking", "campaign.json cannot be read as a campaign."),
     "recipe-altered": ("blocking", "campaign.json no longer matches its recorded config hash."),
     "plan-unreadable": ("blocking", "plan.json is missing or cannot be read."),
+    "plan-inconsistent": (
+        "blocking",
+        "plan.json holds a run of a problem, solver, or protocol it does not list, or an id twice.",
+    ),
     "plan-foreign": ("blocking", "plan.json states another config hash than campaign.json."),
     "plan-differs": ("blocking", "plan.json is not the plan the stored campaign gives."),
     "plan-digest-differs": (
@@ -210,6 +215,11 @@ CODES: Mapping[str, tuple[Severity, str]] = {
         "The plan was not derived again from the stored campaign, as the caller asked.",
     ),
     "plan-digest-unstated": ("note", "No session record states the digest of its plan."),
+    "plan-entries-differ": (
+        "note",
+        "plan.json holds entries the library does not write for its plan: entries derived "
+        "from the plan, or texts, that were changed or that another version wrote.",
+    ),
     "pairs-excluded": ("note", "The plan excludes pairs of problem and solver."),
     "files-stray": ("note", "Files under runs/ are no JSON documents."),
     "failures-foreign": (
@@ -258,11 +268,20 @@ An overrun is left to the assessment of the outcomes, which applies the
 caller's tolerance.
 """
 
-_ENTRY_FIELDS = ("id", "parameters", "family", "stochastic", "iterative", "multi_objective")
-"""The fields of a solver entry every plan states."""
+_PLAN_FIELDS = ("campaign", "seed", "seed_namespace", "replicates", "replicate_timed")
+"""The fields of a plan that hold one value."""
+
+_PLAN_PARTS: Mapping[str, str] = {"problems": "id", "solvers": "name", "protocols": "name"}
+"""The lists of a plan whose entries are compared field by field, with the field that names one."""
+
+_RUN_FIELDS = ("seed", "problem", "solver", "protocol", "replicate")
+"""The fields of a planned run besides its id."""
 
 _OPTIONAL_ENTRY_FIELDS = ("threads", "replicates")
 """The fields of a solver entry a plan may not state, compared only when it does."""
+
+_ENTRY_NAMES = ("name", "id", "run_id")
+"""The fields that name an entry of a list of a plan file, the first it has."""
 
 
 @dataclass(frozen=True)
@@ -428,11 +447,37 @@ def check_campaign(
     found = _Findings()
     campaign, recorded = _recipe(folder, found)
     try:
-        plan = read_plan(folder)
-    except SerializationError as error:
-        found.add("plan-unreadable", f"{error}. Nothing else of the directory can be checked.")
+        document = read_json(folder / PLAN_FILE)
+        plan = Plan.from_dict(document)
+    except (SerializationError, OSError) as error:
+        found.add(
+            "plan-unreadable",
+            f"{PLAN_FILE} cannot be read as a plan: {_why(error)}. Nothing else of the "
+            "directory can be checked.",
+        )
         return CheckReport(folder, None, recorded, found.ordered())
-    _check_plan(plan, campaign, recorded, found, replan, registry, families)
+    inconsistent = _inconsistencies(plan)
+    if inconsistent:
+        found.add(
+            "plan-inconsistent",
+            f"{PLAN_FILE} is no plan the library writes: it holds a run of a problem, a solver, "
+            "or a protocol that it does not list, or an id twice. Nothing else of the directory "
+            "can be checked.",
+            inconsistent,
+        )
+        return CheckReport(folder, plan.campaign, plan.config_hash, found.ordered())
+    entries = _check_plan(plan, campaign, recorded, found, replan, registry, families)
+    entries += _unwritten_entries(plan, document)
+    if entries:
+        found.add(
+            "plan-entries-differ",
+            f"Entries of {PLAN_FILE} are not what the library writes for the plan the file "
+            "holds: the file was changed, or another version of the library wrote it. They are "
+            "entries the library derives from a plan, such as the digest of the runs, the "
+            "parities of a protocol, the fairness assessment, and the reason of an exclusion, "
+            f"entries it does not read, or texts of caveats. Entries that differ: {len(entries)}.",
+            entries,
+        )
     sessions = _sessions(folder, found)
     ledger, records = Store(folder).holdings(plan)
     states = _states(folder, plan, ledger, _max_attempts(campaign, sessions))
@@ -504,6 +549,21 @@ def _first(runs: Sequence[PlannedRun]) -> str:
     return "; ".join(_named(run) for run in runs[:_SHOWN]) + more
 
 
+def _some(names: Sequence[str]) -> str:
+    more = f", and {len(names) - _SHOWN} more" if len(names) > _SHOWN else ""
+    return ", ".join(names[:_SHOWN]) + more
+
+
+def _why(error: SerializationError | OSError) -> str:
+    """Word why a file could not be read."""
+    if isinstance(error, FileNotFoundError):
+        return f"{error.filename} does not exist"
+    if isinstance(error, OSError):
+        reason = error.strerror or type(error).__name__
+        return f"the operating system does not let read {error.filename} ({reason})"
+    return str(error)
+
+
 # -------------------------------------------------------- campaign and plan
 
 
@@ -559,22 +619,28 @@ def _check_plan(
     replan: bool,
     registry: SolverRegistry | None,
     families: FamilyRegistry | None,
-) -> None:
+) -> list[str]:
+    """Compare the plan with the stored campaign and with the plan it gives.
+
+    Returns:
+        The texts of caveats that differ from those of the plan derived
+        again, which weigh as a note and not as a difference of the plan.
+    """
     if recorded is not None and plan.config_hash != recorded:
         found.add(
             "plan-foreign",
             f"{PLAN_FILE} states config hash {_short(plan.config_hash)} and {CAMPAIGN_FILE} "
             f"records {_short(recorded)}: the plan is no plan of the stored campaign.",
         )
-        return
+        return []
     if campaign is None:
-        return
+        return []
     if not replan:
         found.add(
             "plan-not-compared",
             f"{PLAN_FILE} was not compared with the plan the stored campaign gives.",
         )
-        return
+        return []
     try:
         derived = planning.plan(campaign, registry=registry, families=families)
     except (DispatchAtlasError, OSError) as error:
@@ -583,8 +649,8 @@ def _check_plan(
             f"The plan could not be derived again from {CAMPAIGN_FILE}, so {PLAN_FILE} is not "
             f"compared with it: {error}.",
         )
-        return
-    differences = _plan_differences(plan, derived)
+        return []
+    differences, texts = _plan_differences(plan, derived)
     if differences:
         found.add(
             "plan-differs",
@@ -593,53 +659,174 @@ def _check_plan(
             "library that plans differ from those of the last session.",
             differences,
         )
+    return texts
 
 
-def _plan_differences(stored: Plan, derived: Plan) -> list[str]:
-    """Return how the plan a directory holds differs from the plan derived again."""
+def _inconsistencies(plan: Plan) -> list[str]:
+    """Return what makes a plan no plan the library writes: ids twice, runs of nothing listed."""
+    found: list[str] = []
+    listed: dict[str, set[str]] = {}
+    for part, names in (
+        ("problem", [problem.id for problem in plan.problems]),
+        ("solver", [solver.name for solver in plan.solvers]),
+        ("protocol", [protocol.name for protocol in plan.protocols]),
+        ("run", [run.run_id for run in plan.runs]),
+    ):
+        listed[part] = set(names)
+        twice = [name for name, count in Counter(names).items() if count > 1]
+        if twice:
+            found.append(f"{part}s listed more than once ({len(twice)}): {_some(twice)}")
+    for part in ("problem", "solver", "protocol"):
+        orphans = [run for run in plan.runs if getattr(run, part) not in listed[part]]
+        if orphans:
+            unlisted = list(dict.fromkeys(str(getattr(run, part)) for run in orphans))
+            found.append(
+                f"{_count(len(orphans), 'run')} of a {part} the plan does not list "
+                f"({_some(unlisted)}): {_first(orphans)}"
+            )
+    return found
+
+
+def _plan_differences(stored: Plan, derived: Plan) -> tuple[list[str], list[str]]:
+    """Return how the plan a directory holds differs from the plan derived again.
+
+    Every field of the stored plan is compared: the fields with one value,
+    the entries of the problems, solvers, and protocols by their name, the
+    runs by their id, and the exclusions and caveats. A field of a solver
+    entry that the stored plan does not state is left out.
+
+    Returns:
+        The differences that make another plan, each naming its field, and
+        the differences in the texts of caveats, whose wording belongs to
+        the library that planned.
+    """
     differences: list[str] = []
+    held, again = stored.to_dict(), derived.to_dict()
+    for name in _PLAN_FIELDS:
+        if held[name] != again[name]:
+            differences.append(
+                f"{name}: {_quoted(held[name])} in the plan file, {_quoted(again[name])} in "
+                "the derived plan"
+            )
     left = [run for run in stored.runs if not derived.has_run(run.run_id)]
     entered = [run for run in derived.runs if not stored.has_run(run.run_id)]
-    reseeded = [
-        run
-        for run in stored.runs
-        if derived.has_run(run.run_id) and derived.run(run.run_id).seed != run.seed
-    ]
-    for runs, what in (
-        (left, "runs of the stored plan that are not in the derived plan"),
-        (entered, "runs of the derived plan that are not in the stored plan"),
-        (reseeded, "runs with another seed in the derived plan"),
-    ):
+    shared = [run for run in stored.runs if derived.has_run(run.run_id)]
+    changes = [(left, "runs of the stored plan that are not in the derived plan")]
+    changes.append((entered, "runs of the derived plan that are not in the stored plan"))
+    for name in _RUN_FIELDS:
+        other = [
+            run for run in shared if getattr(derived.run(run.run_id), name) != getattr(run, name)
+        ]
+        changes.append((other, f"runs with another {name} in the derived plan"))
+    for runs, what in changes:
         if runs:
             differences.append(f"{what} ({len(runs)}): {_first(runs)}")
-    digests = {problem.id: problem.digest for problem in derived.problems}
-    changed = [
-        problem.id
-        for problem in stored.problems
-        if digests.get(problem.id, problem.digest) != problem.digest
+    for part, key in _PLAN_PARTS.items():
+        differences += _part_differences(part, key, held[part], again[part])
+    orders = [("runs", [run.run_id for run in shared], [run.run_id for run in derived.runs])]
+    orders += [
+        (part, [item[key] for item in held[part]], [item[key] for item in again[part]])
+        for part, key in _PLAN_PARTS.items()
     ]
-    if changed:
-        differences.append("problems with another content digest: " + ", ".join(changed))
-    entries = {entry.name: entry.to_dict() for entry in derived.solvers}
-    for entry in stored.solvers:
-        if entry.name not in entries:
-            continue
-        held, again = entry.to_dict(), entries[entry.name]
-        compared = [
-            *_ENTRY_FIELDS,
-            *(name for name in _OPTIONAL_ENTRY_FIELDS if held.get(name) is not None),
-        ]
-        fields = [name for name in compared if held.get(name) != again.get(name)]
-        if fields:
-            differences.append(f"solver {entry.name} differs in " + ", ".join(fields))
-    excluded = {(item.problem, item.solver) for item in stored.exclusions}
-    again_excluded = {(item.problem, item.solver) for item in derived.exclusions}
-    if excluded != again_excluded:
+    for part, mine, theirs in orders:
+        both = set(mine) & set(theirs)
+        if [name for name in mine if name in both] != [name for name in theirs if name in both]:
+            differences.append(f"{part} in another order than in the derived plan")
+    excluded = {(item.problem, item.solver): item for item in stored.exclusions}
+    again_excluded = {(item.problem, item.solver): item for item in derived.exclusions}
+    if set(excluded) != set(again_excluded):
         differences.append(
             "pairs of problem and solver excluded in one plan and not in the other: "
-            f"{len(excluded ^ again_excluded)}"
+            f"{len(set(excluded) ^ set(again_excluded))}"
         )
+    pairs = [pair for pair in excluded if pair in again_excluded]
+    features = [
+        pair for pair in pairs if set(excluded[pair].features) != set(again_excluded[pair].features)
+    ]
+    if features:
+        differences.append(
+            f"exclusions for other features of the problem ({len(features)}): "
+            + _some([f"{solver} on {problem}" for problem, solver in features])
+        )
+    texts: list[str] = []
+    concerned, worded = (
+        [Counter(key(item) for item in plan.caveats) for plan in (stored, derived)]
+        for key in (_caveat_subject, _caveat_text)
+    )
+    if concerned[0] != concerned[1]:
+        differences.append("caveats on other solvers and problems than in the derived plan")
+    elif worded[0] != worded[1]:
+        texts.append("the message or the reference of a caveat, another in the plan derived again")
+    return differences, texts
+
+
+def _caveat_subject(caveat: Caveat) -> tuple[object, ...]:
+    return (caveat.solver, tuple(caveat.problems))
+
+
+def _caveat_text(caveat: Caveat) -> tuple[object, ...]:
+    return (*_caveat_subject(caveat), caveat.message, caveat.reference)
+
+
+def _part_differences(
+    part: str, key: str, held: Sequence[Mapping[str, Any]], again: Sequence[Mapping[str, Any]]
+) -> list[str]:
+    """Compare the entries of one list of a plan by their name, field by field."""
+    differences: list[str] = []
+    mine = {str(item[key]): item for item in held}
+    theirs = {str(item[key]): item for item in again}
+    for names, what in (
+        ([name for name in mine if name not in theirs], "of the plan file that are not in the"),
+        ([name for name in theirs if name not in mine], "that are not in the plan file but in the"),
+    ):
+        if names:
+            differences.append(f"{part} {what} derived plan ({len(names)}): {_some(names)}")
+    fields: dict[str, list[str]] = {}
+    for name, item in mine.items():
+        for field_name, value in item.items():
+            if name not in theirs or field_name == "parities":
+                continue
+            if field_name in _OPTIONAL_ENTRY_FIELDS and value is None:
+                continue
+            if value != theirs[name].get(field_name):
+                fields.setdefault(field_name, []).append(name)
+    for field_name, names in fields.items():
+        differences.append(f"{part} that differ in {field_name} ({len(names)}): {_some(names)}")
     return differences
+
+
+def _unwritten_entries(plan: Plan, document: object) -> list[str]:
+    """Return the entries of a plan file that the library does not write for the plan it holds.
+
+    The file is compared, entry by entry, with the document its own plan
+    gives. The fields of a plan read back as they were written, so what can
+    differ is what the library derives from a plan for readers of the file,
+    such as the digest of the runs, the parities of a protocol, the fairness
+    assessment, and the reason of an exclusion, and an entry the library
+    does not read. An entry the file does not state is left out.
+    """
+    return _leaves(document, json.loads(json.dumps(plan.to_dict())), "")
+
+
+def _leaves(held: object, again: object, path: str) -> list[str]:
+    """Return the paths at which a stored document differs from the one derived again."""
+    leaves: list[str] = []
+    if isinstance(held, Mapping) and isinstance(again, Mapping):
+        for key, value in held.items():
+            below = f"{path}.{key}" if path else str(key)
+            leaves += _leaves(value, again[key], below) if key in again else [below]
+        return leaves
+    if (
+        isinstance(held, list)
+        and isinstance(again, list)
+        and len(held) == len(again)
+        and all(isinstance(item, Mapping) for item in held)
+    ):
+        for index, (mine, theirs) in enumerate(zip(held, again, strict=True)):
+            label = next((mine[key] for key in _ENTRY_NAMES if key in mine), index)
+            leaves += _leaves(mine, theirs, f"{path}[{label}]")
+        return leaves
+    return [] if held == again else [path]
 
 
 def _sessions(folder: Path, found: _Findings) -> tuple[SessionRecord, ...] | None:

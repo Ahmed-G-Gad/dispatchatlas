@@ -161,10 +161,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its results are used, and write nothing. The report lists findings, each
   with a code, a severity (`blocking`, `limitation`, or `note`), a message,
   the items concerned, and the protocol when it concerns one: a campaign
-  file that is missing or no longer matches its config hash; a plan of
-  another config hash, one that differs from the plan the stored campaign
-  gives when it is planned again, and one that differs from the plan the
-  last session executed; planned runs without a record and without a failed
+  file that is missing or no longer matches its config hash; a plan whose
+  runs name a problem, a solver, or a protocol it does not list, a plan of
+  another config hash, one that differs in any field from the plan the
+  stored campaign gives when it is planned again, with each difference
+  naming its field, and one that differs from the plan the last session
+  executed; derived entries of the plan file that its own plan does not
+  give, as a note; planned runs without a record and without a failed
   attempt, runs whose failures the retries do not settle, runs settled by
   failures by solver and kind of error, cells with records for only some of
   their runs, and solvers without a record, with the pairs the plan excludes
