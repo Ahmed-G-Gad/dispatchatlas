@@ -1,0 +1,55 @@
+{
+  "campaign": "tiny",
+  "config_hash": "e5c919942525656b4d1d0e8bf89779f7172840efc93e33b113a91b255f535f53",
+  "counts": {
+    "attempted": 6,
+    "completed": 6,
+    "errors": 0,
+    "failed": 0,
+    "pending": 0,
+    "planned": 6,
+    "succeeded": 6
+  },
+  "environment": {
+    "cpu": {
+      "available": 1,
+      "logical": 1,
+      "model": "neutral"
+    },
+    "git": {
+      "working_directory": {
+        "commit": "neutral",
+        "dirty": true
+      }
+    },
+    "memory_bytes": 1,
+    "packages": {
+      "dispatchatlas": "0.1.0",
+      "numpy": "2.5.3"
+    },
+    "platform": {
+      "description": "neutral",
+      "machine": "neutral",
+      "release": "neutral",
+      "system": "neutral"
+    },
+    "python": {
+      "implementation": "CPython",
+      "version": "neutral"
+    }
+  },
+  "execution": {
+    "backend": "sequential",
+    "grace": 5.0,
+    "record_schedules": true,
+    "retries": 0,
+    "timeout_factor": 1.0,
+    "workers": 1
+  },
+  "finished": "2026-01-01T00:00:00+00:00",
+  "schema": "dispatchatlas.session/1",
+  "session": 1,
+  "started": "2026-01-01T00:00:00+00:00",
+  "status": "finished",
+  "workers": 1
+}

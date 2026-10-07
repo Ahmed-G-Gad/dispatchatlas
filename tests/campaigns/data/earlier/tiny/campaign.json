@@ -1,0 +1,54 @@
+{
+  "base": null,
+  "campaign": {
+    "execution": {
+      "backend": "sequential",
+      "grace": 5.0,
+      "record_schedules": true,
+      "retries": 0,
+      "timeout_factor": 1.0,
+      "workers": 1
+    },
+    "id": "tiny",
+    "instances": [
+      {
+        "family": "flow-shop",
+        "parameters": {
+          "jobs": 3,
+          "machines": 2
+        },
+        "seeds": [
+          1,
+          2
+        ]
+      }
+    ],
+    "metadata": {},
+    "objectives": null,
+    "protocols": [
+      {
+        "name": "evals",
+        "stop": {
+          "max_evaluations": 15
+        }
+      }
+    ],
+    "replicates": 2,
+    "schema_version": 1,
+    "seed": 11,
+    "solvers": [
+      {
+        "id": "input-order",
+        "label": null,
+        "parameters": {}
+      },
+      {
+        "id": "random-search",
+        "label": null,
+        "parameters": {}
+      }
+    ]
+  },
+  "config_hash": "e5c919942525656b4d1d0e8bf89779f7172840efc93e33b113a91b255f535f53",
+  "schema": "dispatchatlas.campaign/1"
+}

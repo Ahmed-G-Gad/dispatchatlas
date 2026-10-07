@@ -1,0 +1,121 @@
+{
+  "campaign": "tiny",
+  "config_hash": "e5c919942525656b4d1d0e8bf89779f7172840efc93e33b113a91b255f535f53",
+  "outcome": {
+    "bound": null,
+    "elapsed": 0.0007904001977294683,
+    "evaluations": 15,
+    "extras": {},
+    "feasible": true,
+    "front": [],
+    "gap": null,
+    "iterations": 16,
+    "objective": "makespan",
+    "objectives": {
+      "makespan": 198.0
+    },
+    "schedule_digest": "0268254557bbbd7efd674bd12822665ba4942a71ad7aafb642fc5849977d797e",
+    "status": "feasible",
+    "stop_reason": "evaluation-limit",
+    "trace": [
+      [
+        0.00010270019993185997,
+        1,
+        1,
+        205.0,
+        true
+      ],
+      [
+        0.00016680010594427586,
+        2,
+        2,
+        198.0,
+        true
+      ],
+      [
+        0.0007904001977294683,
+        15,
+        16,
+        198.0,
+        true
+      ]
+    ],
+    "value": 198.0,
+    "violations": []
+  },
+  "problem": {
+    "digest": "ba2c78210e02959e0f71181f86380ab39744f0f12871694e87f2d84b4bd7324a",
+    "family": "flow-shop",
+    "id": "flow-shop-3x2-1"
+  },
+  "protocol": {
+    "name": "evals",
+    "stop": {
+      "max_evaluations": 15
+    }
+  },
+  "provenance": {
+    "attempt": 1,
+    "cpu_seconds": 0.0,
+    "finished": "2026-10-07T03:26:17.221654Z",
+    "hard_limit": null,
+    "peak_rss_bytes": null,
+    "session": 1,
+    "started": "2026-10-07T03:26:17.220571Z",
+    "wall_seconds": 0.0009214000310748816,
+    "worker": "main"
+  },
+  "replicate": 0,
+  "result_hash": "8682882dbd83167b41a55cfa485d2076c0b28965494bea9b319ca3e0c2d99513",
+  "run_id": "run-02558687b72c5d2d",
+  "schedule": [
+    [
+      "j1-m0",
+      0,
+      0.0,
+      73.0
+    ],
+    [
+      "j1-m1",
+      0,
+      73.0,
+      106.0
+    ],
+    [
+      "j2-m0",
+      0,
+      73.0,
+      171.0
+    ],
+    [
+      "j0-m0",
+      0,
+      171.0,
+      189.0
+    ],
+    [
+      "j2-m1",
+      0,
+      171.0,
+      187.0
+    ],
+    [
+      "j0-m1",
+      0,
+      189.0,
+      198.0
+    ]
+  ],
+  "schema": "dispatchatlas.run/1",
+  "seed": 222429825019766731,
+  "solver": {
+    "family": "random-sampling",
+    "id": "random-search",
+    "iterative": true,
+    "label": null,
+    "multi_objective": false,
+    "name": "random-search",
+    "parameters": {},
+    "stochastic": true
+  }
+}

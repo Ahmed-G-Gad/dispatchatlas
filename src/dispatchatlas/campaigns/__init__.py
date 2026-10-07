@@ -26,9 +26,12 @@ The modules, in the order a campaign meets them:
 - :mod:`~dispatchatlas.campaigns.records`, :mod:`~dispatchatlas.campaigns.store`,
   and :mod:`~dispatchatlas.campaigns.environment`: what is written, where, and
   in which environment;
+- :mod:`~dispatchatlas.campaigns.checking`: the check of a campaign directory
+  before its results are used;
 - :mod:`~dispatchatlas.campaigns.replaying`: verification that runs reproduce.
 """
 
+from dispatchatlas.campaigns.checking import CheckReport, Finding, check_campaign
 from dispatchatlas.campaigns.compatibility import Caveat, Compatibility, Exclusion
 from dispatchatlas.campaigns.config import (
     Campaign,
@@ -84,6 +87,7 @@ __all__ = [
     "CatalogSource",
     "Category",
     "Caveat",
+    "CheckReport",
     "Compatibility",
     "DirectorySource",
     "Estimate",
@@ -93,6 +97,7 @@ __all__ = [
     "Fairness",
     "FamilySource",
     "FileSource",
+    "Finding",
     "InstanceSource",
     "Outcome",
     "Plan",
@@ -113,6 +118,7 @@ __all__ = [
     "campaign_from_dict",
     "campaign_to_dict",
     "capture_environment",
+    "check_campaign",
     "check_compatibility",
     "estimate",
     "load_campaign",

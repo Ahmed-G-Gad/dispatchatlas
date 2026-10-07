@@ -1,0 +1,114 @@
+{
+  "campaign": "tiny",
+  "config_hash": "e5c919942525656b4d1d0e8bf89779f7172840efc93e33b113a91b255f535f53",
+  "outcome": {
+    "bound": null,
+    "elapsed": 0.00011630007065832615,
+    "evaluations": 1,
+    "extras": {},
+    "feasible": true,
+    "front": [],
+    "gap": null,
+    "iterations": 0,
+    "objective": "makespan",
+    "objectives": {
+      "makespan": 172.0
+    },
+    "schedule_digest": "807548fc44f49aa31461626cdf932b2e8490b1c1568b0e4baf9eabc387ad0e5c",
+    "status": "feasible",
+    "stop_reason": "completed",
+    "trace": [
+      [
+        9.310012683272362e-05,
+        1,
+        0,
+        172.0,
+        true
+      ],
+      [
+        0.00011630007065832615,
+        1,
+        0,
+        172.0,
+        true
+      ]
+    ],
+    "value": 172.0,
+    "violations": []
+  },
+  "problem": {
+    "digest": "b9b1b03e8f21861471ffbfbb9b4e4ebf316c93535a5711556dfe8b257d462816",
+    "family": "flow-shop",
+    "id": "flow-shop-3x2-2"
+  },
+  "protocol": {
+    "name": "evals",
+    "stop": {
+      "max_evaluations": 15
+    }
+  },
+  "provenance": {
+    "attempt": 1,
+    "cpu_seconds": 0.0,
+    "finished": "2026-10-07T03:26:17.231004Z",
+    "hard_limit": null,
+    "peak_rss_bytes": null,
+    "session": 1,
+    "started": "2026-10-07T03:26:17.230570Z",
+    "wall_seconds": 0.0002532999496906996,
+    "worker": "main"
+  },
+  "replicate": 0,
+  "result_hash": "7ce89d8505dc6f4b16767c6be925c72dd6c7650d6d8457248a39e144cc3c29fd",
+  "run_id": "run-72307d726b328369",
+  "schedule": [
+    [
+      "j0-m0",
+      0,
+      0.0,
+      8.0
+    ],
+    [
+      "j0-m1",
+      0,
+      8.0,
+      55.0
+    ],
+    [
+      "j1-m0",
+      0,
+      8.0,
+      20.0
+    ],
+    [
+      "j2-m0",
+      0,
+      20.0,
+      31.0
+    ],
+    [
+      "j1-m1",
+      0,
+      55.0,
+      77.0
+    ],
+    [
+      "j2-m1",
+      0,
+      77.0,
+      172.0
+    ]
+  ],
+  "schema": "dispatchatlas.run/1",
+  "seed": 7804196706896244856,
+  "solver": {
+    "family": "dispatching-rule",
+    "id": "input-order",
+    "iterative": false,
+    "label": null,
+    "multi_objective": false,
+    "name": "input-order",
+    "parameters": {},
+    "stochastic": false
+  }
+}
