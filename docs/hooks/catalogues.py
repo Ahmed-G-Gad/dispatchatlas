@@ -5,8 +5,9 @@ A page asks for generated content with a marker, an HTML comment of the form
 ``<!-- dispatchatlas:NAME -->`` on a line of its own. The hook replaces it with
 Markdown computed from the package the site is built with: the solver and
 benchmark registries, the published suites and catalogs, the bibliography, the
-objectives, the statistical methods, the figure catalog, the help of the
-command line, the publications list, and the citation metadata. Generated
+objectives, the findings of the campaign check, the statistical methods, the
+figure catalog, the help of the command line, the publications list, and the
+citation metadata. Generated
 pages therefore always describe the code they document. An unknown marker
 stops the build.
 """
@@ -35,6 +36,7 @@ from dispatchatlas.benchmarks import catalogs, suites
 from dispatchatlas.benchmarks import default_registry as default_families
 from dispatchatlas.benchmarks.characterize import DEFINITIONS
 from dispatchatlas.benchmarks.formats import EXTENSIONS, FORMATS
+from dispatchatlas.campaigns.checking import CODES
 from dispatchatlas.cli import build_parser
 from dispatchatlas.core import FEATURES, SOLVER_FAMILIES, registered_objectives
 from dispatchatlas.references import Reference, bibliography
@@ -305,6 +307,15 @@ def problem_features(page: str) -> str:
     return "\n".join(lines)
 
 
+def check_findings(page: str) -> str:
+    """The findings of the check of a campaign directory, with severity and meaning."""
+    lines = ["| Code | Severity | Meaning |", "| --- | --- | --- |"]
+    lines += [
+        f"| `{code}` | {severity} | {_cell(text)} |" for code, (severity, text) in CODES.items()
+    ]
+    return "\n".join(lines)
+
+
 def solver_families(page: str) -> str:
     """The standard solver families, with the number of registered solvers in each."""
     counts: dict[str, int] = defaultdict(int)
@@ -464,6 +475,7 @@ GENERATORS: Mapping[str, Callable[[str], str]] = {
     "objectives": objectives,
     "problem-features": problem_features,
     "solver-families": solver_families,
+    "check-findings": check_findings,
     "methods": methods,
     "figures": figures,
     "bibliography": references_list,

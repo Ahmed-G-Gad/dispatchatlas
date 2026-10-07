@@ -156,6 +156,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
   SVG and TikZ; and a byte-reproducible bundle with a manifest.
+- `dispatchatlas campaign check DIR` and
+  `dispatchatlas.campaigns.check_campaign` check a campaign directory before
+  its results are used, and write nothing. The report lists findings, each
+  with a code, a severity (`blocking`, `limitation`, or `note`), a message,
+  the items concerned, and the protocol when it concerns one: a campaign
+  file that is missing or no longer matches its config hash; a plan of
+  another config hash, one that differs from the plan the stored campaign
+  gives when it is planned again, and one that differs from the plan the
+  last session executed; planned runs without a record and without a failed
+  attempt, runs whose failures the retries do not settle, runs settled by
+  failures by solver and kind of error, cells with records for only some of
+  their runs, and solvers without a record, with the pairs the plan excludes
+  listed apart; files at the paths of planned runs that are no valid records,
+  valid records under `superseded/`, records of runs the plan does not hold,
+  and unreadable files; traces that cannot be read against time or that end
+  at another value than the outcome, and records of iterative solvers
+  without a trace; wall times beyond the time limit by solver with the
+  largest ratio, hard limits that differ within a protocol, and divergent
+  stop reasons; sessions that executed counted attempts on other code,
+  plugins, execution settings, or machines; cells below a replicate floor;
+  and a seed that serves two replicates of one problem. The command exits
+  with 1 when a finding is blocking, and `--json` prints the whole report. A
+  directory whose records lack optional fields, such as `identity_hash` or
+  the `plan_digest` of a session, is checked as far as its files allow, with
+  a note for each comparison that cannot be made.
+  `dispatchatlas.campaigns.execution.observations` returns the facts of a
+  completed attempt's time and trace with a kind each, from which the check
+  derives them again for any record; `Store.holdings` returns the ledger of
+  a plan with the valid records it counts; and the ledger lists the failure
+  files that cannot be read.
+- `load_dataset` runs the same check, without planning the campaign again,
+  keeps the report in `Dataset.check`, and logs a blocking finding as a
+  warning; `load_dataset(directory, check=False)` skips it. The analysis
+  states each blocking finding and limitation of the check for the analysed
+  protocol as a limitation under the code of the finding, and leaves out the
+  five that it states itself. Its `campaign` limitation names the cells of
+  solver and problem whose runs have no record.
 - The Wilcoxon signed-rank test is exact up to 25 pairs with tied
   magnitudes too: the p-value comes from the distribution of the rank sum
   over every assignment of signs to the midranks, and the result names the

@@ -186,15 +186,32 @@ unless the settings name another:
    stand the paired win share with a bootstrap interval, the mean advantage
    with a bootstrap interval, and Cohen's d_z (Carrasco et al. 2020).
 6. **Limitations.** What qualifies the results: failed or missing runs,
-   with the failed ones by solver and kind of error,
+   with the missing ones by cell of solver and problem and
+   the failed ones by solver and kind of error,
    runs killed at their hard limit and how they are scored,
    what the plan notes on the protocol, stop reasons that differ among the
    runs of the iterative solvers,
    completed runs whose wall time passed their time limit, the processor
    share and the concurrency the runs of a timed protocol executed under,
    problems left out of the ranks, too few shared problems for a paired test
-   to reach significance, cells below a replicate floor, and tests that could
-   not run.
+   to reach significance, cells below a replicate floor, tests that could
+   not run, and what the check of the campaign directory found beyond these.
+
+Loading a campaign directory runs the
+[check of the directory](campaigns.md#checking-a-campaign-directory), the one
+behind `dispatchatlas campaign check`, without planning the campaign again.
+The dataset keeps the report (`Dataset.check`), a blocking finding is logged
+as a warning, and each blocking finding and limitation for the analysed
+protocol becomes a limitation whose topic is the code of the finding, such as
+`recipe-altered`, `cells-partial`, `trace-time-axis`, or
+`sessions-differ-code`. A finding covers the whole directory, whatever
+solvers and problems the analysis selects. Five findings are left out,
+because the analysis states them itself over the analysed solvers and
+problems and with its own settings: runs without a record (`campaign`),
+failed runs (`failures`), divergent stop reasons (`stop-reasons`), wall times
+beyond the limit (`budget`), and cells below the replicate floor
+(`replicates`). `load_dataset(directory, check=False)` skips the check, which
+reads every record once more.
 
 The pairwise tests have one pair per problem, so their sample size is the
 number of problems, not the number of runs. With `n` pairs the smallest

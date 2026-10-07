@@ -4,13 +4,14 @@ A campaign is a reproducible experiment: every solver of a roster runs on
 every problem of its instance sources, under every stopping protocol, with a
 number of replicates. It is described in a TOML or JSON file, planned and
 checked before anything runs, executed in worker processes, recorded one JSON
-file per run, resumed after an interruption, and replayed to verify that its
-runs reproduce.
+file per run, resumed after an interruption, checked as a directory before
+its results are used, and replayed to verify that its runs reproduce.
 
 ```bash
 dispatchatlas campaign validate campaign.toml --check-compatibility
 dispatchatlas campaign estimate campaign.toml
 dispatchatlas campaign run campaign.toml --output results --workers auto
+dispatchatlas campaign check results/<campaign id>
 dispatchatlas campaign replay results/<campaign id>
 dispatchatlas analyze results/<campaign id> --output analysis
 ```
@@ -700,6 +701,94 @@ therefore loses at most the runs that were in progress.
   same runs with the same seeds. The digest does not cover the solver
   entries.
 
+## Checking a campaign directory
+
+`campaign check` reads a campaign directory before its results are used and
+reports what qualifies them. It writes nothing and runs nothing.
+
+```bash
+dispatchatlas campaign check results/<campaign id>
+dispatchatlas campaign check results/<campaign id> --replicate-floor 10 --json
+```
+
+The readers of results work from `plan.json` and pass over what does not fit
+it, so a directory can look complete and not be. The check asks what they do
+not:
+
+- **The campaign file.** Whether `campaign.json` is there and still matches
+  the config hash recorded with it.
+- **The plan.** Whether `plan.json` has the campaign's config hash, whether
+  it is the plan that the stored campaign gives when it is planned again on
+  this installation, whether it holds the runs and seeds the last session
+  executed (`plan_digest`), and whether the plan changed between sessions.
+- **The planned runs.** Every run needs a valid record or failures that
+  settle it. A run with neither was never attempted, and one whose failures
+  the campaign's `retries` do not settle is owed another attempt: both block.
+  Runs settled by failures are counted by solver and by the kind of error of
+  their last attempt. A cell, one solver on one problem under one protocol,
+  that has records for some of its planned runs only is named, and so is a
+  solver without any record. The pairs of problem and solver that the plan
+  excludes have no run and are not missing: they are listed apart, and a
+  solver excluded from every problem is named.
+- **The files.** A file at a planned run's path that is no valid record of
+  the run: one that cannot be read, a record of another configuration or of
+  another version of its problem, a record that fails its result hash, its
+  schedule digest, or its identity hash, and a record that states another
+  problem, solver, protocol, replicate, or seed than the plan. A valid record
+  that lies under `superseded/`. Records of runs the plan does not hold,
+  files that cannot be read, and files that are no records.
+- **The records.** A trace that cannot be read against time, because it
+  holds a negative time, times or evaluation counts that decrease, or a time
+  beyond the elapsed time of its run; a trace whose last value differs from
+  the value of the outcome; and a record of an iterative solver with a
+  schedule and no trace. The check derives these facts from each record, so
+  it covers records that hold no notes of the engine.
+- **The budgets.** Under each protocol, the solvers whose completed runs
+  took more wall time than the time limit and the tolerance allow, with the
+  largest ratio (`--overrun-tolerance`, by default the margin of the
+  engine's note on a run); hard limits that differ among the attempts; and
+  stop reasons that differ among the runs of the iterative solvers.
+- **The sessions.** The sessions that executed the attempts the directory
+  counts are compared with the first of them: differences in the Python
+  version, the packages, the library, or a git state, in the plugins, in the
+  execution settings, and in the machine are four findings. A session that
+  executed nothing that counts is not compared. An attempt of a session
+  without a record is reported.
+- **The replication.** With `--replicate-floor N`, the cells of replicated
+  solvers that hold fewer than `N` completed replicates. A seed that serves
+  two replicates of one problem blocks, and a replicate of a problem that ran
+  with two seeds, as after a plan gave its runs other seeds, is a limitation.
+
+Every finding has a code, a severity, a message, the items it concerns, and,
+when it concerns the runs of one protocol, that protocol. The severities are:
+
+- **blocking**: the directory does not hold what it claims, so its results
+  are not ready to be used;
+- **limitation**: the results stand, with a caveat that a report of them has
+  to state;
+- **note**: a fact that qualifies nothing, such as an optional field that
+  the records of the directory do not state. Such a directory is checked as
+  far as its files allow: records without an `identity_hash` are compared
+  with the plan field by field, and without a `plan_digest` in the session
+  records the plan file is not compared with the last session.
+
+The exit code is 1 when a finding is blocking, and 0 otherwise. The text form
+names the first six items of a finding; `--json` prints the whole report,
+with `ok`, the planned runs by what the directory holds for them (`counts`),
+the number of findings of each severity (`severities`), and every finding
+with all of its items. Planning the campaign again loads every problem, so it
+needs the campaign's instance files and solvers; `--no-replan` leaves that
+comparison out and says so in a note.
+
+<!-- dispatchatlas:check-findings -->
+
+`dispatchatlas analyze` and `load_dataset` run the same check, without
+planning the campaign again, and the analysis states the blocking findings
+and the limitations for the analysed protocol among its own limitations. It
+leaves out the five that it states itself, over the solvers and problems it
+analyses: `runs-unattempted`, `runs-failed`, `stop-reasons-diverge`,
+`budget-overrun`, and `replicates-below-floor`.
+
 ## Replaying
 
 `campaign replay` runs completed runs again from their recorded seeds, with
@@ -724,7 +813,15 @@ reproduce.
 Every command has a function behind it:
 
 ```python
-from dispatchatlas.campaigns import estimate, load_campaign, plan, read_runs, replay, run
+from dispatchatlas.campaigns import (
+    check_campaign,
+    estimate,
+    load_campaign,
+    plan,
+    read_runs,
+    replay,
+    run,
+)
 
 
 def main() -> None:
@@ -732,6 +829,9 @@ def main() -> None:
     checked = plan(campaign)  # what `campaign validate` shows
     print(estimate(campaign).remaining)  # what `campaign estimate` shows
     summary = run(campaign, "results")  # resumes when called again
+    findings = check_campaign(summary.directory)  # what `campaign check` shows
+    for finding in findings.of("blocking"):
+        print(finding.code, finding.message, finding.items)
     records = read_runs(summary.directory)
     report = replay(campaign, "results")
     print(report.ok)

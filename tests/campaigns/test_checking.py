@@ -28,6 +28,7 @@ from dispatchatlas.campaigns import (
     run,
 )
 from dispatchatlas.campaigns.checking import CODES, SEVERITIES
+from dispatchatlas.campaigns.execution import OBSERVATION_KINDS, observations, observe
 from dispatchatlas.campaigns.records import Category, ErrorKind, RunRecord
 from dispatchatlas.campaigns.store import (
     CAMPAIGN_FILE,
@@ -183,6 +184,40 @@ def test_what_is_no_directory_or_no_floor_is_refused(directory: Path, tmp_path: 
             check(directory, replicate_floor=floor)
     with pytest.raises(ConfigError, match="overrun_tolerance"):
         check(directory, overrun_tolerance=-0.1)
+
+
+def test_a_directory_without_its_runs_folder_is_checked(directory: Path) -> None:
+    shutil.rmtree(directory / RUNS)
+    report = check(directory)
+    finding = one(report, "runs-unattempted")
+    assert len(finding.items) == 6
+    assert "10 of 10 planned runs" in finding.message
+    assert one(report, "solver-without-records").items == (
+        "input-order: 2 unattempted",
+        "random-search: 4 unattempted",
+        "hc: 4 unattempted",
+    )
+    assert (report.counts["unattempted"], report.counts["completed"]) == (10, 0)
+
+
+def test_the_facts_of_a_record_are_the_notes_of_the_engine_with_a_kind(clean: Path) -> None:
+    record = read(clean / RUNS / RECORD)
+    value = record.outcome.value
+    assert value is not None
+    outcome = replace(record.outcome, trace=(TracePoint(-1.0, 1, 0, value + 1.0),))
+    stop = StopCriteria(time_limit=0.1)
+    facts = observations(outcome, stop, 5.0, iterative=True)
+    assert [kind for kind, _ in facts] == ["overrun", "elapsed", "trace-time", "trace-value"]
+    assert observe(outcome, stop, 5.0, iterative=True) == tuple(text for _, text in facts)
+    untraced = replace(record.outcome, trace=())
+    assert [kind for kind, _ in observations(untraced, stop, 0.001, iterative=True)] == ["no-trace"]
+    assert observations(untraced, stop, 0.001, iterative=False) == ()
+    stopped = replace(record.outcome, stop_reason=StopReason.TIME_LIMIT)
+    (early,) = observations(stopped, StopCriteria(time_limit=60.0), 0.001, iterative=True)
+    assert early[0] == "early-stop"
+    assert {"overrun", "elapsed", "trace-time", "trace-value", "no-trace", "early-stop"} < set(
+        OBSERVATION_KINDS
+    )
 
 
 # -------------------------------------------------------- campaign and plan

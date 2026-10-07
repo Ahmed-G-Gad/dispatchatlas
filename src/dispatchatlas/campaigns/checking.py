@@ -17,9 +17,8 @@ A finding has one of three severities:
 - ``limitation``: the results stand, with a caveat a report of them has to
   state: runs settled by failures, cells with fewer runs than planned,
   budgets that were passed, sessions on other code.
-- ``note``: a fact worth knowing that qualifies nothing, such as a field
-  that a directory written by an earlier version of the library does not
-  state.
+- ``note``: a fact worth knowing that qualifies nothing, such as an
+  optional field that the records of the directory do not state.
 
 :data:`CODES` lists every code with its severity and meaning. Findings on the
 runs of one protocol name the protocol, so a reader of one protocol's results
@@ -389,9 +388,9 @@ def check_campaign(
     - the replication: cells below ``replicate_floor``, a seed used for two
       replicates of one problem, and a replicate that ran with two seeds.
 
-    A directory written by an earlier version of the library lacks some
-    fields. Where the check cannot make a comparison for that reason, it
-    says so in a note: records without an identity hash, and sessions
+    Records and session records may lack the fields that are optional in
+    them. Where the check cannot make a comparison for that reason, it says
+    so in a note: records without an identity hash, and session records
     without the digest of their plan.
 
     Args:
@@ -924,9 +923,9 @@ def _check_records(
     if unhashed:
         found.add(
             "records-without-identity-hash",
-            f"{unhashed} of {len(records)} records state no identity hash, as records written "
-            "by an earlier version of the library do; they are compared with the plan field by "
-            "field.",
+            f"{unhashed} of {len(records)} records state no identity hash, so no hash covers "
+            "their problem digest, solver, protocol, replicate, and seed; they are compared "
+            "with the plan field by field.",
         )
     outcomes = fairness.assess_outcomes(plan, records.values(), overrun_tolerance=overrun_tolerance)
     for item in outcomes.protocols:
@@ -1031,9 +1030,8 @@ def _check_sessions(
     if not stated:
         found.add(
             "plan-digest-unstated",
-            "No session record states the digest of the plan it executed, as records written "
-            f"by an earlier version of the library do not, so {PLAN_FILE} is not compared with "
-            "the plan of the last session.",
+            f"No session record states the digest of the plan it executed, so {PLAN_FILE} is "
+            "not compared with the plan of the last session.",
         )
     elif stated[-1].plan_digest != plan.runs_digest:
         last = stated[-1]
@@ -1041,7 +1039,8 @@ def _check_sessions(
             "plan-digest-differs",
             f"{PLAN_FILE} holds runs and seeds with digest {_short(plan.runs_digest)}, and "
             f"session {last.session}, the last that states one, executed a plan with digest "
-            f"{_short(last.plan_digest)}: the plan file was changed after that session.",
+            f"{_short(last.plan_digest)}: the plan file was changed after that session, or "
+            "the session ended before it replaced the plan file.",
         )
     if sessions and sessions[-1].status is not SessionStatus.FINISHED:
         last = sessions[-1]
