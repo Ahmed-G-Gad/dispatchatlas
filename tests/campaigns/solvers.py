@@ -435,11 +435,14 @@ class Warmed:
     """Pays ``seconds`` once in a process, in ``warm_up`` when that is called first.
 
     With ``broken`` set, ``warm_up`` raises as a solver whose backend is missing does.
+    Every solve returns ``late`` seconds after its search ended, as one does on a machine
+    whose processors are busy.
     """
 
     seconds: float = 0.25
     key: str = "warmed"
     broken: bool = False
+    late: float = 0.0
     info: ClassVar[SolverInfo] = _info("test-warmed")
 
     def warm_up(self) -> None:
@@ -449,7 +452,9 @@ class Warmed:
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         _pay_once(self.key, self.seconds)
-        return RandomSearch().solve(problem, stop, seed)
+        result = RandomSearch().solve(problem, stop, seed)
+        time.sleep(self.late)
+        return result
 
 
 @dataclass(frozen=True)

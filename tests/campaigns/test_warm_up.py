@@ -191,10 +191,14 @@ def test_no_built_in_solver_imports_a_module_during_its_first_solve() -> None:
     assert report["solved"] >= 60
 
 
-def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(tmp_path: Path) -> None:
+@pytest.mark.parametrize("late", [0.0, 0.15], ids=["prompt", "late"])
+def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(
+    tmp_path: Path, late: float
+) -> None:
     limit, paid = 0.4, 1.0
+    parameters = {"seconds": paid, "key": "workers", "late": late}
     campaign = tiny_campaign(
-        solvers=(SolverSpec("test-warmed", parameters={"seconds": paid, "key": "workers"}),),
+        solvers=(SolverSpec("test-warmed", parameters=parameters),),
         protocols=(Protocol("clock", StopCriteria(time_limit=limit)),),
         instances=ONE_PROBLEM,
         replicates=4,
@@ -208,12 +212,16 @@ def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(tmp_path
     # Each of the two workers paid a second for its first run, before the instant its
     # hard limit, its wall time, and its solver's clock count from. A run charged
     # with it would last that second at least, and would find its first incumbent
-    # after it; half of it is the margin of a slow machine.
+    # after it; half of it is the margin of a slow machine. The solver that returns
+    # late stands for such a machine: its runs pass their limit by more than the
+    # engine lets pass without a note, and are charged with no warm-up for it.
     for record in records:
         assert record.provenance.wall_seconds < limit + paid / 2
+        assert abs(record.provenance.wall_seconds - record.outcome.elapsed) < paid / 2
         assert record.outcome.trace[0].elapsed < limit
         assert record.outcome.evaluations > 1
-        assert record.notes == ()
+        if late:
+            assert any(note.startswith("the run took") for note in record.notes)
     # The warm-up is part of what the first run of a worker waited for its solve.
     waited = [record.provenance.waited_seconds or 0.0 for record in records]
     assert max(waited) >= paid
