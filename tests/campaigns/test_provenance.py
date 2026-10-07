@@ -544,6 +544,46 @@ def test_a_failure_record_of_an_earlier_problem_version_is_kept_aside(
     assert [_files(first.directory / folder) for folder in folders] == before
 
 
+def test_a_stale_record_moves_aside_when_its_repeated_run_fails(tmp_path: Path) -> None:
+    _write_problem(tmp_path / "shop.json", 1)
+    marker = tmp_path / "marker"
+    marker.mkdir()
+    campaign = tiny_campaign(
+        "flaky",
+        solvers=(SolverSpec("test-flaky", None, {"marker": str(marker), "failures": 1}),),
+        instances=(FileSource(tmp_path / "shop.json"),),
+        replicates=1,
+        retries=1,
+    )
+    first = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (first.attempted, first.completed) == (2, 1)  # one failed attempt, then the record
+    (record,) = (first.directory / RUNS).rglob("*.json")
+    (failure,) = (first.directory / FAILURES).rglob("*.json")
+    texts = (record.read_text(), failure.read_text())
+    run_id = json.loads(texts[0])["run_id"]
+    # The problem changes, and the only attempt of the repeated run fails.
+    _write_problem(tmp_path / "shop.json", 2)
+    for count in marker.iterdir():
+        count.unlink()
+    once = replace(campaign, execution=replace(campaign.execution, retries=0))
+    second = run(once, tmp_path / "out", registry=REGISTRY)
+    assert (second.attempted, second.completed, second.failed) == (1, 0, 1)
+    # Both files of the first version are aside, so no reader meets them at the
+    # paths of the repeated run.
+    assert not record.exists()
+    assert _files(first.directory / SUPERSEDED) == {
+        f"failures/test-flaky/shop/r000-evals.attempt-1.{run_id}.json": texts[1],
+        f"runs/test-flaky/shop/r000-evals.{run_id}.json": texts[0],
+    }
+    assert read_runs(first.directory) == ()
+    assert [item.run_id for item in read_failures(first.directory)] != [run_id]
+    # The first version is restored: its record comes back and needs no run.
+    _write_problem(tmp_path / "shop.json", 1)
+    third = run(once, tmp_path / "out", registry=REGISTRY)
+    assert (third.attempted, third.completed) == (0, 1)
+    assert record.read_text() == texts[0]
+
+
 def test_a_stale_file_that_cannot_be_moved_ends_the_session_as_failed_and_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

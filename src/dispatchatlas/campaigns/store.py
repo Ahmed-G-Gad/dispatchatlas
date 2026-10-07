@@ -34,10 +34,12 @@ that are no records.
 directory, refuses to mix configurations, and settles which runs remain. It
 replaces no record. A file at the path of a planned run that is not the valid
 record of that run, such as a record of another version of its problem, stays
-where it is until a new record is written to its path, and is then moved
-under ``superseded/``, with the run id it states before ``.json``; the same
-holds for the file of a failed attempt. So a session that repeats no run
-moves nothing, and a record counts again when its problem is restored.
+where it is until the run is repeated: when the repeated run gets its first
+record, of its result or of a failed attempt, the file is moved under
+``superseded/``, with the run id it states before ``.json``. The file of a
+failed attempt is moved the same way when a new attempt takes its path. So a
+session that repeats no run moves nothing, and a record counts again when its
+problem is restored.
 Nothing replaces a file under ``superseded/``, and the only reader of that
 folder is the store itself, which moves a record back to its path when it is
 the valid record of a planned run that has none.
@@ -700,8 +702,8 @@ class Store:
         its run, after the stale file at that path, if there is one, is
         moved aside. A move the operating system refuses is warned about,
         and the run is then attempted again. One warning names the stale
-        files that remain: each stays where it is until a new record is
-        written to its path.
+        files that remain: each stays where it is until its run is repeated
+        and gets a record.
 
         Returns:
             The ledger after the moves: the runs whose records are back
@@ -738,7 +740,7 @@ class Store:
             more = f"; and {len(stale) - _SHOWN} more" if len(stale) > _SHOWN else ""
             _LOG.warning(
                 "%d file(s) at the paths of planned runs are not their valid records (%s%s); "
-                "each stays where it is until a new record is written to its path, and is "
+                "each stays where it is until its run is repeated and gets a record, and is "
                 "then kept under %s",
                 len(stale),
                 shown,
@@ -768,8 +770,19 @@ class Store:
         path.replace(target)
         return target
 
-    def _keep(self, path: Path, record: RunRecord | FailureRecord) -> None:
-        """Move the file at the path a new record is about to take under ``superseded/``.
+    def _keep(
+        self,
+        path: Path,
+        record: RunRecord | FailureRecord,
+        build: Callable[[object], RunRecord | FailureRecord],
+    ) -> None:
+        """Move the file at ``path`` under ``superseded/`` when a run gets a new record.
+
+        Args:
+            path: The path the new record takes, or the path of the run's
+                record when the new record is that of a failed attempt.
+            record: The new record.
+            build: Reads the kind of record that belongs at ``path``.
 
         Raises:
             ConfigError: If the operating system refuses the move, for
@@ -777,7 +790,7 @@ class Store:
         """
         if not path.exists():
             return
-        found, reason = _standing(path, record)
+        found, reason = _standing(path, record, build)
         try:
             target = self._move_aside(path, found)
         except OSError as error:
@@ -836,7 +849,7 @@ class Store:
             record.replicate,
             record.protocol.name,
         )
-        self._keep(path, record)
+        self._keep(path, record, RunRecord.from_dict)
         atomic_write_json(path, record.to_dict())
         return path
 
@@ -845,10 +858,13 @@ class Store:
 
         A file that is at the path, such as the record of an attempt on
         another version of the problem, is moved under ``superseded/`` first.
+        So is a file at the path of the run's record: a run is attempted
+        only while it has no valid record, so what stands there is none,
+        and the run it stood for has now been repeated.
 
         Raises:
-            ConfigError: If a file at the path cannot be moved aside. The
-                record is then not written.
+            ConfigError: If such a file cannot be moved aside. The record
+                is then not written.
         """
         path = failure_path(
             self.directory,
@@ -858,7 +874,15 @@ class Store:
             record.protocol.name,
             record.provenance.attempt,
         )
-        self._keep(path, record)
+        standing = run_path(
+            self.directory,
+            record.solver.name,
+            record.problem.id,
+            record.replicate,
+            record.protocol.name,
+        )
+        self._keep(standing, record, RunRecord.from_dict)
+        self._keep(path, record, FailureRecord.from_dict)
         atomic_write_json(path, record.to_dict())
         return path
 
@@ -1003,20 +1027,20 @@ def _stale(path: Path, run: PlannedRun, stated: _Stated) -> Stale | None:
     return Stale(run.run_id, run.problem, path, found, f"{issues} ({path})", changed)
 
 
-def _standing(path: Path, record: RunRecord | FailureRecord) -> tuple[str, str]:
-    """Describe the file at the path a new record is about to take.
+def _standing(
+    path: Path,
+    record: RunRecord | FailureRecord,
+    build: Callable[[object], RunRecord | FailureRecord],
+) -> tuple[str, str]:
+    """Describe the file that a new record of a run moves aside.
 
     Returns:
         The run id the file states, or that of the new record when it
         states none that can be part of a file name, and why the file is
         not the record the run now gets.
     """
-    earlier: RunRecord | FailureRecord
     try:
-        if isinstance(record, RunRecord):
-            earlier = _parse(path, RunRecord.from_dict)
-        else:
-            earlier = _parse(path, FailureRecord.from_dict)
+        earlier = _parse(path, build)
     except (SerializationError, OSError) as error:
         return record.run_id, str(error)
     reason = _foreign(earlier.run_id, earlier.config_hash, record.run_id, record.config_hash)
