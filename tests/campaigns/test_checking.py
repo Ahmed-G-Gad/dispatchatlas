@@ -559,7 +559,10 @@ def test_notes_of_the_engine_that_the_record_does_not_show_are_counted(directory
     rewrite(directory / RUNS / RECORD, lambda record: replace(record, notes=(note,)))
     report = check(directory)
     assert codes(report) == {"records-noted"}
-    assert one(report, "records-noted").items == ("random-search: 1 of 4 records",)
+    assert one(report, "records-noted").items == (
+        "random-search: 1 of 4 records",
+        f"for example: {note}",
+    )
 
 
 def _with_wall(path: Path, seconds: float) -> None:

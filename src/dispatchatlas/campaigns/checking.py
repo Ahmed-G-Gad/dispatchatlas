@@ -222,7 +222,8 @@ CODES: Mapping[str, tuple[Severity, str]] = {
     ),
     "records-noted": (
         "note",
-        "Records carry notes of the engine that the check does not derive from the record.",
+        "Records carry notes of the engine that the check does not derive from the record, "
+        "such as a claim of the solver that the checks of its result contradict.",
     ),
     "clock-disagreement": (
         "note",
@@ -868,6 +869,7 @@ def _check_records(
 ) -> None:
     held: Counter[tuple[str, str]] = Counter()
     shown: dict[str, Counter[tuple[str, str]]] = {}
+    examples: dict[str, dict[str, None]] = {}
     unhashed = 0
     for record in records.values():
         run = plan.run(record.run_id)
@@ -882,8 +884,10 @@ def _check_records(
         )
         codes = {_TRACE_CODES[kind] for kind, _ in facts if kind in _TRACE_CODES}
         derived = {text for _, text in facts}
-        if any(note not in derived for note in record.notes):
+        other = [note for note in record.notes if note not in derived]
+        if other:
             codes.add("records-noted")
+            examples.setdefault(run.protocol, {}).setdefault(other[0])
         for code in codes:
             shown.setdefault(code, Counter())[cell] += 1
     texts = {
@@ -911,13 +915,16 @@ def _check_records(
                 if under == name
             }
             if cells:
+                items = [
+                    f"{solver}: {count} of {held[name, solver]} records"
+                    for solver, count in cells.items()
+                ]
+                if code == "records-noted":
+                    items += [f"for example: {note}" for note in list(examples[name])[:_SHOWN]]
                 found.add(
                     code,
                     f"Under protocol {name}, {sum(cells.values())} records {text}.",
-                    (
-                        f"{solver}: {count} of {held[name, solver]} records"
-                        for solver, count in cells.items()
-                    ),
+                    items,
                     name,
                 )
     if unhashed:
@@ -1046,8 +1053,8 @@ def _check_sessions(
         last = sessions[-1]
         found.add(
             "session-unfinished",
-            f"Session {last.session}, the last one, is recorded as {last.status.value}: it is "
-            "still running or ended before it closed its record.",
+            f"Session {last.session}, the last one, is recorded as {last.status.value} and not "
+            "as finished.",
         )
 
 
