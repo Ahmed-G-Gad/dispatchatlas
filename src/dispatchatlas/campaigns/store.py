@@ -9,8 +9,9 @@ Layout under an output root::
                            digest of its plan and the runs that left or entered it
         runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
         failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
-        superseded/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
-                           files moved aside before their runs were repeated
+        superseded/runs/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
+        superseded/failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.<run id>.json
+                           files moved aside when new records took their places
         logs/session-<n>.log  what each session logged, with UTC time stamps
         .lock              locked while a runner works on the campaign
 
@@ -21,17 +22,25 @@ and a final newline, and a value that is not finite is refused.
 The readers :func:`read_campaign`, :func:`read_plan`, :func:`read_runs`,
 :func:`read_failures`, and :func:`read_sessions` return typed records. They
 only return records of the plan in ``plan.json``: a file left by an earlier
-plan, whose run id or config hash differs, is skipped with a warning. A record
-whose content no longer matches its result hash or its identity hash raises an
-error. :func:`read_runs` also warns about every other file under ``runs/``,
-which :func:`read_strays` lists: records of runs the plan does not hold, files
-that cannot be read, and files that are no records.
+plan, whose run id or config hash differs, is skipped with a warning. A run
+record raises an error when its content no longer matches its result hash or
+its identity hash, or when it states another problem, solver, protocol,
+replicate, or seed than the plan states for its run. :func:`read_runs` also
+warns about every other file under ``runs/``, which :func:`read_strays` lists:
+records of runs the plan does not hold, files that cannot be read, and files
+that are no records.
 
 :class:`Store` is the writing side, used by the runner: it locks the
 directory, refuses to mix configurations, and settles which runs remain. It
-never replaces a file that is not the valid record of a planned run: before
-the run is repeated, such a file is moved under ``superseded/``, where nothing
-reads it and nothing replaces it.
+replaces no record. A file at the path of a planned run that is not the valid
+record of that run, such as a record of another version of its problem, stays
+where it is until a new record is written to its path, and is then moved
+under ``superseded/``, with the run id it states before ``.json``; the same
+holds for the file of a failed attempt. So a session that repeats no run
+moves nothing, and a record counts again when its problem is restored.
+Nothing replaces a file under ``superseded/``, and the only reader of that
+folder is the store itself, which moves a record back to its path when it is
+the valid record of a planned run that has none.
 """
 
 from __future__ import annotations
@@ -40,7 +49,7 @@ import contextlib
 import re
 import shutil
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
@@ -68,6 +77,7 @@ __all__ = [
     "RUNS",
     "SESSIONS",
     "SUPERSEDED",
+    "Kept",
     "Ledger",
     "Stale",
     "Store",
@@ -189,7 +199,13 @@ def read_runs(directory: str | Path, *, verify: bool = True) -> tuple[RunRecord,
     Args:
         directory: The campaign directory.
         verify: Check that every record still matches its result hash,
-            schedule digest, and identity hash.
+            schedule digest, and identity hash, and that it states what
+            the plan states for its run: the problem and its digest, the
+            solver with its parameters, the protocol, the replicate, and
+            the seed. The comparison with the plan needs no hash, so it
+            also covers a record that states no identity hash. A seed the
+            run had in an earlier plan of the directory is accepted, as
+            the session records name it.
 
     Every other file under ``runs/`` is warned about, by kind and with the
     first names (:func:`read_strays`).
@@ -200,6 +216,7 @@ def read_runs(directory: str | Path, *, verify: bool = True) -> tuple[RunRecord,
     """
     folder = Path(directory)
     plan = read_plan(folder)
+    stated = _Stated(plan, _earlier_seeds(folder))
     records: list[RunRecord] = []
     for run in plan.runs:
         path = _planned_path(folder, run)
@@ -210,8 +227,8 @@ def read_runs(directory: str | Path, *, verify: bool = True) -> tuple[RunRecord,
         if stale:
             _LOG.warning("skipping %s: %s", path, stale)
             continue
-        if verify and (issues := record.verify()):
-            raise SerializationError(f"{path}: {'; '.join(issues)}")
+        if verify and (issues := stated.issues(record, run)):
+            raise SerializationError(f"{path}: {issues}")
         records.append(record)
     strays = _strays(folder, plan)
     for paths, what in (
@@ -232,7 +249,9 @@ class Strays:
 
     Attributes:
         unplanned: Run records, such as those of runs that left the plan.
-        unreadable: JSON files that cannot be read as run records.
+        unreadable: Files named ``*.json`` that cannot be read as run
+            records: one that is not UTF-8 text or not JSON, one that is
+            no run record, and one the operating system does not let read.
         other: Files that are no JSON documents, such as a temporary file
             an interrupted write left behind.
     """
@@ -271,7 +290,7 @@ def _strays(folder: Path, plan: Plan) -> Strays:
             continue
         try:
             _parse(path, RunRecord.from_dict)
-        except SerializationError:
+        except (SerializationError, OSError):
             unreadable.append(path)
         else:
             unplanned.append(path)
@@ -319,10 +338,11 @@ class Stale:
     Attributes:
         run_id: Id of the planned run.
         problem: Id of the problem of the planned run.
-        path: The file.
+        path: The file: the one at the path of the run's record, or one at
+            the path of a failed attempt of the run.
         found: The run id the file states, or ``run_id`` when it states
             none that can be part of a file name.
-        reason: Why the file does not count as the record of the run.
+        reason: Why the file does not count as a record of the run.
         changed_problem: Whether the file is a record made on another
             version of the problem of the run.
     """
@@ -336,6 +356,21 @@ class Stale:
 
 
 @dataclass(frozen=True)
+class Kept:
+    """A file under ``superseded/`` that is the valid record of a planned run without one.
+
+    Attributes:
+        run_id: Id of the planned run.
+        kept: The file under ``superseded/``.
+        path: The path of the run's record, where the file belongs.
+    """
+
+    run_id: str
+    kept: Path
+    path: Path
+
+
+@dataclass(frozen=True)
 class Ledger:
     """What a store already holds for a plan.
 
@@ -343,12 +378,29 @@ class Ledger:
         completed: Ids of the runs with a valid record.
         failures: Failed attempts of the plan's runs, by run id, in attempt order.
         stale: The files at the paths of planned runs that do not count as
-            their records, in plan order.
+            their records: those at the paths of run records in plan order,
+            then those at the paths of failed attempts in path order.
+        kept: The valid records under ``superseded/`` of planned runs
+            without a valid record at their paths, in plan order.
     """
 
     completed: frozenset[str] = frozenset()
     failures: Mapping[str, tuple[FailureRecord, ...]] = field(default_factory=dict)
     stale: tuple[Stale, ...] = ()
+    kept: tuple[Kept, ...] = ()
+
+    def restored(self) -> Ledger:
+        """Return the ledger as it stands once every kept record is back at its path.
+
+        The runs of the kept records are complete, and the stale files at
+        their paths are no longer listed. Nothing is moved.
+        """
+        paths = {item.path for item in self.kept}
+        return Ledger(
+            self.completed | {item.run_id for item in self.kept},
+            self.failures,
+            tuple(item for item in self.stale if item.path not in paths),
+        )
 
     def next_attempt(self, run_id: str) -> int:
         """Return the number of the next attempt of a run: one past its last failure."""
@@ -528,31 +580,45 @@ class Store:
         """Read which runs of a plan are complete and which attempts failed.
 
         A file at the path of a planned run that cannot be read, belongs to
-        another plan, or no longer matches its hashes does not count: it is
-        listed as stale and its run is attempted again. Nothing is moved or
-        written here; :meth:`set_aside` keeps the stale files before new
-        records take their places.
+        another plan, no longer matches its hashes, or states another
+        problem, solver, protocol, replicate, or seed than the plan states
+        for the run does not count: it is listed as stale and its run is
+        attempted again. The file of a failed attempt at the path of a
+        planned run that belongs to another plan is listed as stale too, and
+        is no attempt of the run. A run without a valid record whose valid
+        record lies under ``superseded/`` is listed as kept. Nothing is
+        moved or written here: :meth:`reconcile` brings the kept records
+        back, and :meth:`write_run` and :meth:`write_failure` move a stale
+        file aside when a new record takes its place.
+
+        The library that plans derives the seeds, so a plan can give a run
+        another seed than the plan the directory holds. A record made with
+        the seed its run has in that plan counts, as one made with a seed a
+        session recorded as replaced does.
         """
+        seeds = _earlier_seeds(self.directory)
+        if seeds is not None and (self.directory / PLAN_FILE).is_file():
+            try:
+                for held in read_plan(self.directory).runs:
+                    seeds.setdefault(held.run_id, set()).add(held.seed)
+            except SerializationError:
+                seeds = None
+        stated = _Stated(plan, seeds)
+        aside = (self.directory / SUPERSEDED / RUNS).is_dir()
         completed: set[str] = set()
         stale: list[Stale] = []
+        kept: list[Kept] = []
         for run in plan.runs:
             path = _planned_path(self.directory, run)
-            if not path.is_file():
-                continue
-            try:
-                record = _parse(path, RunRecord.from_dict)
-            except SerializationError as error:
-                stale.append(Stale(run.run_id, run.problem, path, run.run_id, str(error)))
-                continue
-            foreign = _foreign(record.run_id, record.config_hash, run.run_id, plan.config_hash)
-            issues = foreign or "; ".join(record.verify())
-            if not issues:
-                completed.add(run.run_id)
-                continue
-            found = record.run_id if _FILE_NAME.fullmatch(record.run_id) else run.run_id
-            changed = bool(foreign) and record.config_hash == plan.config_hash
-            reason = f"{issues} ({path})"
-            stale.append(Stale(run.run_id, run.problem, path, found, reason, changed))
+            if path.is_file():
+                found = _stale(path, run, stated)
+                if found is None:
+                    completed.add(run.run_id)
+                    continue
+                stale.append(found)
+            if aside and (back := self._kept(path, run, stated)) is not None:
+                kept.append(Kept(run.run_id, back, path))
+        attempts = {_attempts_path(self.directory, run): run for run in plan.runs}
         failures: dict[str, list[FailureRecord]] = {}
         for path in sorted((self.directory / FAILURES).rglob("*.json")):
             try:
@@ -562,6 +628,23 @@ class Store:
                 continue
             if failure.config_hash == plan.config_hash and plan.has_run(failure.run_id):
                 failures.setdefault(failure.run_id, []).append(failure)
+                continue
+            stem, marker, _ = path.name.rpartition(".attempt-")
+            planned = attempts.get(path.with_name(stem)) if marker else None
+            if planned is not None:
+                reason = _foreign(
+                    failure.run_id, failure.config_hash, planned.run_id, plan.config_hash
+                )
+                stale.append(
+                    Stale(
+                        planned.run_id,
+                        planned.problem,
+                        path,
+                        _stated_id(failure.run_id, planned.run_id),
+                        f"{reason} ({path})",
+                        failure.config_hash == plan.config_hash,
+                    )
+                )
         return Ledger(
             frozenset(completed),
             {
@@ -569,14 +652,36 @@ class Store:
                 for run_id, items in failures.items()
             },
             tuple(stale),
+            tuple(kept),
         )
+
+    def _kept(self, path: Path, run: PlannedRun, stated: _Stated) -> Path | None:
+        """Return a file under ``superseded/`` that is the valid record of a run, if any.
+
+        ``path`` is the path of the run's record. The files moved aside
+        from it that state the run's id are examined, the latest first.
+        """
+        folder = self.directory / SUPERSEDED / path.parent.relative_to(self.directory)
+        if not folder.is_dir():
+            return None
+        prefix = f"{path.stem}.{run.run_id}."
+        for candidate in sorted(folder.iterdir(), reverse=True):
+            if not (candidate.name.startswith(prefix) and candidate.suffix == ".json"):
+                continue
+            try:
+                if candidate.is_file() and _stale(candidate, run, stated) is None:
+                    return candidate
+            except OSError:
+                continue
+        return None
 
     def refuse_changed_problems(self, ledger: Ledger) -> None:
         """Refuse a directory that holds a record made on another version of a problem.
 
         Raises:
             ConfigError: If a stale file of the ledger is the record of a
-                planned run made on another version of its problem.
+                planned run, or of a failed attempt of one, made on another
+                version of its problem.
         """
         changed = [item for item in ledger.stale if item.changed_problem]
         if changed:
@@ -584,39 +689,105 @@ class Store:
             raise ConfigError(
                 f"{self.directory} holds {len(changed)} record(s) made on another version of "
                 f"problem(s) {problems}, and on_changed_problem is 'refuse'; restore the "
-                "problem(s), set on_changed_problem to 'rerun' to keep those records aside "
-                "and run their runs again, or give the campaign another id"
+                "problem(s), set on_changed_problem to 'rerun' to run their runs again and "
+                "keep those records aside, or give the campaign another id"
             )
 
-    def set_aside(self, ledger: Ledger) -> tuple[Path, ...]:
-        """Move the stale files of a ledger under ``superseded/``, and warn about each.
+    def reconcile(self, ledger: Ledger) -> Ledger:
+        """Bring back the kept records of a ledger, and warn about its stale files.
 
-        A file keeps its path below ``runs/``, with the run id it states
-        before ``.json``, and a number after that when the name is taken, so
-        no file is replaced.
+        Each kept record is moved from ``superseded/`` back to the path of
+        its run, after the stale file at that path, if there is one, is
+        moved aside. A move the operating system refuses is warned about,
+        and the run is then attempted again. One warning names the stale
+        files that remain: each stays where it is until a new record is
+        written to its path.
 
         Returns:
-            Where the files are kept, in the order of the ledger.
+            The ledger after the moves: the runs whose records are back
+            are complete, and no record is listed as kept.
         """
-        kept: list[Path] = []
-        for item in ledger.stale:
-            relative = item.path.relative_to(self.directory / RUNS)
-            stem = f"{item.path.stem}.{item.found}"
-            target = self.directory / SUPERSEDED / relative.with_name(f"{stem}.json")
-            number = 1
-            while target.exists():
-                number += 1
-                target = target.with_name(f"{stem}.{number}.json")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            item.path.replace(target)
-            kept.append(target)
+        completed = set(ledger.completed)
+        remaining = {item.path: item for item in ledger.stale}
+        for item in ledger.kept:
+            try:
+                earlier = remaining.get(item.path)
+                if earlier is not None:
+                    self._move_aside(item.path, earlier.found)
+                    del remaining[item.path]
+                item.path.parent.mkdir(parents=True, exist_ok=True)
+                item.kept.replace(item.path)
+            except OSError as error:
+                _LOG.warning(
+                    "cannot bring %s back as the record of %s, which will run again: %s",
+                    item.kept,
+                    item.run_id,
+                    error,
+                )
+                continue
+            completed.add(item.run_id)
             _LOG.warning(
-                "will run %s again: %s; the earlier file is kept as %s",
+                "%s: the record kept as %s is the valid record of the run and is back at %s",
                 item.run_id,
-                item.reason,
-                target,
+                item.kept,
+                item.path,
             )
-        return tuple(kept)
+        stale = tuple(remaining.values())
+        if stale:
+            shown = "; ".join(f"{item.run_id}: {item.reason}" for item in stale[:_SHOWN])
+            more = f"; and {len(stale) - _SHOWN} more" if len(stale) > _SHOWN else ""
+            _LOG.warning(
+                "%d file(s) at the paths of planned runs are not their valid records (%s%s); "
+                "each stays where it is until a new record is written to its path, and is "
+                "then kept under %s",
+                len(stale),
+                shown,
+                more,
+                self.directory / SUPERSEDED,
+            )
+        return Ledger(frozenset(completed), ledger.failures, stale, ())
+
+    def _move_aside(self, path: Path, found: str) -> Path:
+        """Move a file of the directory under ``superseded/`` and return where it is kept.
+
+        The file keeps its path below the campaign directory, with the run
+        id ``found`` before ``.json``, and a number after that when the name
+        is taken, so no file is replaced.
+
+        Raises:
+            OSError: If the operating system refuses the move.
+        """
+        relative = path.relative_to(self.directory)
+        stem = f"{path.stem}.{found}"
+        target = self.directory / SUPERSEDED / relative.with_name(f"{stem}.json")
+        number = 1
+        while target.exists():
+            number += 1
+            target = target.with_name(f"{stem}.{number}.json")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(target)
+        return target
+
+    def _keep(self, path: Path, record: RunRecord | FailureRecord) -> None:
+        """Move the file at the path a new record is about to take under ``superseded/``.
+
+        Raises:
+            ConfigError: If the operating system refuses the move, for
+                example because another program holds the file open.
+        """
+        if not path.exists():
+            return
+        found, reason = _standing(path, record)
+        try:
+            target = self._move_aside(path, found)
+        except OSError as error:
+            raise ConfigError(
+                f"{path} is not the record that {record.run_id} now gets, and it cannot be "
+                f"moved under {self.directory / SUPERSEDED} ({error}), so the new record is "
+                "not written; close any program that holds the file open and run the "
+                "campaign again"
+            ) from error
+        _LOG.warning("%s: %s; the earlier file is kept as %s", record.run_id, reason, target)
 
     def last_session(self) -> SessionRecord | None:
         """Return the record of the latest session, or ``None`` when there is none.
@@ -650,7 +821,14 @@ class Store:
         atomic_write_json(self.directory / SESSIONS / f"{record.session}.json", record.to_dict())
 
     def write_run(self, record: RunRecord) -> Path:
-        """Write the record of a completed run and return its path."""
+        """Write the record of a completed run and return its path.
+
+        A file that is at the path is moved under ``superseded/`` first.
+
+        Raises:
+            ConfigError: If a file at the path cannot be moved aside. The
+                record is then not written.
+        """
         path = run_path(
             self.directory,
             record.solver.name,
@@ -658,11 +836,20 @@ class Store:
             record.replicate,
             record.protocol.name,
         )
+        self._keep(path, record)
         atomic_write_json(path, record.to_dict())
         return path
 
     def write_failure(self, record: FailureRecord) -> Path:
-        """Write the record of a failed attempt and return its path."""
+        """Write the record of a failed attempt and return its path.
+
+        A file that is at the path, such as the record of an attempt on
+        another version of the problem, is moved under ``superseded/`` first.
+
+        Raises:
+            ConfigError: If a file at the path cannot be moved aside. The
+                record is then not written.
+        """
         path = failure_path(
             self.directory,
             record.solver.name,
@@ -671,6 +858,7 @@ class Store:
             record.protocol.name,
             record.provenance.attempt,
         )
+        self._keep(path, record)
         atomic_write_json(path, record.to_dict())
         return path
 
@@ -707,6 +895,135 @@ def _parse[T](path: Path, build: Callable[[object], T]) -> T:
         return build(_read(path))
     except SerializationError as error:
         raise SerializationError(f"{path}: {error}") from error
+
+
+class _Stated:
+    """What a plan states for each of its runs, to compare the records of the runs with.
+
+    Args:
+        plan: The plan.
+        seeds: The seeds the runs had in earlier plans, by run id. ``None``
+            when they are not known: the seed of a record is then not
+            compared.
+    """
+
+    def __init__(self, plan: Plan, seeds: Mapping[str, Collection[int]] | None) -> None:
+        self.config_hash = plan.config_hash
+        self._digests = {problem.id: problem.digest for problem in plan.problems}
+        self._solvers = {entry.name: (entry.id, dict(entry.parameters)) for entry in plan.solvers}
+        self._protocols = {protocol.name: protocol.to_dict() for protocol in plan.protocols}
+        self._seeds = seeds
+
+    def issues(self, record: RunRecord, run: PlannedRun) -> str:
+        """Return why a record of a run's id is not the intact record of the run, if it is not.
+
+        The record must match its hashes
+        (:meth:`~dispatchatlas.campaigns.records.RunRecord.verify`) and state
+        what the plan states for the run: the problem and its digest, the
+        solver with its id and parameters, the protocol, the replicate, and
+        the seed, or a seed the run had in an earlier plan.
+
+        Returns:
+            The problems, or an empty string for an intact record.
+        """
+        found = list(record.verify())
+        solver = record.solver
+        pairs = (
+            ("problem", record.problem.id, run.problem),
+            ("problem digest", record.problem.digest, self._digests.get(run.problem)),
+            ("solver", solver.name, run.solver),
+            (
+                "solver id or parameters",
+                (solver.id, dict(solver.parameters)),
+                self._solvers.get(run.solver),
+            ),
+            ("protocol", record.protocol.to_dict(), self._protocols.get(run.protocol)),
+            ("replicate", record.replicate, run.replicate),
+        )
+        differing = [name for name, recorded, planned in pairs if recorded != planned]
+        if (
+            record.seed != run.seed
+            and self._seeds is not None
+            and record.seed not in self._seeds.get(run.run_id, ())
+        ):
+            differing.append("seed")
+        if differing:
+            found.append(f"the record states another {', '.join(differing)} than the plan")
+        return "; ".join(found)
+
+
+def _earlier_seeds(folder: Path) -> dict[str, set[int]] | None:
+    """Return the seeds the runs of a campaign directory had in earlier plans, by run id.
+
+    The session records name them: a session whose plan gives a run another
+    seed than the plan before it stores the earlier seed. ``None`` when a
+    session record cannot be read as far as that, since the seeds it may
+    name are then not known.
+    """
+    seeds: dict[str, set[int]] = {}
+    for path in (folder / SESSIONS).glob("*.json"):
+        try:
+            document = read_json(path)
+        except (SerializationError, OSError):
+            return None
+        reseeded = document.get("plan_reseeded", []) if isinstance(document, Mapping) else None
+        if not isinstance(reseeded, list):
+            return None
+        for item in reseeded:
+            run_id = item.get("run_id") if isinstance(item, Mapping) else None
+            seed = item.get("earlier_seed") if isinstance(item, Mapping) else None
+            if not isinstance(run_id, str) or not isinstance(seed, int):
+                return None
+            seeds.setdefault(run_id, set()).add(seed)
+    return seeds
+
+
+def _attempts_path(directory: Path, run: PlannedRun) -> Path:
+    """Return the path of a failed attempt of a run, up to ``.attempt-<n>.json``."""
+    return directory / FAILURES / run.solver / run.problem / f"r{run.replicate:03d}-{run.protocol}"
+
+
+def _stated_id(found: str, run_id: str) -> str:
+    """Return the run id a file states when it can be part of a file name, else ``run_id``."""
+    return found if _FILE_NAME.fullmatch(found) else run_id
+
+
+def _stale(path: Path, run: PlannedRun, stated: _Stated) -> Stale | None:
+    """Return why the file at ``path`` is not the valid record of a planned run, if it is not."""
+    try:
+        record = _parse(path, RunRecord.from_dict)
+    except SerializationError as error:
+        return Stale(run.run_id, run.problem, path, run.run_id, str(error))
+    foreign = _foreign(record.run_id, record.config_hash, run.run_id, stated.config_hash)
+    issues = foreign or stated.issues(record, run)
+    if not issues:
+        return None
+    changed = bool(foreign) and record.config_hash == stated.config_hash
+    found = _stated_id(record.run_id, run.run_id)
+    return Stale(run.run_id, run.problem, path, found, f"{issues} ({path})", changed)
+
+
+def _standing(path: Path, record: RunRecord | FailureRecord) -> tuple[str, str]:
+    """Describe the file at the path a new record is about to take.
+
+    Returns:
+        The run id the file states, or that of the new record when it
+        states none that can be part of a file name, and why the file is
+        not the record the run now gets.
+    """
+    earlier: RunRecord | FailureRecord
+    try:
+        if isinstance(record, RunRecord):
+            earlier = _parse(path, RunRecord.from_dict)
+        else:
+            earlier = _parse(path, FailureRecord.from_dict)
+    except (SerializationError, OSError) as error:
+        return record.run_id, str(error)
+    reason = _foreign(earlier.run_id, earlier.config_hash, record.run_id, record.config_hash)
+    if not reason and isinstance(earlier, RunRecord):
+        reason = "; ".join(earlier.verify())
+    reason = reason or "the file is not the valid record of the run"
+    return _stated_id(earlier.run_id, record.run_id), f"{reason} ({path})"
 
 
 def _named(heading: str, runs: list[PlannedRun]) -> str:

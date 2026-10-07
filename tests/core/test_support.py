@@ -117,6 +117,10 @@ def test_json_documents_are_sorted_and_end_with_a_newline(tmp_path: Path) -> Non
     (tmp_path / "bad.json").write_text("{", encoding="utf-8")
     with pytest.raises(SerializationError, match="invalid JSON"):
         read_json(tmp_path / "bad.json")
+    # A document in another encoding, such as the UTF-16 a shell redirect can write.
+    (tmp_path / "bad.json").write_bytes('{"a": "é"}'.encode("utf-16"))
+    with pytest.raises(SerializationError, match="is not UTF-8 text"):
+        read_json(tmp_path / "bad.json")
 
 
 def test_a_failed_write_keeps_the_old_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

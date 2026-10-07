@@ -19,16 +19,30 @@ from dispatchatlas.campaigns import (
     FileSource,
     SolverSpec,
     environment,
+    planning,
+    read_failures,
     read_plan,
     read_runs,
     read_sessions,
     run,
+    store,
 )
+from dispatchatlas.campaigns.estimation import estimate
 from dispatchatlas.campaigns.io import campaign_from_dict, campaign_to_dict
-from dispatchatlas.campaigns.records import RunRecord, SessionRecord
+from dispatchatlas.campaigns.records import RunRecord, SessionRecord, SessionStatus
 from dispatchatlas.campaigns.runner import session_changes
-from dispatchatlas.campaigns.store import LOGS, RUNS, SUPERSEDED, Store, Strays, read_strays
+from dispatchatlas.campaigns.store import (
+    FAILURES,
+    LOGS,
+    RUNS,
+    SESSIONS,
+    SUPERSEDED,
+    Store,
+    Strays,
+    read_strays,
+)
 from dispatchatlas.core import ConfigError, Problem, SerializationError, SolveResult, SolverInfo
+from dispatchatlas.core.io import read_json
 from dispatchatlas.core.logs import SessionLog, get_logger
 from dispatchatlas.core.serialization import problem_from_dict, problem_to_dict, save_problem
 from dispatchatlas.core.solver import StopCriteria
@@ -275,7 +289,9 @@ def test_a_record_of_an_earlier_problem_version_is_kept_aside(
         second = run(campaign, tmp_path / "out", registry=REGISTRY)
     assert second.config_hash == first.config_hash
     assert (second.attempted, second.completed) == (2, 2)
-    assert caplog.text.count("the record belongs to another version of its problem") == 2
+    # The session names the files when it starts, and each one when it is moved.
+    assert "2 file(s) at the paths of planned runs are not their valid records" in caplog.text
+    assert caplog.text.count("the record belongs to another version of its problem") == 4
     assert caplog.text.count("the earlier file is kept as") == 2
     # Every record of the first version is under superseded/, byte for byte.
     kept = _files(first.directory / SUPERSEDED)
@@ -285,7 +301,7 @@ def test_a_record_of_an_earlier_problem_version_is_kept_aside(
         assert record.verify() == ()
         assert record.run_id in earlier
         assert name.endswith(f".{record.run_id}.json")
-        assert name.startswith(f"{record.solver.name}/shop/r000-evals.")
+        assert name.startswith(f"runs/{record.solver.name}/shop/r000-evals.")
     later = read_runs(first.directory)
     assert {record.run_id for record in later}.isdisjoint(earlier)
     assert {record.problem.digest for record in later} != {
@@ -333,7 +349,7 @@ def test_an_edited_and_an_unreadable_record_are_kept_aside(
         suffix = "" if round_number == 1 else f".{round_number}"
         for path, text in zip((edited, broken), texts, strict=True):
             solver = path.parent.parent.name
-            aside = first.directory / SUPERSEDED / solver / "shop"
+            aside = first.directory / SUPERSEDED / RUNS / solver / "shop"
             assert (aside / f"r000-evals.{planned[solver]}{suffix}.json").read_text() == text
     assert "the outcome does not match the result hash" in caplog.text
     assert len(_files(first.directory / SUPERSEDED)) == 4
@@ -353,8 +369,150 @@ def test_fresh_discards_the_files_kept_aside_and_the_logs(tmp_path: Path) -> Non
     assert sorted(_files(first.directory / LOGS)) == ["session-1.log"]
 
 
-def test_the_reader_reports_what_the_runs_folder_holds_beside_the_plan(
+def test_a_session_that_repeats_no_run_moves_nothing_and_a_restored_problem_needs_no_rerun(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    campaign = _filed(tmp_path)
+    first = run(campaign, tmp_path / "out", registry=REGISTRY)
+    files = _files(first.directory / RUNS)
+    _write_problem(tmp_path / "shop.json", 2)
+    with caplog.at_level(logging.WARNING):
+        nothing = run(campaign, tmp_path / "out", registry=REGISTRY, max_runs=0)
+    assert (nothing.attempted, nothing.completed, nothing.pending) == (0, 0, 2)
+    assert "2 file(s) at the paths of planned runs are not their valid records" in caplog.text
+    assert _files(first.directory / RUNS) == files
+    assert not (first.directory / SUPERSEDED).exists()
+    # The records count again as soon as the problem is what it was.
+    _write_problem(tmp_path / "shop.json", 1)
+    back = run(campaign, tmp_path / "out", registry=REGISTRY, max_runs=0)
+    assert (back.attempted, back.completed, back.pending) == (0, 2, 0)
+    assert _files(first.directory / RUNS) == files
+    assert not (first.directory / SUPERSEDED).exists()
+
+
+def test_a_record_kept_aside_is_brought_back_when_its_problem_is_restored(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    campaign = _filed(tmp_path)
+    first = run(campaign, tmp_path / "out", registry=REGISTRY)
+    files = _files(first.directory / RUNS)
+    # One run is repeated on another version of the problem, the other is not.
+    _write_problem(tmp_path / "shop.json", 2)
+    partial = run(campaign, tmp_path / "out", registry=REGISTRY, max_runs=1)
+    assert (partial.attempted, partial.completed, partial.pending) == (1, 1, 1)
+    (aside,) = _files(first.directory / SUPERSEDED)
+    assert aside.startswith("runs/input-order/shop/r000-evals.run-")
+    other = _files(first.directory / RUNS)
+    assert (
+        other["random-search/shop/r000-evals.json"] == files["random-search/shop/r000-evals.json"]
+    )
+    assert other["input-order/shop/r000-evals.json"] != files["input-order/shop/r000-evals.json"]
+
+    def standing() -> tuple[int, int]:
+        found = estimate(campaign, root=tmp_path / "out", registry=REGISTRY)
+        return found.completed, found.remaining
+
+    assert standing() == (1, 1)
+    # The first version is restored: its record comes back and no run is repeated.
+    _write_problem(tmp_path / "shop.json", 1)
+    assert standing() == (2, 0)
+    assert len(_files(first.directory / SUPERSEDED)) == 1  # an estimate moves nothing
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        restored = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (restored.attempted, restored.completed, restored.pending) == (0, 2, 0)
+    assert caplog.text.count("is the valid record of the run and is back at") == 1
+    assert "are not their valid records" not in caplog.text
+    assert _files(first.directory / RUNS) == files
+    # The record of the other version took its place under superseded/.
+    (kept,) = _files(first.directory / SUPERSEDED).items()
+    assert kept[0] != aside
+    assert kept[1] == other["input-order/shop/r000-evals.json"]
+    assert all(record.verify() == () for record in read_runs(first.directory))
+    # A record that was edited while it was kept aside is not brought back.
+    (spoiled,) = (first.directory / SUPERSEDED).rglob("*.json")
+    _edit(spoiled, lambda document: document["outcome"].update(value=-1.0))
+    _write_problem(tmp_path / "shop.json", 2)
+    again = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (again.attempted, again.completed) == (2, 2)
+    assert len(_files(first.directory / SUPERSEDED)) == 3
+
+
+def test_a_failure_record_of_an_earlier_problem_version_is_kept_aside(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _write_problem(tmp_path / "shop.json", 1)
+    campaign = tiny_campaign(
+        "failing",
+        solvers=(SolverSpec("test-refuser"),),
+        instances=(FileSource(tmp_path / "shop.json"),),
+        replicates=1,
+    )
+    first = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (first.attempted, first.failed) == (1, 1)
+    (path,) = (first.directory / FAILURES).rglob("*.json")
+    text = path.read_text()
+    (earlier,) = read_failures(first.directory)
+    _write_problem(tmp_path / "shop.json", 2)
+    # A session that attempts nothing leaves the file where it is.
+    assert run(campaign, tmp_path / "out", registry=REGISTRY, max_runs=0).pending == 1
+    assert path.read_text() == text
+    assert not (first.directory / SUPERSEDED).exists()
+    with caplog.at_level(logging.WARNING):
+        second = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (second.attempted, second.failed) == (1, 1)
+    (later,) = read_failures(first.directory)
+    assert later.run_id != earlier.run_id
+    assert later.provenance.attempt == earlier.provenance.attempt == 1
+    kept = _files(first.directory / SUPERSEDED)
+    name = f"failures/test-refuser/shop/r000-evals.attempt-1.{earlier.run_id}.json"
+    assert kept == {name: text}
+    assert "the earlier file is kept as" in caplog.text
+    # The other policy refuses a failure record of another version as it does a run record.
+    _write_problem(tmp_path / "shop.json", 1)
+    strict = replace(campaign, execution=replace(campaign.execution, on_changed_problem="refuse"))
+    folders = (FAILURES, SUPERSEDED, SESSIONS)
+    before = [_files(first.directory / folder) for folder in folders]
+    with pytest.raises(ConfigError, match=r"1 record\(s\) made on another version of problem"):
+        run(strict, tmp_path / "out", registry=REGISTRY)
+    assert [_files(first.directory / folder) for folder in folders] == before
+
+
+def test_a_stale_file_that_cannot_be_moved_ends_the_session_as_failed_and_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = _filed(tmp_path)
+    first = run(campaign, tmp_path / "out", registry=REGISTRY)
+    _write_problem(tmp_path / "shop.json", 2)
+    held = first.directory / RUNS / "random-search" / "shop" / "r000-evals.json"
+    text = held.read_text()
+    move = Path.replace
+
+    def refusing(self: Path, target: Path) -> Path:
+        # As Windows answers while another program holds the file open.
+        if self == held:
+            raise PermissionError(13, "The process cannot access the file", str(self))
+        return move(self, target)
+
+    monkeypatch.setattr(Path, "replace", refusing)
+    with pytest.raises(ConfigError, match="it cannot be moved under") as refusal:
+        run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert str(held) in str(refusal.value)
+    # The session is on record as failed, and the file is where it was.
+    last = read_sessions(first.directory)[-1]
+    assert (last.session, last.status) == (2, SessionStatus.FAILED)
+    assert last.finished is not None
+    assert last.counts["succeeded"] == 1
+    assert held.read_text() == text
+    assert len(_files(first.directory / SUPERSEDED)) == 1
+    monkeypatch.setattr(Path, "replace", move)
+    resumed = run(campaign, tmp_path / "out", registry=REGISTRY)
+    assert (resumed.attempted, resumed.completed) == (1, 2)
+    assert text in _files(first.directory / SUPERSEDED).values()
+
+
+def test_the_reader_reports_what_the_runs_folder_holds_beside_the_plan(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     campaign = _filed(tmp_path)
     first = run(campaign, tmp_path / "out", registry=REGISTRY)
@@ -369,21 +527,36 @@ def test_the_reader_reports_what_the_runs_folder_holds_beside_the_plan(
     unplanned.write_text(record.read_text())
     unreadable = runs / "retired-solver" / "shop" / "r001-evals.json"
     unreadable.write_text("{}")
+    # A document that is not UTF-8 text, as a shell redirect can write one.
+    exported = runs / "export.json"
+    exported.write_bytes('{"a": "é"}'.encode("utf-16"))
     other = (runs / "notes.txt", record.with_name(f".{record.name}.partial"))
     for path in other:
         path.write_text("left behind")
     strays = read_strays(first.directory)
-    assert strays == Strays((unplanned,), (unreadable,), tuple(sorted(other)))
+    assert strays == Strays((unplanned,), (exported, unreadable), tuple(sorted(other)))
     assert strays
     with caplog.at_level(logging.WARNING):
         assert len(read_runs(first.directory)) == 2
     assert "1 record(s) of runs the plan does not hold, which are not read: " in caplog.text
     assert "runs/retired-solver/shop/r000-evals.json" in caplog.text
-    assert "1 file(s) that cannot be read as run records: " in caplog.text
+    assert "2 file(s) that cannot be read as run records: runs/export.json, " in caplog.text
     assert "2 file(s) that are no records: " in caplog.text
     # A session leaves such files where they are.
     assert run(campaign, tmp_path / "out", registry=REGISTRY).attempted == 0
     assert read_strays(first.directory) == strays
+
+    # A file the operating system does not let read is reported, not raised.
+    def refusing(path: Path) -> Any:
+        if path == unplanned:
+            raise PermissionError(13, "Permission denied", str(path))
+        return read_json(path)
+
+    monkeypatch.setattr(store, "read_json", refusing)
+    assert read_strays(first.directory) == Strays(
+        (), (exported, unplanned, unreadable), tuple(sorted(other))
+    )
+    monkeypatch.setattr(store, "read_json", read_json)
     # A record at a planned path that cannot be read is an error of the reader.
     record.write_text("{}")
     with pytest.raises(SerializationError):
@@ -436,6 +609,89 @@ def test_the_identity_hash_covers_what_names_a_run(tmp_path: Path) -> None:
     assert verified(notes=["a note"]) == ()
     # A record that states no identity hash is not checked for one.
     assert verified(identity_hash=None, seed=record.seed + 1) == ()
+
+
+def test_a_record_is_compared_with_what_the_plan_states_for_its_run(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    summary = run(tiny_campaign(), tmp_path, registry=REGISTRY)
+    count = len(read_runs(summary.directory))
+    path = sorted((summary.directory / RUNS).rglob("*.json"))[0]
+    pristine = path.read_text()
+    edits: dict[str, Any] = {
+        "seed": lambda document: document.update(seed=document["seed"] + 1),
+        "replicate": lambda document: document.update(replicate=document["replicate"] + 5),
+        "problem": lambda document: document["problem"].update(id="another"),
+        "problem digest": lambda document: document["problem"].update(digest="0" * 64),
+        "solver": lambda document: document["solver"].update(name="another"),
+        "solver id or parameters": lambda document: document["solver"]["parameters"].update(x=1),
+        "protocol": lambda document: document["protocol"]["stop"].update(max_evaluations=16),
+    }
+    # The comparison needs no identity hash: a record written without one, and one
+    # whose hash was removed with the edit, are checked as well.
+    for field, change in edits.items():
+        for stripped in (None, "absent"):
+
+            def edit(document: dict[str, Any], change: Any = change, how: Any = stripped) -> None:
+                change(document)
+                if how is None:
+                    document["identity_hash"] = None
+                else:
+                    del document["identity_hash"]
+
+            _edit(path, edit)
+            with pytest.raises(
+                SerializationError, match=f"the record states another {field} than the plan"
+            ):
+                read_runs(summary.directory)
+            assert len(read_runs(summary.directory, verify=False)) == count
+            path.write_text(pristine)
+    assert len(read_runs(summary.directory)) == count
+    # A resume repeats the run of such a record and keeps the file aside.
+    _edit(path, lambda document: document.update(seed=document["seed"] + 1, identity_hash=None))
+    with caplog.at_level(logging.WARNING):
+        resumed = run(tiny_campaign(), tmp_path, registry=REGISTRY)
+    assert (resumed.attempted, resumed.completed) == (1, count)
+    assert "the record states another seed than the plan" in caplog.text
+    (aside,) = (summary.directory / SUPERSEDED).rglob("*.json")
+    assert json.loads(aside.read_text())["identity_hash"] is None
+    assert json.loads(path.read_text())["seed"] == json.loads(pristine)["seed"]
+
+
+def test_a_record_made_with_a_seed_of_an_earlier_plan_still_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tiny_campaign()
+    first = run(campaign, tmp_path, registry=REGISTRY)
+    records = read_runs(first.directory)
+    # The library that plans derives other seeds: the run ids stay, the seeds change.
+    derive = planning.run_seed
+    monkeypatch.setattr(
+        planning, "run_seed", lambda *arguments, **options: derive(*arguments, **options) + 1
+    )
+    second = run(campaign, tmp_path, registry=REGISTRY)
+    assert (second.attempted, second.completed) == (0, len(records))
+    session = read_sessions(first.directory)[-1]
+    assert len(session.plan_reseeded) == len(records)
+    planned = {item.run_id: item.seed for item in read_plan(first.directory).runs}
+    assert all(planned[record.run_id] == record.seed + 1 for record in records)
+    # The session record names the earlier seeds, so the reader and a later session
+    # accept the records that state them.
+    assert read_runs(first.directory) == records
+    assert run(campaign, tmp_path, registry=REGISTRY).attempted == 0
+    assert not (first.directory / SUPERSEDED).exists()
+    # A seed that no plan of the directory gave the run is refused.
+    path = sorted((first.directory / RUNS).rglob("*.json"))[0]
+    pristine = path.read_text()
+    _edit(path, lambda document: document.update(seed=document["seed"] + 7, identity_hash=None))
+    with pytest.raises(SerializationError, match="the record states another seed than the plan"):
+        read_runs(first.directory)
+    # Without a session record that can be read, the earlier seeds are not known,
+    # and the seed is not compared.
+    (first.directory / SESSIONS / "2.json").write_text("{ not a session record")
+    assert len(read_runs(first.directory)) == len(records)
+    path.write_text(pristine)
+    assert read_runs(first.directory) == records
 
 
 def test_records_and_sessions_that_lack_the_optional_fields_load_and_resume(

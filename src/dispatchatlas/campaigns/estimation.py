@@ -121,7 +121,8 @@ def estimate(
     if root is not None:
         directory = campaign_directory(root, campaign.id)
         if _same_configuration(directory, plan.config_hash):
-            ledger = Store(directory).ledger(plan)
+            # A record kept aside that a session brings back needs no run.
+            ledger = Store(directory).ledger(plan).restored()
     remaining = ledger.pending(plan, execution.max_attempts)
     failed = sum(1 for item in plan.runs if ledger.closed(item.run_id, execution.max_attempts))
     protocols = {protocol.name: protocol for protocol in plan.protocols}

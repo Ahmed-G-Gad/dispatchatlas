@@ -21,8 +21,11 @@ environment with those of the last session the directory recorded
 stores them in its record, and a campaign whose ``on_changed_code`` is
 ``"refuse"`` refuses a session on other code instead. A file at the path of a
 planned run that is not the valid record of that run, such as a record made
-on another version of its problem, is moved under ``superseded/`` before the
-run is repeated, unless ``on_changed_problem`` is ``"refuse"``.
+on another version of its problem, does not count, and its run is attempted
+again unless ``on_changed_problem`` is ``"refuse"``. The file stays where it
+is until the new record is written, and is then moved under ``superseded/``;
+a record kept there that is the valid record of a planned run again, because
+its problem was restored, is moved back when a session starts.
 
 Each session also writes ``logs/session-<n>.log``: every record of level
 ``INFO`` or higher that the library logs while :func:`run` works, in this
@@ -185,7 +188,11 @@ def run(
             differs from that of the last recorded session, or its
             ``on_changed_problem`` is ``"refuse"`` and the directory holds a
             record made on another version of a planned run's problem; such
-            a refusal moves no file and writes no session record.
+            a refusal moves no file and writes no session record. Also if a
+            file that is not the valid record of a run cannot be moved under
+            ``superseded/`` when the new record of the run is to be written,
+            for example because another program holds it open: the session
+            then ends as failed, and the run is attempted again by the next.
         KeyboardInterrupt: When interrupted. Records written so far are kept
             and the session is marked interrupted.
     """
@@ -208,6 +215,7 @@ def run(
             ledger = store.ledger(plan)
             if execution.on_changed_problem == "refuse":
                 store.refuse_changed_problems(ledger)
+            ledger = store.reconcile(ledger)
             pending = ledger.pending(plan, execution.max_attempts, retry_failed=retry_failed)
             if max_runs is not None:
                 pending = pending[: max(0, max_runs)]
@@ -247,11 +255,9 @@ def run(
             )
             # The session record, which states how the plan changed, is written before
             # the plan it was compared with is replaced, so a session that ends in
-            # between leaves the comparison to the next one. Files are moved aside
-            # only once the session that repeats their runs is on record.
+            # between leaves the comparison to the next one.
             store.write_session(record)
             log.open(store.log_path(number))
-            store.set_aside(ledger)
             store.write_plan(plan)
             _warn_about_timing(prepared, execution, count, cpus)
             if cpus is not None:

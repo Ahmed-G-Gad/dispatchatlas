@@ -59,9 +59,11 @@ def read_json(path: Path) -> Any:
     """Read a JSON document.
 
     Raises:
-        SerializationError: If the file is not valid JSON.
+        SerializationError: If the file is not UTF-8 text or not valid JSON.
     """
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
+    except UnicodeDecodeError as error:
+        raise SerializationError(f"{path} is not UTF-8 text: {error}") from error
     except json.JSONDecodeError as error:
         raise SerializationError(f"invalid JSON in {path}: {error}") from error
