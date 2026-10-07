@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import logging
 import shutil
+import tracemalloc
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from dispatchatlas.analysis import AnalysisConfig, load_dataset, summarize, write_bundle
-from dispatchatlas.campaigns import Protocol, check_campaign, run
+from dispatchatlas.campaigns import Protocol, SolverSpec, check_campaign, run
 from dispatchatlas.campaigns.records import ErrorKind, RunRecord
 from dispatchatlas.campaigns.store import CAMPAIGN_FILE, RUNS, SESSIONS
-from dispatchatlas.core import StopCriteria
+from dispatchatlas.core import StopCriteria, StopReason
 from dispatchatlas.core.solver import TracePoint
 from tests.campaigns.damage import edit, fail, rewrite
 from tests.campaigns.solvers import registry, tiny_campaign
@@ -65,6 +66,25 @@ def test_a_loaded_dataset_holds_the_report_of_the_check(
     )
 
 
+def test_the_check_reads_the_records_before_the_dataset_and_keeps_none(tmp_path: Path) -> None:
+    directory = run(tiny_campaign(replicates=10), tmp_path, registry=REGISTRY).directory
+
+    def peak(check: bool) -> int:
+        tracemalloc.start()
+        dataset = load_dataset(directory, check=check)
+        used = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        assert (dataset.check is not None) == check
+        return used
+
+    # A first load fills what the library caches, so that the two loads compare.
+    load_dataset(directory)
+    without, checked = peak(check=False), peak(check=True)
+    # Holding the records of the check beside those of the dataset would need
+    # about 1.7 times the memory of a load without the check.
+    assert checked < 1.35 * without
+
+
 def test_a_blocking_finding_becomes_a_limitation_and_a_warning(
     directory: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -92,13 +112,37 @@ def test_missing_runs_are_named_by_cell_and_reported_once(directory: Path) -> No
         "Their cells of solver and problem, each with its number of such runs: "
         "random-search on flow-shop-3x2-1 (1)."
     )
-    # The analysis states the missing runs itself, so the finding is not repeated;
-    # the partial cell is what the check adds.
+    # The analysis states the missing runs itself and names their cell, so neither
+    # the finding on the runs nor the one on the partial cell is repeated.
+    report = check_campaign(directory, replan=False)
+    assert {"runs-unattempted", "cells-partial"} <= {item.code for item in report.findings}
     assert "runs-unattempted" not in topics
-    assert "random-search on flow-shop-3x2-1: 1 of 2 runs have a record" in topics["cells-partial"]
+    assert "cells-partial" not in topics
     # The other protocol has every record.
     assert {"campaign", "cells-partial"}.isdisjoint(
         _topics(directory, replace(FAST, protocol="more"))
+    )
+
+
+def test_a_cell_with_failed_runs_is_carried_and_one_with_missing_runs_is_not(
+    directory: Path,
+) -> None:
+    # The limitation on failures counts by solver and names no cell, so the cell
+    # that is partial for a failed run is what the check adds.
+    fail(directory, directory / RUNS / "hc" / RECORD.parent.name / RECORD.name, ErrorKind.TIMEOUT)
+    topics = _topics(directory)
+    assert "hc 1 timeout" in topics["failures"]
+    assert topics["cells-partial"].endswith(
+        "The items concerned: hc on flow-shop-3x2-1: 1 of 2 runs have a record."
+    )
+    # With a second cell that is partial for a missing run, only the first is carried.
+    (directory / RUNS / RECORD).unlink()
+    topics = _topics(directory)
+    assert "random-search on flow-shop-3x2-1 (1)" in topics["campaign"]
+    assert "2 of 6 cells" in topics["cells-partial"]
+    assert topics["cells-partial"].endswith(
+        "The items that no other limitation names: hc on flow-shop-3x2-1: 1 of 2 runs have a "
+        "record."
     )
 
 
@@ -110,8 +154,47 @@ def test_findings_the_analysis_states_itself_are_not_repeated(directory: Path) -
     topics = _topics(directory)
     assert "hc 4 timeout" in topics["failures"]
     assert "runs-failed" not in topics
-    assert "hc: 4 failed" in topics["solver-without-records"]
+    # Every run of the solver is among the failures the analysis counts by solver.
+    assert "solver-without-records" not in topics
+
+
+def test_a_solver_without_records_for_runs_that_never_ran_is_carried(directory: Path) -> None:
+    for path in sorted((directory / RUNS / "hc").rglob("*-evals.json")):
+        path.unlink()
+    topics = _topics(directory)
+    assert "hc: 4 unattempted" in topics["solver-without-records"]
     assert "blocking" not in topics["solver-without-records"]
+    assert "4 of 10 planned runs have no record yet" in topics["campaign"]
+
+
+def test_an_overrun_and_divergent_stop_reasons_are_stated_once(tmp_path: Path) -> None:
+    campaign = tiny_campaign(
+        "timed",
+        solvers=(SolverSpec("random-search"), SolverSpec("hill-climbing", "hc")),
+        protocols=(Protocol("timed", StopCriteria(max_evaluations=15, time_limit=5.0)),),
+    )
+    directory = run(campaign, tmp_path, registry=REGISTRY).directory
+    rewrite(
+        sorted((directory / RUNS / "hc").rglob("*.json"))[0],
+        lambda record: replace(
+            record,
+            provenance=replace(record.provenance, wall_seconds=9.0),
+            outcome=replace(record.outcome, stop_reason=StopReason.STAGNATION),
+        ),
+    )
+    report = check_campaign(directory, replan=False)
+    found = {item.code: item.message for item in report.findings}
+    assert {"budget-overrun", "stop-reasons-diverge"} <= set(found)
+    summary = summarize(load_dataset(directory), replace(FAST, protocol="timed"))
+    topics = [item.topic for item in summary.limitations]
+    # The analysis states both with its own settings, under its own topics.
+    assert (topics.count("budget"), topics.count("stop-reasons")) == (1, 1)
+    assert {"budget-overrun", "stop-reasons-diverge"}.isdisjoint(topics)
+    messages = [item.message for item in summary.limitations]
+    assert sum("1.8 times" in message for message in messages) == 1
+    assert sum("stagnation" in message for message in messages) == 1
+    for code in ("budget-overrun", "stop-reasons-diverge"):
+        assert not any(found[code] in message for message in messages)
 
 
 def test_a_finding_on_one_protocol_qualifies_that_protocol_only(directory: Path) -> None:
@@ -157,10 +240,10 @@ def test_sessions_on_other_processors_limit_the_protocol_with_a_time_limit(tmp_p
 
 
 def test_the_bundle_lists_what_the_check_found(directory: Path, tmp_path: Path) -> None:
-    (directory / RUNS / RECORD).unlink()
+    fail(directory, directory / RUNS / RECORD, ErrorKind.TIMEOUT)
     bundle = tmp_path / "bundle"
     write_bundle(directory, bundle, AnalysisConfig(resamples=50), figures=False)
     text = (bundle / "limitations.md").read_text(encoding="utf-8")
-    assert "- **campaign**: 1 of 10 planned runs have no record yet" in text
+    assert "- **failures**: 1 runs failed" in text
     assert text.count("- **cells-partial**: Under protocol evals, 1 of 6 cells") == 1
     assert "cells-partial**: Under protocol more" not in text

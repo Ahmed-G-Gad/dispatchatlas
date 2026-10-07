@@ -210,8 +210,13 @@ because the analysis states them itself over the analysed solvers and
 problems and with its own settings: runs without a record (`campaign`),
 failed runs (`failures`), divergent stop reasons (`stop-reasons`), wall times
 beyond the limit (`budget`), and cells below the replicate floor
-(`replicates`). `load_dataset(directory, check=False)` skips the check, which
-reads every record once more.
+(`replicates`). Two more are carried without the items those limitations
+name: `cells-partial` without the cells that have a run without a record,
+which `campaign` names, and `solver-without-records` without the solvers
+whose every run failed, which `failures` counts. `load_dataset(directory,
+check=False)` skips the check. The check reads every record once more,
+before the dataset reads them, and keeps none, so it adds to the time of a
+load and not to its peak memory.
 
 The pairwise tests have one pair per problem, so their sample size is the
 number of problems, not the number of runs. With `n` pairs the smallest

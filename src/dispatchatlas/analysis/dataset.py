@@ -385,9 +385,11 @@ def load_dataset(directory: str | Path, *, check: bool = True) -> Dataset:
         check: Check the directory with
             :func:`~dispatchatlas.campaigns.checking.check_campaign` and keep
             the report in :attr:`Dataset.check`. The check reads every
-            record once more. It does not derive the plan again from the
-            stored campaign, which would need the campaign's instance files
-            and solvers; ``dispatchatlas campaign check`` does. A blocking
+            record once more, before the dataset reads them, and its report
+            holds none, so it adds to the time of the load and not to its
+            peak memory. It does not derive the plan again from the stored
+            campaign, which would need the campaign's instance files and
+            solvers; ``dispatchatlas campaign check`` does. A blocking
             finding is logged as a warning.
 
     Returns:
@@ -399,6 +401,7 @@ def load_dataset(directory: str | Path, *, check: bool = True) -> Dataset:
             or no longer matches its result hash.
     """
     folder = Path(directory)
+    report = check_campaign(folder, replan=False) if check else None
     plan = read_plan(folder)
     records = {record.run_id: record for record in read_runs(folder)}
     failures: dict[str, list[FailureRecord]] = {}
@@ -421,7 +424,6 @@ def load_dataset(directory: str | Path, *, check: bool = True) -> Dataset:
                 failures=failed,
             )
         )
-    report = check_campaign(folder, replan=False) if check else None
     if report is not None and not report.ok:
         blocking = report.of("blocking")
         _LOG.warning(

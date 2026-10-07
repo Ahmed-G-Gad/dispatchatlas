@@ -621,17 +621,45 @@ def _check_limitations(scope: Scope) -> list[Limitation]:
     states itself (``_OWN_FINDINGS``). Notes are left out. A finding
     covers the whole campaign directory, whatever solvers and problems the
     analysis selects.
+
+    Two findings are carried without the items that the analysis names in
+    a limitation of its own, and are left out when no item remains: of the
+    cells with a record for only some of their runs, the cells with a run
+    without a record, which the limitation ``campaign`` names; and of the
+    solvers without a record, those whose every run failed, which the
+    limitation ``failures`` counts by solver.
     """
     report = scope.dataset.check
     if report is None:
         return []
+    runs = scope.dataset.runs
+    statuses: dict[str, set[str]] = {}
+    for run in runs:
+        statuses.setdefault(run.solver, set()).add(run.status)
+    named = {
+        "cells-partial": tuple(
+            {f"{run.solver} on {run.problem}: " for run in runs if run.status == "missing"}
+        ),
+        "solver-without-records": tuple(
+            f"{solver}: " for solver, held in statuses.items() if held == {"failed"}
+        ),
+    }
     found: list[Limitation] = []
     for finding in report.findings:
         if finding.severity == "note" or finding.code in _OWN_FINDINGS:
             continue
         if finding.protocol not in (None, scope.protocol):
             continue
-        listed = f" The items concerned: {_shown(finding.items)}." if finding.items else ""
+        items = finding.items
+        if finding.code in named:
+            # Each item of these findings begins with its cell or its solver and a colon.
+            items = tuple(item for item in items if not item.startswith(named[finding.code]))
+            if not items:
+                continue
+        which = (
+            "concerned" if len(items) == len(finding.items) else "that no other limitation names"
+        )
+        listed = f" The items {which}: {_shown(items)}." if items else ""
         weight = (
             " The check of the campaign directory counts this as blocking: the results are "
             "not ready to be used."

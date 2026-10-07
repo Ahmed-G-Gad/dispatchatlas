@@ -195,13 +195,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derives them again for any record; `Store.holdings` returns the ledger of
   a plan with the valid records it counts; and the ledger lists the failure
   files that cannot be read.
-- `load_dataset` runs the same check, without planning the campaign again,
-  keeps the report in `Dataset.check`, and logs a blocking finding as a
-  warning; `load_dataset(directory, check=False)` skips it. The analysis
-  states each blocking finding and limitation of the check for the analysed
-  protocol as a limitation under the code of the finding, and leaves out the
-  five that it states itself. Its `campaign` limitation names the cells of
-  solver and problem whose runs have no record.
+- `load_dataset` runs the same check, without planning the campaign again
+  and before it reads the records itself, keeps the report in
+  `Dataset.check`, and logs a blocking finding as a warning;
+  `load_dataset(directory, check=False)` skips it. The analysis states each
+  blocking finding and limitation of the check for the analysed protocol as
+  a limitation under the code of the finding, and leaves out the five that
+  it states itself, the partial cells that its `campaign` limitation names,
+  and the solvers without a record whose runs its `failures` limitation
+  counts. Its `campaign` limitation names the cells of solver and problem
+  whose runs have no record.
 - The Wilcoxon signed-rank test is exact up to 25 pairs with tied
   magnitudes too: the p-value comes from the distribution of the rank sum
   over every assignment of signs to the midranks, and the result names the
