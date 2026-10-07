@@ -597,7 +597,9 @@ class _Reporter:
     Reports are sent only inside the ``with`` block, in which the serving
     thread sends nothing, and never by two threads at once: every thread of
     a worker writes to the pipe under one lock, which a thread that logs
-    takes as well.
+    takes as well. Leaving the block ends the thread, also when a report
+    falls due at that instant, and an incumbent kept and not yet sent then
+    stays unsent.
 
     Args:
         connection: The worker's end of the pipe.
@@ -672,6 +674,11 @@ class _Reporter:
             if self._closed.wait(max(0.0, self._due - time.perf_counter())):
                 return
             self._news.clear()
+            # A wait whose timeout and the closing fall together may report the
+            # timeout, and the clearing then takes the wake-up of the closing.
+            # The closing sets ``_closed`` before ``_news``, so it shows here.
+            if self._closed.is_set():
+                return
             with self._sending:
                 self._flush()
 

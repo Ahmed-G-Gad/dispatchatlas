@@ -814,6 +814,61 @@ def test_the_reporter_keeps_apart_the_incumbent_found_within_the_time_limit() ->
     assert [len(message[1][2]) for message in sink.sent] == [1, 2, 1]
 
 
+class _Overtaken(threading.Event):
+    """An event whose first timed wait reports a timeout although the event was set meanwhile.
+
+    ``threading.Event.wait`` may do so when its timeout and the setting fall together: the
+    waiting thread has timed out, and another thread sets the event before the waiting one
+    runs again. The first wait here stays in that state until ``resume`` is set.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.resume = threading.Event()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        if self.entered.is_set():
+            return super().wait(timeout)
+        self.entered.set()
+        self.resume.wait(60.0)
+        return False
+
+
+def test_closing_the_reporter_ends_its_thread_when_a_due_report_and_the_closing_fall_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = _improvements(2)
+    sink = _Sink()
+    closed = _Overtaken()
+    reporter = _Reporter(sink, "run-1", 3, time.perf_counter(), None, 60.0)  # type: ignore[arg-type]
+    reporter._closed = closed
+    woken = threading.Event()
+    set_news = reporter._news.set
+
+    def wake() -> None:
+        set_news()
+        if closed.is_set():
+            woken.set()
+
+    monkeypatch.setattr(reporter._news, "set", wake)
+    reporter.__enter__()
+    reporter.note(first)  # sent at once: the next report is due a minute later
+    reporter.note(second)  # kept: the thread waits for the due time
+    assert closed.entered.wait(60.0)
+    # The search ends, and its thread closes the reporter, while the thread of the
+    # reporter has timed out and not yet run again.
+    closing = threading.Thread(target=reporter.__exit__, args=(None, None, None), daemon=True)
+    closing.start()
+    assert woken.wait(60.0)  # the closing has set both events and waits for the thread
+    closed.resume.set()
+    closing.join(10.0)
+    # A reporter that lost the wake-up of its closing would keep the worker from ever
+    # sending the result of the run, which would end at its hard limit.
+    assert not closing.is_alive()
+    assert _reports(sink) == [(1, True)]
+
+
 def test_reporting_does_not_slow_a_search_whose_every_evaluation_improves() -> None:
     count = 1500
     _improving(200)
