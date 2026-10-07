@@ -1001,7 +1001,7 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
                 ),
                 (
                     f"{solver} on {problem}: {counts['completed']} of {sum(counts.values())} "
-                    "runs have a record"
+                    f"runs {_agree(counts['completed'], 'has', 'have')} a record"
                     for (solver, problem), counts in partial.items()
                 ),
                 name,

@@ -133,7 +133,7 @@ def test_a_cell_with_failed_runs_is_carried_and_one_with_missing_runs_is_not(
     topics = _topics(directory)
     assert "hc 1 timeout" in topics["failures"]
     assert topics["cells-partial"].endswith(
-        "The items concerned: hc on flow-shop-3x2-1: 1 of 2 runs have a record."
+        "The items concerned: hc on flow-shop-3x2-1: 1 of 2 runs has a record."
     )
     # With a second cell that is partial for a missing run, only the first is carried.
     (directory / RUNS / RECORD).unlink()
@@ -141,8 +141,7 @@ def test_a_cell_with_failed_runs_is_carried_and_one_with_missing_runs_is_not(
     assert "random-search on flow-shop-3x2-1 (1)" in topics["campaign"]
     assert "2 of 6 cells" in topics["cells-partial"]
     assert topics["cells-partial"].endswith(
-        "The items that no other limitation names: hc on flow-shop-3x2-1: 1 of 2 runs have a "
-        "record."
+        "The items that no other limitation names: hc on flow-shop-3x2-1: 1 of 2 runs has a record."
     )
 
 

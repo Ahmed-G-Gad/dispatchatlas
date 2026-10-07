@@ -678,7 +678,7 @@ def test_missing_runs_are_listed_and_excluded_pairs_are_not(tmp_path: Path) -> N
 def test_partial_cell_is_named(directory: Path) -> None:
     (directory / RUNS / RECORD).unlink()
     finding = one(check(directory), "cells-partial")
-    assert finding.items == ("random-search on flow-shop-3x2-1: 1 of 2 runs have a record",)
+    assert finding.items == ("random-search on flow-shop-3x2-1: 1 of 2 runs has a record",)
     assert "1 of 6 cells" in finding.message
     assert finding.protocol == "evals"
 
@@ -695,7 +695,7 @@ def test_settled_failures_are_counted_by_solver_and_kind(directory: Path) -> Non
     assert report.ok
     assert (report.counts["failed"], report.counts["completed"]) == (3, 7)
     assert one(report, "cells-partial").items == (
-        "hc on flow-shop-3x2-1: 1 of 2 runs have a record",
+        "hc on flow-shop-3x2-1: 1 of 2 runs has a record",
     )
 
 
