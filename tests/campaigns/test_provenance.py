@@ -1152,7 +1152,8 @@ def test_the_supervisor_reads_the_log_records_of_a_worker_in_bounded_time(
     slot = backends._Slot(
         1, context, {}, None, 60.0, log=lambda *record: received.append(record), log_level=None
     )
-    slot._connection = ours
+    connection: Any = ours  # the class of a pipe's end differs between platforms
+    slot._connection = connection
     slot._process = SimpleNamespace(exitcode=None)  # type: ignore[assignment]
     try:
         record = (1.5, logging.WARNING, "dispatchatlas.tests", "a warning")

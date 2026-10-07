@@ -702,8 +702,8 @@ class Store:
         its run, after the stale file at that path, if there is one, is
         moved aside. A move the operating system refuses is warned about,
         and the run is then attempted again. One warning names the stale
-        files that remain: each stays where it is until its run is repeated
-        and gets a record.
+        files that remain: each stays where it is until a session repeats
+        its run (:meth:`write_run`, :meth:`write_failure`).
 
         Returns:
             The ledger after the moves: the runs whose records are back
@@ -740,8 +740,8 @@ class Store:
             more = f"; and {len(stale) - _SHOWN} more" if len(stale) > _SHOWN else ""
             _LOG.warning(
                 "%d file(s) at the paths of planned runs are not their valid records (%s%s); "
-                "each stays where it is until its run is repeated and gets a record, and is "
-                "then kept under %s",
+                "none is replaced: a session moves such a file under %s before a record of "
+                "its repeated run takes its place",
                 len(stale),
                 shown,
                 more,
