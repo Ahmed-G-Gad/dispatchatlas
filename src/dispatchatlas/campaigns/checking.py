@@ -202,6 +202,11 @@ CODES: Mapping[str, tuple[Severity, str]] = {
         "limitation",
         "The sessions that executed the counted attempts differ in their execution settings.",
     ),
+    "sessions-differ-processors": (
+        "limitation",
+        "The sessions that executed the counted attempts of a protocol with a time limit "
+        "differ in the processor, the processors they were allowed, or the thread settings.",
+    ),
     "replicates-below-floor": (
         "limitation",
         "Cells of replicated solvers hold fewer completed replicates than the floor.",
@@ -242,7 +247,13 @@ CODES: Mapping[str, tuple[Severity, str]] = {
     ),
     "sessions-differ-machine": (
         "note",
-        "The sessions that executed the counted attempts differ in their machine.",
+        "The sessions that executed the counted attempts differ in their machine. What of it "
+        "a time limit is measured on is the limitation sessions-differ-processors.",
+    ),
+    "sessions-fields-unstated": (
+        "note",
+        "Session records do not state a part of the environment that another states, so that "
+        "part is compared among the other sessions only.",
     ),
     "session-unfinished": ("note", "The last session is not recorded as finished."),
 }
@@ -279,6 +290,12 @@ _RUN_FIELDS = ("seed", "problem", "solver", "protocol", "replicate")
 
 _OPTIONAL_ENTRY_FIELDS = ("threads", "replicates")
 """The fields of a solver entry a plan may not state, compared only when it does."""
+
+_OPEN_PARTS = ("packages", "plugins", "git")
+"""The parts of a session's environment whose entries come and go with what is installed."""
+
+_TIMING_FIELDS = ("environment.cpu.", "environment.threads.")
+"""The fields of a session's machine that a time limit is measured on."""
 
 _ENTRY_NAMES = ("name", "id", "run_id")
 """The fields that name an entry of a list of a plan file, the first it has."""
@@ -403,15 +420,19 @@ def check_campaign(
     - the protocols: hard limits that differ among the attempts and stop
       reasons that diverge among the iterative solvers;
     - the sessions: those that executed the counted attempts and differ in
-      code, plugins, execution settings, or machine, and those without a
-      record;
+      code, plugins, execution settings, or machine, each field that differs
+      with its values and the sessions that have each; those that executed
+      the attempts of a protocol with a time limit and differ in the
+      processor, the processors they were allowed, or the thread settings;
+      and those without a record;
     - the replication: cells below ``replicate_floor``, a seed used for two
       replicates of one problem, and a replicate that ran with two seeds.
 
     Records and session records may lack the fields that are optional in
     them. Where the check cannot make a comparison for that reason, it says
-    so in a note: records without an identity hash, and session records
-    without the digest of their plan.
+    so in a note: records without an identity hash, session records without
+    the digest of their plan, and session records that state less of their
+    environment than another's.
 
     Args:
         directory: A campaign directory, ``<root>/<campaign id>``.
@@ -1197,9 +1218,14 @@ def _check_sessions(
     ledger: Ledger,
     found: _Findings,
 ) -> None:
-    numbers = {record.provenance.session for record in records.values()}
+    attempts: list[RunRecord | FailureRecord] = list(records.values())
     for failures in ledger.failures.values():
-        numbers.update(failure.provenance.session for failure in failures)
+        attempts.extend(failures)
+    under: dict[str, set[int]] = {}
+    for attempt in attempts:
+        ran_under = plan.run(attempt.run_id).protocol
+        under.setdefault(ran_under, set()).add(attempt.provenance.session)
+    numbers = set().union(*under.values())
     by_number = {session.session: session for session in sessions}
     absent = sorted(number for number in numbers if number not in by_number)
     if absent:
@@ -1210,7 +1236,25 @@ def _check_sessions(
             (f"session {number}" for number in absent),
         )
     executing = [by_number[number] for number in sorted(numbers) if number in by_number]
-    _compare_sessions(executing, found)
+    values = _compare_sessions(executing, found)
+    for protocol in plan.protocols:
+        limit = protocol.stop.time_limit
+        ran = under.get(protocol.name, set())
+        items = [
+            f"{name}: {_valued(held, ran)}"
+            for (kind, name), held in values.items()
+            if kind == "machine" and name.startswith(_TIMING_FIELDS) and _differ(held, ran)
+        ]
+        if limit is not None and items:
+            found.add(
+                "sessions-differ-processors",
+                f"Under protocol {protocol.name}, whose time limit is {limit:g} s, the sessions "
+                "that executed its attempts differ in the processor, the processors they were "
+                "allowed, or the thread settings, so the time limit did not bound their runs "
+                f"alike. Fields that differ: {len(items)}.",
+                items,
+                protocol.name,
+            )
     changed = [
         session
         for session in sessions
@@ -1258,29 +1302,39 @@ def _check_sessions(
         )
 
 
-def _compare_sessions(executing: Sequence[SessionRecord], found: _Findings) -> None:
-    """Report how the sessions that executed counted attempts differ from the first of them."""
-    later = executing[1:]
-    if not later:
-        return
-    first = executing[0]
+def _compare_sessions(
+    executing: Sequence[SessionRecord], found: _Findings
+) -> dict[tuple[str, str], dict[int, object]]:
+    """Report the fields in which the sessions that executed counted attempts differ.
+
+    Every session is compared with each session before it by
+    :func:`~dispatchatlas.campaigns.runner.session_changes`, which leaves out
+    a value the earlier record does not state. A field is so compared among
+    the sessions whose records state it, and the sessions whose records
+    state less than another's are named in a note.
+
+    Returns:
+        The value of each field that differs, by the kind and the name of
+        the field and then by the number of each session it differs for.
+    """
+    values: dict[tuple[str, str], dict[int, object]] = {}
+    for index, session in enumerate(executing):
+        for earlier in executing[:index]:
+            for change in session_changes(
+                earlier, session.execution, session.workers, session.environment
+            ):
+                held = values.setdefault((str(change["kind"]), str(change["field"])), {})
+                held.setdefault(earlier.session, change["earlier"])
+                held.setdefault(session.session, change["now"])
     grouped: dict[str, list[str]] = {}
-    for session in later:
-        changes = session_changes(first, session.execution, session.workers, session.environment)
-        for change in changes:
-            name = str(change["field"])
-            if change["kind"] == "execution":
-                code = "sessions-differ-execution"
-            elif change["kind"] == "machine":
-                code = "sessions-differ-machine"
-            elif name.startswith("environment.plugins"):
-                code = "sessions-differ-plugins"
-            else:
-                code = "sessions-differ-code"
-            grouped.setdefault(code, []).append(
-                f"{name}: {_quoted(change['earlier'])} in session {first.session}, "
-                f"{_quoted(change['now'])} in session {session.session}"
-            )
+    for (kind, name), held in values.items():
+        if kind in ("execution", "machine"):
+            code = f"sessions-differ-{kind}"
+        elif name.startswith("environment.plugins"):
+            code = "sessions-differ-plugins"
+        else:
+            code = "sessions-differ-code"
+        grouped.setdefault(code, []).append(f"{name}: {_valued(held, held)}")
     texts = {
         "sessions-differ-code": "the Python version, the packages, the library, or a git state",
         "sessions-differ-plugins": "their plugins",
@@ -1292,10 +1346,60 @@ def _compare_sessions(executing: Sequence[SessionRecord], found: _Findings) -> N
             found.add(
                 code,
                 f"The {len(executing)} sessions that executed the attempts of the directory "
-                f"differ in {text}. Differences from session {first.session}, the first of "
-                f"them: {len(grouped[code])}.",
+                f"differ in {text}. Fields that differ: {len(grouped[code])}.",
                 grouped[code],
             )
+    stated = {session.session: _stated(session.environment) for session in executing}
+    every: set[str] = set().union(*stated.values())
+    unstated = {
+        number: sorted(
+            part for part in every - parts if part.split(".")[0] in parts or "." not in part
+        )
+        for number, parts in stated.items()
+        if every - parts
+    }
+    if unstated:
+        found.add(
+            "sessions-fields-unstated",
+            "Session records that do not state a part of the environment that the record of "
+            "another session states, so that part is compared among the other sessions only: "
+            f"{len(unstated)} of the {len(executing)} sessions that executed the attempts of "
+            "the directory.",
+            (f"session {number}: {', '.join(parts)}" for number, parts in unstated.items()),
+        )
+    return values
+
+
+def _stated(environment: Mapping[str, Any]) -> set[str]:
+    """Return the parts of an environment a session record states, two levels deep.
+
+    The entries of the packages, the plugins, and the git states come and go
+    with what is installed, so those parts count as one each.
+    """
+    parts: set[str] = set()
+    for key, value in environment.items():
+        if isinstance(value, Mapping) and key not in _OPEN_PARTS:
+            parts.update(f"{key}.{below}" for below in value)
+        parts.add(str(key))
+    return parts
+
+
+def _differ(values: Mapping[int, object], sessions: Iterable[int]) -> bool:
+    """Return whether a field has more than one value among the given sessions."""
+    return len({repr(values[number]) for number in sessions if number in values}) > 1
+
+
+def _valued(values: Mapping[int, object], sessions: Iterable[int]) -> str:
+    """Name each value of a field with the sessions that have it, among the given sessions."""
+    groups: dict[str, list[int]] = {}
+    for number in sorted(number for number in sessions if number in values):
+        groups.setdefault(repr(values[number]), []).append(number)
+    named = []
+    for numbers in groups.values():
+        *most, last = (str(number) for number in numbers)
+        listed = f"sessions {', '.join(most)} and {last}" if most else f"session {last}"
+        named.append(f"{_quoted(values[numbers[0]])} in {listed}")
+    return ", ".join(named)
 
 
 def _quoted(value: object) -> str:

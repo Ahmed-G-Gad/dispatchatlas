@@ -761,11 +761,21 @@ not:
   engine's note on a run); hard limits that differ among the attempts; and
   stop reasons that differ among the runs of the iterative solvers.
 - **The sessions.** The sessions that executed the attempts the directory
-  counts are compared with the first of them: differences in the Python
-  version, the packages, the library, or a git state, in the plugins, in the
-  execution settings, and in the machine are four findings. A session that
-  executed nothing that counts is not compared. An attempt of a session
-  without a record is reported.
+  counts are compared with each other. Each field that differs is named
+  once, with its values and the sessions that have each. Differences in the
+  Python version, the packages, the library, or a git state, in the plugins,
+  in the execution settings, and in the machine are four findings. A field
+  is compared among the sessions whose records state it, and a note names
+  the sessions whose records state less than another's
+  (`sessions-fields-unstated`), such as a record without the library, the
+  plugins, the thread settings, or the allowed processors. A difference in
+  the machine is a note, except for what a time limit is measured on: when
+  the sessions that executed the attempts of a protocol with a time limit
+  differ in the processor, the processors they were allowed, or the thread
+  settings, that is a limitation of the protocol
+  (`sessions-differ-processors`). A session that executed nothing that
+  counts is not compared. An attempt of a session without a record is
+  reported.
 - **The replication.** With `--replicate-floor N`, the cells of replicated
   solvers that hold fewer than `N` completed replicates. A seed that serves
   two replicates of one problem blocks, and a replicate of a problem that ran

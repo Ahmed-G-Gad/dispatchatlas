@@ -178,7 +178,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without a trace; wall times beyond the time limit by solver with the
   largest ratio, hard limits that differ within a protocol, and divergent
   stop reasons; sessions that executed counted attempts on other code,
-  plugins, execution settings, or machines; cells below a replicate floor;
+  plugins, execution settings, or machines, each field that differs named
+  once with its values and their sessions, with a limitation for a protocol
+  with a time limit whose sessions differ in the processor, the allowed
+  processors, or the thread settings, and a note for session records that
+  state less of the environment than another's; cells below a replicate
+  floor;
   and a seed that serves two replicates of one problem. The command exits
   with 1 when a finding is blocking, and `--json` prints the whole report. A
   directory whose records lack optional fields, such as `identity_hash` or

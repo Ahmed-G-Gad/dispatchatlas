@@ -103,18 +103,23 @@ def one(report: CheckReport, code: str) -> Finding:
     return finding
 
 
-def second_session(directory: Path, change: Callable[[dict[str, Any]], object]) -> None:
-    """Record a second session that differs by ``change`` and executed one counted run."""
+def second_session(
+    directory: Path,
+    change: Callable[[dict[str, Any]], object],
+    record: Path = RECORD,
+    number: int = 2,
+) -> None:
+    """Record a later session that differs by ``change`` and executed one counted run."""
 
     def numbered(document: dict[str, Any]) -> None:
-        document["session"] = 2
+        document["session"] = number
         change(document)
 
-    shutil.copy(directory / SESSIONS / "1.json", directory / SESSIONS / "2.json")
-    edit(directory / SESSIONS / "2.json", numbered)
+    shutil.copy(directory / SESSIONS / "1.json", directory / SESSIONS / f"{number}.json")
+    edit(directory / SESSIONS / f"{number}.json", numbered)
     rewrite(
-        directory / RUNS / RECORD,
-        lambda record: replace(record, provenance=replace(record.provenance, session=2)),
+        directory / RUNS / record,
+        lambda held: replace(held, provenance=replace(held.provenance, session=number)),
     )
 
 
@@ -944,6 +949,109 @@ def test_sessions_that_executed_counted_runs_are_compared(
     assert codes(report) == {code}
     (item,) = one(report, code).items
     assert item.startswith(field)
+    assert report.ok
+
+
+def test_later_sessions_are_compared_in_what_the_first_record_does_not_state(
+    directory: Path,
+) -> None:
+    # The first session's record gets the environment of a record that the library
+    # wrote before session records stated the library, the plugins, the thread
+    # settings, and the allowed processors.
+    earlier = json.loads((DATA / "earlier" / "tiny" / SESSIONS / "1.json").read_text("utf-8"))
+    assert not {"library", "plugins", "threads"} & set(earlier["environment"])
+
+    def second(document: dict[str, Any]) -> None:
+        document["environment"]["cpu"]["allowed"] = [0, 1]
+        document["environment"]["threads"]["OMP_NUM_THREADS"] = "1"
+
+    def third(document: dict[str, Any]) -> None:
+        document["environment"]["library"]["source_digest"] = "0" * 64
+        document["environment"]["plugins"]["extra"] = {"version": "1.0"}
+        document["environment"]["cpu"]["allowed"] = [0]
+        document["environment"]["threads"]["OMP_NUM_THREADS"] = "8"
+
+    second_session(directory, second)
+    second_session(directory, third, RECORD.with_name("r001-evals.json"), number=3)
+    edit(
+        directory / SESSIONS / "1.json",
+        lambda document: document.update(environment=earlier["environment"]),
+    )
+    report = check(directory)
+    assert report.ok
+    assert "sessions-differ-processors" not in codes(report)
+
+    def items(code: str, field: str) -> list[str]:
+        return [item for item in one(report, code).items if item.startswith(field)]
+
+    (digest,) = items("sessions-differ-code", "environment.library.source_digest: ")
+    assert digest.endswith(f"in session 2, '{'0' * 64}' in session 3")
+    assert items("sessions-differ-plugins", "environment.plugins.extra: ") == [
+        "environment.plugins.extra: None in session 2, {'version': '1.0'} in session 3"
+    ]
+    assert items("sessions-differ-machine", "environment.cpu.allowed: ") == [
+        "environment.cpu.allowed: [0, 1] in session 2, [0] in session 3"
+    ]
+    assert items("sessions-differ-machine", "environment.threads.OMP_NUM_THREADS: ") == [
+        "environment.threads.OMP_NUM_THREADS: '1' in session 2, '8' in session 3"
+    ]
+    # The partial comparison is said: the first record states less than the others.
+    unstated = one(report, "sessions-fields-unstated")
+    assert "1 of the 3 sessions" in unstated.message
+    (item,) = unstated.items
+    assert item.startswith("session 1: ")
+    assert {"cpu.allowed", "library", "plugins", "threads"} <= set(item[11:].split(", "))
+
+
+def test_a_field_names_each_value_once_with_the_sessions_that_have_it(directory: Path) -> None:
+    second_session(directory, lambda document: document["execution"].update(grace=9.0))
+    second_session(directory, lambda document: None, RECORD.with_name("r001-evals.json"), number=3)
+    report = check(directory)
+    assert codes(report) == {"sessions-differ-execution"}
+    finding = one(report, "sessions-differ-execution")
+    assert finding.items == ("execution.grace: 5.0 in sessions 1 and 3, 9.0 in session 2",)
+    assert "The 3 sessions" in finding.message
+    assert "Fields that differ: 1." in finding.message
+
+
+def test_sessions_on_other_processors_limit_a_protocol_with_a_time_limit(tmp_path: Path) -> None:
+    campaign = tiny_campaign(
+        "both",
+        solvers=(SolverSpec("random-search"),),
+        protocols=(
+            Protocol("evals", StopCriteria(max_evaluations=15)),
+            Protocol("timed", StopCriteria(max_evaluations=15, time_limit=5.0)),
+        ),
+    )
+    directory = run(campaign, tmp_path, registry=REGISTRY).directory
+    edit(
+        directory / SESSIONS / "1.json",
+        lambda document: document["environment"]["cpu"].update(allowed=[0, 1]),
+    )
+
+    def other(document: dict[str, Any]) -> None:
+        document["environment"]["cpu"]["allowed"] = [0]
+        document["environment"]["threads"]["OMP_NUM_THREADS"] = "8"
+        document["environment"]["memory_bytes"] = 1
+        document["environment"]["platform"]["release"] = "other"
+
+    # A session on other processors that executed runs of the protocol without a
+    # time limit only: a fact of the directory, which qualifies no result.
+    second_session(directory, other)
+    report = check(directory)
+    assert codes(report) == {"sessions-differ-machine"}
+    assert len(one(report, "sessions-differ-machine").items) == 4
+
+    # Once it executed a run under the time limit, the limit is measured on what differs.
+    second_session(directory, other, RECORD.with_name("r000-timed.json"))
+    report = check(directory)
+    assert codes(report) == {"sessions-differ-machine", "sessions-differ-processors"}
+    finding = one(report, "sessions-differ-processors")
+    assert (finding.severity, finding.protocol) == ("limitation", "timed")
+    assert "whose time limit is 5 s" in finding.message
+    assert finding.items[0] == "environment.cpu.allowed: [0, 1] in session 1, [0] in session 2"
+    assert finding.items[1].startswith("environment.threads.OMP_NUM_THREADS: ")
+    assert len(finding.items) == 2
     assert report.ok
 
 

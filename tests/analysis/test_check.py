@@ -12,10 +12,10 @@ import pytest
 from dispatchatlas.analysis import AnalysisConfig, load_dataset, summarize, write_bundle
 from dispatchatlas.campaigns import Protocol, check_campaign, run
 from dispatchatlas.campaigns.records import ErrorKind, RunRecord
-from dispatchatlas.campaigns.store import CAMPAIGN_FILE, RUNS
+from dispatchatlas.campaigns.store import CAMPAIGN_FILE, RUNS, SESSIONS
 from dispatchatlas.core import StopCriteria
 from dispatchatlas.core.solver import TracePoint
-from tests.campaigns.damage import fail, rewrite
+from tests.campaigns.damage import edit, fail, rewrite
 from tests.campaigns.solvers import registry, tiny_campaign
 
 REGISTRY = registry()
@@ -125,6 +125,35 @@ def test_a_finding_on_one_protocol_qualifies_that_protocol_only(directory: Path)
     topics = _topics(directory)
     assert "random-search: 1 of 4 records" in topics["trace-time-axis"]
     assert "trace-time-axis" not in _topics(directory, replace(FAST, protocol="more"))
+
+
+def test_sessions_on_other_processors_limit_the_protocol_with_a_time_limit(tmp_path: Path) -> None:
+    campaign = tiny_campaign(
+        "both",
+        protocols=(
+            Protocol("evals", StopCriteria(max_evaluations=15)),
+            Protocol("timed", StopCriteria(max_evaluations=15, time_limit=5.0)),
+        ),
+    )
+    directory = run(campaign, tmp_path, registry=REGISTRY).directory
+    sessions = directory / SESSIONS
+    edit(sessions / "1.json", lambda document: document["environment"]["cpu"].update(allowed=[0]))
+    shutil.copy(sessions / "1.json", sessions / "2.json")
+    edit(sessions / "2.json", lambda document: document.update(session=2))
+    edit(sessions / "2.json", lambda document: document["environment"]["cpu"].update(allowed=[1]))
+    rewrite(
+        (directory / RUNS / RECORD).with_name("r000-timed.json"),
+        lambda record: replace(record, provenance=replace(record.provenance, session=2)),
+    )
+    timed = _topics(directory, replace(FAST, protocol="timed"))
+    assert (
+        "environment.cpu.allowed: [0] in session 1, [1] in session 2"
+        in (timed["sessions-differ-processors"])
+    )
+    # The machine is a note of the check, which the analysis does not carry, and
+    # the other protocol has no time limit to measure on it.
+    assert "sessions-differ-machine" not in timed
+    assert "sessions-differ-processors" not in _topics(directory)
 
 
 def test_the_bundle_lists_what_the_check_found(directory: Path, tmp_path: Path) -> None:
