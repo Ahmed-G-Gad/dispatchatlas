@@ -99,8 +99,10 @@ def test_failures_count_as_the_worst_value_with_fixed_denominators() -> None:
     assert row.win_share == pytest.approx(2 / 3)
     assert row.median_advantage == 1.0
     assert (row.mean_advantage, row.advantage_low, row.cohens_dz) == (None, None, None)
-    # Advantages 1, -inf, +inf rank as 1, 2.5, 2.5: W- = 2.5 under the normal approximation.
-    assert (row.statistic, row.method) == (2.5, "normal")
+    # Advantages 1, -inf, +inf rank as 1, 2.5, 2.5: W- = 2.5, and each of the eight
+    # sign assignments leaves a rank sum of at most 2.5 on one side.
+    assert (row.statistic, row.method) == (2.5, "exact-conditional")
+    assert row.p_value == 1.0
     assert any(item.topic == "failures" for item in summary.limitations)
 
 

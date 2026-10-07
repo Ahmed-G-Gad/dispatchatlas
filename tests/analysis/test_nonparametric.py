@@ -11,11 +11,14 @@ for the Nemenyi table.
 
 from __future__ import annotations
 
+import itertools
 import math
+import random
 
 import pytest
 
 from dispatchatlas.analysis.stats.nonparametric import (
+    WILCOXON_EXACT_LIMIT,
     friedman_statistic,
     friedman_test,
     iman_davenport,
@@ -26,6 +29,7 @@ from dispatchatlas.analysis.stats.nonparametric import (
     tie_sum,
     wilcoxon_signed_rank,
 )
+from dispatchatlas.analysis.stats.ranks import midranks
 from dispatchatlas.core.errors import ConfigError
 
 WILCOXON_EXACT = [
@@ -544,12 +548,100 @@ def test_wilcoxon_exact_null_matches_scipy(differences, statistic, p_value):
     assert result.p_value == pytest.approx(p_value, rel=1e-12)
 
 
-@pytest.mark.parametrize(("differences", "statistic", "p_value"), WILCOXON_NORMAL)
+@pytest.mark.parametrize(("differences", "statistic", "p_value"), WILCOXON_NORMAL[1:])
 def test_wilcoxon_tied_normal_approximation_matches_scipy(differences, statistic, p_value):
     result = wilcoxon_signed_rank(differences)
+    assert result.pairs > WILCOXON_EXACT_LIMIT
     assert result.method == "normal"
     assert result.statistic == statistic
     assert result.p_value == pytest.approx(p_value, rel=1e-12)
+
+
+def _enumerated(differences: list[float]) -> tuple[float, float]:
+    """Return ``min(W+, W-)`` and its two-sided p-value by listing every sign assignment.
+
+    The magnitudes keep their midranks while each difference takes either
+    sign: the p-value is the share of the assignments whose smaller rank sum
+    is at most the observed one.
+    """
+    nonzero = [value for value in differences if abs(value) > 1e-12]
+    ranks = midranks([abs(value) for value in nonzero])
+    total = math.fsum(ranks)
+    observed = math.fsum(rank for rank, value in zip(ranks, nonzero, strict=True) if value > 0.0)
+    statistic = min(observed, total - observed)
+    extreme = 0
+    for signs in itertools.product((False, True), repeat=len(ranks)):
+        positive = math.fsum(rank for rank, sign in zip(ranks, signs, strict=True) if sign)
+        extreme += min(positive, total - positive) <= statistic + 1e-9
+    return statistic, extreme / 2 ** len(ranks)
+
+
+@pytest.mark.parametrize(
+    ("differences", "p_value"),
+    [
+        ([2.0] * 5, 0.0625),
+        ([2.0] * 6, 0.03125),
+        ([3.0, 3.0], 0.5),
+        ([5.0, 5.0, 5.0, 5.0, -1.0], 0.125),
+    ],
+)
+def test_small_tied_samples_use_the_exact_conditional_null(differences, p_value):
+    result = wilcoxon_signed_rank(differences)
+    assert result.method == "exact-conditional"
+    assert result.p_value == p_value
+    assert _enumerated(differences)[1] == p_value
+    # The smallest p-value n pairs can attain is 2 / 2^n, with or without ties.
+    assert result.p_value >= 2 / 2**result.pairs
+
+
+def test_the_exact_conditional_null_matches_an_enumeration_of_the_sign_assignments():
+    generator = random.Random(20)
+    tied = 0
+    for _ in range(200):
+        size = generator.randint(1, 9)
+        # Integer differences in a narrow range tie often, as integer makespans do.
+        differences = [float(generator.randint(-4, 4)) for _ in range(size)]
+        if generator.random() < 0.2:
+            differences.append(generator.choice((math.inf, -math.inf)))
+            differences.append(generator.choice((math.inf, -math.inf)))
+        result = wilcoxon_signed_rank(differences)
+        if result.method == "degenerate":
+            continue
+        statistic, p_value = _enumerated(differences)
+        assert result.statistic == statistic
+        assert result.p_value == pytest.approx(p_value, rel=1e-12), differences
+        tied += result.method == "exact-conditional"
+    assert tied > 100
+
+
+def test_untied_samples_keep_the_exact_null_of_the_ranks_one_to_n():
+    generator = random.Random(21)
+    for size in range(1, 12):
+        differences = [
+            generator.choice((-1.0, 1.0)) * (index + generator.random())
+            for index in range(1, size + 1)
+        ]
+        result = wilcoxon_signed_rank(differences)
+        assert result.method == "exact"
+        assert result.p_value == pytest.approx(_enumerated(differences)[1], rel=1e-12)
+    # The count of sign assignments by rank sum over 1..n, as Wilcoxon tabulates it: with
+    # n = 5 and W = 2 the sums 0, 1, 2 have 1, 1, 1 assignments of 32.
+    assert wilcoxon_signed_rank([1.0, -2.0, 3.0, 4.0, 5.0]).p_value == 2 * 3 / 32
+
+
+def test_a_tied_sample_at_the_exact_limit_is_exact_and_one_above_it_is_normal():
+    at_limit = [float(1 + index // 2) for index in range(WILCOXON_EXACT_LIMIT)]
+    at_limit[0] = -at_limit[0]
+    assert wilcoxon_signed_rank(at_limit).method == "exact-conditional"
+    assert wilcoxon_signed_rank([*at_limit, 40.0]).method == "normal"
+
+
+def test_ten_tied_pairs_no_longer_take_the_normal_approximation():
+    differences, statistic, normal = WILCOXON_NORMAL[0]
+    result = wilcoxon_signed_rank(differences)
+    assert (result.statistic, result.method) == (statistic, "exact-conditional")
+    assert result.p_value == pytest.approx(_enumerated(differences)[1], rel=1e-12)
+    assert result.p_value > normal
 
 
 def test_wilcoxon_normal_tail_keeps_tiny_p_values():
@@ -576,7 +668,7 @@ def test_wilcoxon_drops_zeros_and_float_residual_ties():
 
 def test_wilcoxon_ranks_infinite_differences_above_finite_ones():
     result = wilcoxon_signed_rank([math.inf, math.inf, 1.0, 2.0, 3.0, 4.0, 5.0, -6.0])
-    assert result.method == "normal"
+    assert result.method == "exact-conditional"
     assert result.statistic == 6.0
 
 

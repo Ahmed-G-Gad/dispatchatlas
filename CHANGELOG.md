@@ -156,6 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
   SVG and TikZ; and a byte-reproducible bundle with a manifest.
+- The Wilcoxon signed-rank test is exact up to 25 pairs with tied
+  magnitudes too: the p-value comes from the distribution of the rank sum
+  over every assignment of signs to the midranks, and the result names the
+  method `exact-conditional`. The normal approximation is left to larger
+  samples.
 - A bibliography of every implemented method, exported as text or BibTeX.
 - The `dispatchatlas` command line, documentation, and runnable examples.
 - The environment of a session identifies the code and the machine further:

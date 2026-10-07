@@ -200,7 +200,15 @@ The pairwise tests have one pair per problem, so their sample size is the
 number of problems, not the number of runs. With `n` pairs the smallest
 two-sided exact p-value of the Wilcoxon test is `2 / 2^n`: fewer than six
 problems can never reach `p <= 0.05`, whatever the difference, and the
-limitations say so. The manifest of a bundle also states, for each protocol,
+limitations say so. Up to 25 pairs the p-value is exact, also when
+differences tie in magnitude, as integer objective values often make them:
+the tied differences share their mean rank, and the p-value comes from the
+distribution of the rank sum over every assignment of signs to those ranks.
+The pairwise table says under *Null distribution*, the column `method` of its
+CSV form, how each p-value was obtained:
+`exact`, `exact-conditional` for the exact value under ties, `normal` for the
+normal approximation above 25 pairs, and `degenerate` when no difference is
+other than zero. The manifest of a bundle also states, for each protocol,
 the smallest standardized effect the paired tests detect at the configured
 power (Campelo and Takahashi 2019).
 

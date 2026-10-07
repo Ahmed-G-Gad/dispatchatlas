@@ -5,10 +5,13 @@ several problems (Demšar 2006; Derrac et al. 2011): a paired test for two
 algorithms, and for several algorithms an omnibus test over complete blocks
 followed by a post-hoc comparison of average ranks.
 
-All tests are two-sided. Small untied samples use the exact null
-distribution; larger or tied samples use the normal approximation with the
-tie-corrected variance and a continuity correction of 0.5, whose tail comes
-from :func:`~dispatchatlas.analysis.stats.distributions.normal_sf` so that very
+All tests are two-sided. Small samples use the exact null distribution: the
+signed-rank test with or without tied magnitudes, where ties make it the
+distribution conditional on the midranks, and the Mann-Whitney test without
+ties. Larger samples, and tied Mann-Whitney samples, use the normal
+approximation with the tie-corrected variance and a continuity correction of
+0.5, whose tail comes from
+:func:`~dispatchatlas.analysis.stats.distributions.normal_sf` so that very
 small p-values keep their precision. Rank ties follow
 :data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`, while the variance
 corrections group values by exact equality, which can only leave the variance
@@ -52,8 +55,14 @@ __all__ = [
     "wilcoxon_signed_rank",
 ]
 
-type TestMethod = Literal["exact", "normal", "degenerate"]
-"""How a p-value was obtained: exact null, normal approximation, or no data."""
+type TestMethod = Literal["exact", "exact-conditional", "normal", "degenerate"]
+"""How a p-value was obtained.
+
+``"exact"`` is the exact null distribution of untied ranks,
+``"exact-conditional"`` the exact null distribution of the signed-rank
+statistic given the midranks of tied magnitudes, ``"normal"`` the normal
+approximation, and ``"degenerate"`` a test without data.
+"""
 
 WILCOXON_EXACT_LIMIT = 25
 """Largest number of non-zero pairs for which the exact Wilcoxon null is used."""
@@ -190,19 +199,27 @@ def wilcoxon_signed_rank(differences: Iterable[float]) -> WilcoxonResult:
     Differences within :data:`TIE_TOLERANCE` of zero are dropped (Wilcoxon's
     treatment of zeros), the magnitudes of the others are midranked, and the
     statistic is the smaller of the positive and negative rank sums. Up to
-    :data:`WILCOXON_EXACT_LIMIT` pairs without tied magnitudes, the p-value
-    comes from the exact null distribution, which a subset-sum recursion
-    enumerates. Otherwise the normal approximation uses the mean
-    ``n(n+1)/4``, the variance ``n(n+1)(2n+1)/24 - sum(t^3 - t)/48`` over the
-    tie groups, and a continuity correction of 0.5 (Wilcoxon 1945).
-    Infinite differences are allowed and rank above every finite one.
+    :data:`WILCOXON_EXACT_LIMIT` pairs, the p-value comes from the exact
+    null distribution of the statistic: under the null hypothesis each
+    difference is positive or negative with equal probability, so every
+    assignment of signs to the ranks is equally likely, and a subset-sum
+    recursion counts the assignments by their rank sum. With tied
+    magnitudes the ranks are the midranks, and the distribution is the one
+    conditional on them (method ``"exact-conditional"``), whose smallest
+    p-value over ``n`` pairs is ``2 / 2^n`` as without ties; a normal
+    approximation can fall below that on a small tied sample. Above the
+    limit the normal
+    approximation uses the mean ``n(n+1)/4``, the variance
+    ``n(n+1)(2n+1)/24 - sum(t^3 - t)/48`` over the tie groups, and a
+    continuity correction of 0.5 (Wilcoxon 1945). Infinite differences are
+    allowed and rank above every finite one.
 
     Args:
         differences: One difference per matched pair.
 
     Returns:
-        The test; with no non-zero difference, a degenerate result with
-        p-value 1.
+        The test, whose ``method`` names how the p-value was obtained; with
+        no non-zero difference, a degenerate result with p-value 1.
 
     Raises:
         ConfigError: If there are no differences or one is NaN.
@@ -220,23 +237,33 @@ def wilcoxon_signed_rank(differences: Iterable[float]) -> WilcoxonResult:
     negative = math.fsum(rank for rank, value in zip(ranks, nonzero, strict=True) if value < 0.0)
     statistic = min(positive, negative)
     count = len(nonzero)
-    if count <= WILCOXON_EXACT_LIMIT and len(set(ranks)) == count:
-        return WilcoxonResult(statistic, _wilcoxon_exact(statistic, count), count, zeros, "exact")
+    if count <= WILCOXON_EXACT_LIMIT:
+        method: TestMethod = "exact" if len(set(ranks)) == count else "exact-conditional"
+        return WilcoxonResult(statistic, _wilcoxon_exact(statistic, ranks), count, zeros, method)
     mean = count * (count + 1) / 4.0
     variance = count * (count + 1) * (2 * count + 1) / 24.0 - tie_sum(magnitudes) / 48.0
     p_value = _normal_two_sided(statistic, mean, variance)
     return WilcoxonResult(statistic, p_value, count, zeros, "normal")
 
 
-def _wilcoxon_exact(statistic: float, count: int) -> float:
-    """Return the exact two-sided p-value of ``min(W+, W-)`` over ``count`` untied pairs."""
-    counts = [0] * (count * (count + 1) // 2 + 1)
+def _wilcoxon_exact(statistic: float, ranks: Sequence[float]) -> float:
+    """Return the exact two-sided p-value of ``min(W+, W-)`` given the ranks of the pairs.
+
+    Every assignment of signs to the ranks is equally likely under the null
+    hypothesis. Midranks are multiples of one half, so the recursion counts
+    the assignments by twice their positive rank sum, an integer. The
+    distribution of that sum is symmetric about half the total, so twice its
+    lower tail at the statistic is the probability that the smaller of the
+    two sums is at most the statistic.
+    """
+    doubled = [round(2.0 * rank) for rank in ranks]
+    counts = [0] * (sum(doubled) + 1)
     counts[0] = 1
-    for rank in range(1, count + 1):
+    for rank in doubled:
         for total in range(len(counts) - 1, rank - 1, -1):
             counts[total] += counts[total - rank]
-    lower = sum(counts[: math.floor(statistic + 1e-9) + 1])
-    return min(1.0, 2.0 * lower / (1 << count))
+    lower = sum(counts[: math.floor(2.0 * statistic + 1e-9) + 1])
+    return min(1.0, 2.0 * lower / (1 << len(doubled)))
 
 
 def sign_test(wins: int, losses: int) -> float:
