@@ -104,13 +104,13 @@ CPU_RESERVE = 1
 """Processors that ``workers = "auto"`` leaves to the supervising process and the system."""
 
 BACKENDS = ("sequential", "process")
+"""Execution backends: in the calling process, or in supervised worker processes."""
 
 CODE_POLICIES = ("warn", "refuse")
 """Values of ``on_changed_code``, the default first."""
 
 PROBLEM_POLICIES = ("rerun", "refuse")
 """Values of ``on_changed_problem``, the default first."""
-"""Execution backends: in the calling process, or in supervised worker processes."""
 
 THREAD_VARIABLES = (
     "OMP_NUM_THREADS",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import itertools
 import json
 import pickle
 from dataclasses import replace
@@ -22,6 +24,7 @@ from dispatchatlas.campaigns import (
     SuiteSource,
     campaign_from_dict,
     campaign_to_dict,
+    config,
     load_campaign,
     loads_campaign,
 )
@@ -319,3 +322,31 @@ def test_worker_count_resolves_auto() -> None:
     assert Execution(workers=3).worker_count() == 3
     assert Execution(workers="auto").worker_count() >= 1
     assert Execution(retries=2).max_attempts == 3
+
+
+def test_every_constant_of_the_engine_keeps_its_own_docstring() -> None:
+    def text(node: ast.stmt) -> str | None:
+        """Return the string of a statement that is only a string."""
+        value = node.value if isinstance(node, ast.Expr) else None
+        found = value.value if isinstance(value, ast.Constant) else None
+        return found if isinstance(found, str) else None
+
+    folder = Path(config.__file__).parent
+    documented: dict[str, dict[str, str]] = {}
+    for path in sorted(folder.glob("*.py")):
+        body = ast.parse(path.read_text(encoding="utf-8")).body
+        names = documented.setdefault(path.name, {})
+        for node, following in itertools.pairwise(body):
+            docstring = text(following)
+            if docstring is None:
+                continue
+            # A string that follows another string documents nothing.
+            assert text(node) is None, f"{path.name}: a stranded string at {following.lineno}"
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names[target.id] = docstring
+    constants = documented["config.py"]
+    assert constants["BACKENDS"].startswith("Execution backends")
+    assert "on_changed_code" in constants["CODE_POLICIES"]
+    assert "on_changed_problem" in constants["PROBLEM_POLICIES"]
