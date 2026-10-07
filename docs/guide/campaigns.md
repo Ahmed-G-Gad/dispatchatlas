@@ -794,8 +794,10 @@ when it concerns the runs of one protocol, that protocol. The severities are:
   with the plan field by field, and without a `plan_digest` in the session
   records the plan file is not compared with the last session.
 
-The exit code is 1 when a finding is blocking, and 0 otherwise. The text form
-names the first six items of a finding; `--json` prints the whole report,
+The exit code is 0 when no finding is blocking, 1 when a finding is blocking
+or the path is no directory, and 2 for a command line that is not valid,
+such as a negative `--overrun-tolerance`, which is refused before anything
+is read. The text form names the first six items of a finding; `--json` prints the whole report,
 with `ok`, the planned runs by what the directory holds for them (`counts`),
 the number of findings of each severity (`severities`), and every finding
 with all of its items. Planning the campaign again loads every problem, so it

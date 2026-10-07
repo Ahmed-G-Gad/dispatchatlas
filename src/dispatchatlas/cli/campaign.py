@@ -46,8 +46,8 @@ from dispatchatlas.cli._common import (
     emit_json,
     emit_table,
     existing_file,
-    finite_number,
     non_negative_integer,
+    non_negative_number,
     positive_integer,
     seconds,
     text,
@@ -151,7 +151,9 @@ def register(commands: Commands) -> None:
         "campaign gives, whether every planned run has a valid record or failures that settle "
         "it, whether the budgets were kept, and whether the sessions agree on code and "
         "settings. Each finding is blocking, a limitation, or a note. Nothing is written and "
-        "nothing runs. The exit code is 1 when a finding is blocking.",
+        "nothing runs. The exit code is 0 when no finding is blocking, 1 when a finding is "
+        "blocking or the directory cannot be checked, and 2 for a command line that is "
+        "not valid.",
         epilog=f"example:\n  {PROG} campaign check results/shop-baselines --replicate-floor 10",
     )
     checked.add_argument(
@@ -166,7 +168,7 @@ def register(commands: Commands) -> None:
     )
     checked.add_argument(
         "--overrun-tolerance",
-        type=finite_number,
+        type=non_negative_number,
         metavar="SHARE",
         help="share of a time limit by which a completed run may pass it without counting as "
         "over (default: the margin of the engine's note on a run)",

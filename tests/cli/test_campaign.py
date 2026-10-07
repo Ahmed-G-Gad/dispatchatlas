@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from dispatchatlas.campaigns import read_runs
 from dispatchatlas.cli._common import affinity
+from tests.campaigns.damage import rewrite
 from tests.cli.runner import Cli, campaign_file
 
 CHEAP_SOLVERS = (
@@ -443,6 +445,40 @@ def test_check_reports_findings_and_exits_1_when_one_is_blocking(cli: Cli, tmp_p
     # Running the campaign again gives the run its record, and the check passes.
     assert cli("campaign", "run", config, "--output", output, "--json").code == 0
     assert cli("campaign", "check", directory).code == 0
+
+
+def test_check_applies_the_overrun_tolerance_and_refuses_a_negative_one(
+    cli: Cli, tmp_path: Path
+) -> None:
+    config = campaign_file(tmp_path)
+    text = config.read_text(encoding="utf-8")
+    assert text.count("max_evaluations = 10 }") == 1
+    config.write_text(
+        text.replace("max_evaluations = 10 }", "max_evaluations = 10, time_limit = 5.0 }")
+    )
+    output = tmp_path / "runs"
+    assert cli("campaign", "run", config, "--output", output, "--json").code == 0
+    directory = output / "tiny"
+    # One run that took 1.8 times its time limit of 5 s.
+    rewrite(
+        directory / "runs" / "random-search" / "flow-shop-4x3-1" / "r000-evals.json",
+        lambda record: replace(record, provenance=replace(record.provenance, wall_seconds=9.0)),
+    )
+
+    def codes(*options: str) -> list[str]:
+        result = cli("campaign", "check", directory, "--json", *options)
+        assert result.code == 0
+        return [item["code"] for item in result.json()["findings"]]
+
+    assert "budget-overrun" in codes()
+    assert "budget-overrun" in codes("--overrun-tolerance", "0.5")
+    assert "budget-overrun" not in codes("--overrun-tolerance", "5")
+
+    # A tolerance below zero is a usage error: nothing is checked and nothing printed.
+    for value in ("-1", "nan", "much"):
+        refused = cli("campaign", "check", directory, "--json", "--overrun-tolerance", value)
+        assert (refused.code, refused.out) == (2, "")
+        assert "argument --overrun-tolerance: must be" in refused.err
 
 
 def test_check_lists_the_first_items_and_refuses_what_is_no_directory(

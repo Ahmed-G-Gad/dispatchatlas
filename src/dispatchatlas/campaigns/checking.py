@@ -585,6 +585,11 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
+def _agree(number: int, one: str, many: str) -> str:
+    """Return the wording for one thing or for any other number of things."""
+    return one if number == 1 else many
+
+
 def _named(run: PlannedRun) -> str:
     return f"{run.solver} on {run.problem} under {run.protocol}, replicate {run.replicate}"
 
@@ -935,11 +940,17 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
         name = protocol.name
         cells = _cells(plan, states, name)
         planned = sum(sum(counts.values()) for counts in cells.values())
-        for state, code, what in (
-            ("unattempted", "runs-unattempted", "have no record and no failed attempt"),
+        for state, code, one, many in (
+            (
+                "unattempted",
+                "runs-unattempted",
+                "has no record and no failed attempt",
+                "have no record and no failed attempt",
+            ),
             (
                 "unsettled",
                 "runs-unsettled",
+                "has failed attempts that do not settle it, so it is owed another attempt",
                 "have failed attempts that do not settle them, so they are owed another attempt",
             ),
         ):
@@ -948,7 +959,8 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
                 total = sum(counts[state] for counts in short.values())
                 found.add(
                     code,
-                    f"Under protocol {name}, {total} of {planned} planned runs {what}, in "
+                    f"Under protocol {name}, {total} of {planned} planned runs "
+                    f"{_agree(total, one, many)}, in "
                     f"{_count(len(short), 'cell')} of solver and problem.",
                     (
                         f"{solver} on {problem}: {counts[state]} of {sum(counts.values())} runs"
@@ -966,8 +978,9 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
             found.add(
                 "runs-failed",
                 f"Under protocol {name}, {total} of {planned} planned runs never completed and "
-                "are settled by their failures. The items count them by solver and by the kind "
-                "of error of their last attempt.",
+                + _agree(total, "is settled by its failures", "are settled by their failures")
+                + ". The items count such runs by solver and by the kind of error of the last "
+                "attempt.",
                 (f"{solver}: {_tally(counts)}" for solver, counts in kinds.items()),
                 name,
             )
@@ -980,7 +993,12 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
             found.add(
                 "cells-partial",
                 f"Under protocol {name}, {len(partial)} of {len(cells)} cells of solver and "
-                "problem have a record for some of their planned runs and not for all.",
+                "problem "
+                + _agree(
+                    len(partial),
+                    "has a record for some of its planned runs and not for all.",
+                    "have a record for some of their planned runs and not for all.",
+                ),
                 (
                     f"{solver} on {problem}: {counts['completed']} of {sum(counts.values())} "
                     "runs have a record"
@@ -996,7 +1014,7 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
             found.add(
                 "solver-without-records",
                 f"Under protocol {name}, {len(empty)} of {len(by_solver)} solvers with planned "
-                "runs have no record.",
+                f"runs {_agree(len(empty), 'has', 'have')} no record.",
                 (f"{solver}: {_tally(counts)}" for solver, counts in empty.items()),
                 name,
             )
@@ -1006,8 +1024,12 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
         excluded = Counter(item.solver for item in plan.exclusions)
         found.add(
             "solver-excluded-everywhere",
-            f"{len(idle)} of {len(plan.solvers)} solvers have no planned run: the plan excludes "
-            "them from every problem.",
+            f"{len(idle)} of {len(plan.solvers)} solvers "
+            + _agree(
+                len(idle),
+                "has no planned run: the plan excludes it from every problem.",
+                "have no planned run: the plan excludes them from every problem.",
+            ),
             (f"{solver}: excluded from {_count(excluded[solver], 'problem')}" for solver in idle),
         )
     if plan.exclusions:
@@ -1174,9 +1196,14 @@ def _check_records(
     if unhashed:
         found.add(
             "records-without-identity-hash",
-            f"{unhashed} of {len(records)} records state no identity hash, so no hash covers "
-            "their problem digest, solver, protocol, replicate, and seed; they are compared "
-            "with the plan field by field.",
+            f"{unhashed} of {len(records)} records "
+            + _agree(
+                unhashed,
+                "states no identity hash, so no hash covers its problem digest, solver, "
+                "protocol, replicate, and seed; it is compared with the plan field by field.",
+                "state no identity hash, so no hash covers their problem digest, solver, "
+                "protocol, replicate, and seed; they are compared with the plan field by field.",
+            ),
         )
     outcomes = fairness.assess_outcomes(plan, records.values(), overrun_tolerance=overrun_tolerance)
     for item in outcomes.protocols:
@@ -1186,7 +1213,8 @@ def _check_records(
             found.add(
                 "budget-overrun",
                 f"Under protocol {item.protocol}, whose time limit is {limit:g} s, completed "
-                f"runs of {len(item.overruns)} solvers took more wall time than the limit and a "
+                f"runs of {_count(len(item.overruns), 'solver')} took more wall time than the "
+                "limit and a "
                 f"tolerance of {outcomes.overrun_tolerance:g} of it allow; the longest took "
                 f"{worst:.3g} times the limit.",
                 (
@@ -1451,7 +1479,8 @@ def _check_replicates(plan: Plan, states: Mapping[str, str], floor: int, found: 
             found.add(
                 "replicates-below-floor",
                 f"Under protocol {protocol.name}, {total} of {replicated} cells of replicated "
-                f"solvers hold fewer than {floor} completed replicates.",
+                f"solvers {_agree(total, 'holds', 'hold')} fewer than {floor} completed "
+                "replicates.",
                 (
                     f"{solver}: {_count(len(cells), 'cell')}, the fewest with "
                     f"{_count(min(cells), 'completed replicate')}"

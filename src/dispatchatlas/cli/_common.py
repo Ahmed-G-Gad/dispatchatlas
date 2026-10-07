@@ -60,6 +60,7 @@ __all__ = [
     "jsonable",
     "logging_to_stderr",
     "non_negative_integer",
+    "non_negative_number",
     "parameter_lines",
     "parameters",
     "parse_value",
@@ -316,6 +317,14 @@ def positive_number(argument: str) -> float:
     value = finite_number(argument)
     if value <= 0.0:
         raise argparse.ArgumentTypeError(f"must be above 0, got {argument!r}")
+    return value
+
+
+def non_negative_number(argument: str) -> float:
+    """Parse a finite number of at least 0, such as a tolerance."""
+    value = finite_number(argument)
+    if value < 0.0:
+        raise argparse.ArgumentTypeError(f"must be zero or above, got {argument!r}")
     return value
 
 

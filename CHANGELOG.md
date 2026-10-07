@@ -186,7 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state less of the environment than another's; cells below a replicate
   floor;
   and a seed that serves two replicates of one problem. The command exits
-  with 1 when a finding is blocking, and `--json` prints the whole report. A
+  with 0 when no finding is blocking, with 1 when a finding is blocking or
+  the path is no directory, and with 2 for a command line that is not
+  valid, and `--json` prints the whole report. A
   directory whose records lack optional fields, such as `identity_hash` or
   the `plan_digest` of a session, is checked as far as its files allow, with
   a note for each comparison that cannot be made.

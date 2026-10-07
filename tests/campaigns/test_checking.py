@@ -670,7 +670,7 @@ def test_missing_runs_are_listed_and_excluded_pairs_are_not(tmp_path: Path) -> N
     finding = one(report, "runs-unattempted")
     assert finding.protocol == "evals"
     assert finding.items == (f"random-search on {deadlines.id}: 1 of 2 runs",)
-    assert "1 of 2 planned runs have no record and no failed attempt" in finding.message
+    assert "1 of 2 planned runs has no record and no failed attempt" in finding.message
     assert [item.code for item in report.of("blocking")] == ["runs-unattempted"]
     assert report.counts["unattempted"] == 1
 
@@ -718,6 +718,101 @@ def test_unsettled_failure_is_not_a_disclosed_limitation(directory: Path, tmp_pa
     # A terminal failure settles the run whatever the retries.
     fail(retried, retried / RUNS / "hc" / RECORD.parent.name / RECORD.name, ErrorKind.TIMEOUT)
     assert one(check(retried), "runs-failed").items == ("hc: 1 timeout",)
+
+
+def test_the_attempts_a_run_gets_come_from_the_campaign_before_the_last_session(
+    tmp_path: Path,
+) -> None:
+    retried = run(tiny_campaign(retries=1), tmp_path, registry=REGISTRY).directory
+    fail(retried, retried / RUNS / RECORD, ErrorKind.EXCEPTION, Category.RECOVERABLE)
+    assert json.loads((retried / SESSIONS / "1.json").read_text("utf-8"))["execution"]["retries"]
+
+    # The stored campaign gives two attempts, whatever a session ran with.
+    edit(retried / SESSIONS / "1.json", lambda document: document["execution"].update(retries=0))
+    report = check(retried)
+    assert (report.counts["unsettled"], report.counts["failed"]) == (1, 0)
+    assert "1 of 10 planned runs has failed attempts that do not settle it, so it is owed" in (
+        one(report, "runs-unsettled").message
+    )
+
+    # Without a campaign file to read, the last session says how many a run gets.
+    (retried / CAMPAIGN_FILE).unlink()
+    report = check(retried)
+    assert (report.counts["unsettled"], report.counts["failed"]) == (0, 1)
+    assert "1 of 10 planned runs never completed and is settled by its failures." in (
+        one(report, "runs-failed").message
+    )
+    shutil.copy(retried / SESSIONS / "1.json", retried / SESSIONS / "2.json")
+    edit(retried / SESSIONS / "2.json", lambda document: document.update(session=2))
+    edit(retried / SESSIONS / "2.json", lambda document: document["execution"].update(retries=1))
+    report = check(retried)
+    assert (report.counts["unsettled"], report.counts["failed"]) == (1, 0)
+
+
+def test_failed_runs_are_counted_by_the_kind_of_their_last_attempt(tmp_path: Path) -> None:
+    retried = run(tiny_campaign(retries=1), tmp_path, registry=REGISTRY).directory
+    record = retried / RUNS / RECORD
+    fail(retried, record, ErrorKind.EXCEPTION, Category.RECOVERABLE, keep=True)
+    fail(retried, record, ErrorKind.TIMEOUT, Category.TERMINAL, attempt=2)
+    report = check(retried)
+    assert one(report, "runs-failed").items == ("random-search: 1 timeout",)
+    assert report.counts["failed"] == 1
+
+
+def test_the_plan_is_compared_with_the_last_session_that_states_a_digest(
+    directory: Path,
+) -> None:
+    digest = read_plan(directory).runs_digest
+    shutil.copy(directory / SESSIONS / "1.json", directory / SESSIONS / "2.json")
+    edit(directory / SESSIONS / "2.json", lambda document: document.update(session=2))
+    assert json.loads((directory / SESSIONS / "2.json").read_text("utf-8"))["plan_digest"] == digest
+
+    # An earlier session executed another plan: the plan file is the last session's.
+    edit(directory / SESSIONS / "1.json", lambda document: document.update(plan_digest="0" * 64))
+    assert check(directory).findings == ()
+    # A last session that states none leaves the comparison to the one before it.
+    edit(directory / SESSIONS / "2.json", lambda document: document.pop("plan_digest"))
+    assert (
+        "session 1, the last that states one"
+        in one(check(directory), "plan-digest-differs").message
+    )
+    edit(directory / SESSIONS / "1.json", lambda document: document.update(plan_digest=digest))
+    edit(directory / SESSIONS / "2.json", lambda document: document.update(plan_digest="1" * 64))
+    assert (
+        "session 2, the last that states one"
+        in one(check(directory), "plan-digest-differs").message
+    )
+
+
+def test_messages_agree_with_a_count_of_one_and_of_more(directory: Path) -> None:
+    (directory / RUNS / RECORD).unlink()
+    report = check(directory)
+    assert one(report, "runs-unattempted").message == (
+        "Under protocol evals, 1 of 10 planned runs has no record and no failed attempt, in 1 "
+        "cell of solver and problem."
+    )
+    assert one(report, "cells-partial").message == (
+        "Under protocol evals, 1 of 6 cells of solver and problem has a record for some of its "
+        "planned runs and not for all."
+    )
+    assert "1 of 4 cells of replicated solvers holds fewer than 2 completed replicates." in (
+        one(check(directory, replicate_floor=2), "replicates-below-floor").message
+    )
+    (directory / RUNS / "hc" / RECORD.parent.name / RECORD.name).unlink()
+    report = check(directory)
+    assert "2 of 10 planned runs have no record and no failed attempt, in 2 cells" in (
+        one(report, "runs-unattempted").message
+    )
+    assert "2 of 6 cells of solver and problem have a record for some of their planned runs" in (
+        one(report, "cells-partial").message
+    )
+    for path in sorted((directory / RUNS / "hc").rglob("*.json")):
+        path.unlink()
+    assert "1 of 3 solvers with planned runs has no record." in (
+        one(check(directory), "solver-without-records").message
+    )
+    floor = one(check(directory, replicate_floor=2), "replicates-below-floor").message
+    assert "3 of 4 cells of replicated solvers hold fewer than 2 completed replicates." in floor
 
 
 def test_a_solver_whose_every_run_failed_is_named(directory: Path) -> None:
@@ -913,13 +1008,16 @@ def test_budget_overruns_are_counted_by_solver_with_the_largest_ratio(
     assert finding.items == ("hc: 2 of 4 runs, the longest 1.8 times the limit",)
     assert "whose time limit is 5 s" in finding.message
     assert "the longest took 1.8 times the limit" in finding.message
+    assert "completed runs of 1 solver took more wall time than the limit" in finding.message
     assert report.ok
     # A caller that allows more leaves the shorter overrun out, and one that
     # allows nothing counts the run of the other solver too.
     assert one(check(timed_directory, overrun_tolerance=0.5), "budget-overrun").items == (
         "hc: 1 of 4 runs, the longest 1.8 times the limit",
     )
-    assert len(one(check(timed_directory, overrun_tolerance=0.0), "budget-overrun").items) == 2
+    strict = one(check(timed_directory, overrun_tolerance=0.0), "budget-overrun")
+    assert len(strict.items) == 2
+    assert "completed runs of 2 solvers took more wall time than the limit" in strict.message
 
 
 def test_hard_limits_that_differ_within_a_protocol_are_a_limitation(timed_directory: Path) -> None:

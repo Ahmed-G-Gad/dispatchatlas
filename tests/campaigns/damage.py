@@ -52,8 +52,9 @@ def fail(
     category: Category = Category.TERMINAL,
     *,
     keep: bool = False,
+    attempt: int = 1,
 ) -> Path:
-    """Write the record of a failed first attempt of a run, in place of its record."""
+    """Write the record of a failed attempt of a run, in place of its record."""
     record = read(record_path)
     failure = FailureRecord(
         run_id=record.run_id,
@@ -66,7 +67,7 @@ def fail(
         seed=record.seed,
         category=category,
         error=RunError(kind, "scripted failure"),
-        provenance=record.provenance,
+        provenance=replace(record.provenance, attempt=attempt),
     )
     path = failure_path(
         directory,
@@ -74,7 +75,7 @@ def fail(
         record.problem.id,
         record.replicate,
         record.protocol.name,
-        attempt=1,
+        attempt=attempt,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(failure.to_dict(), indent=2, sort_keys=True) + "\n", "utf-8")
