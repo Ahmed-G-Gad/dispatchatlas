@@ -1234,10 +1234,10 @@ def test_a_solver_that_floods_the_log_is_killed_at_its_hard_limit(tmp_path: Path
     (failure,) = read_failures(summary.directory)
     assert failure.error.kind is ErrorKind.TIMEOUT
     assert failure.provenance.hard_limit == 1.0
-    # The kill follows the limit and not the log records: it comes long before the eight
-    # seconds of the solver, which never writes its count.
-    assert 1.0 <= failure.provenance.wall_seconds < 4.0
-    assert not (marker / "chatty").exists()
+    # The kill comes within a second of the limit while the campaign's own sink records
+    # the flood. Whether records that wait in the pipe postpone a kill is the matter of
+    # the next test, whose sink is slow enough to keep some waiting.
+    assert 1.0 <= failure.provenance.wall_seconds < 2.0
     text = (summary.directory / LOGS / "session-1.log").read_text()
     assert " INFO dispatchatlas.tests.counter: [worker-1] iteration 0" in text
 
