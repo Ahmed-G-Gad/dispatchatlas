@@ -272,8 +272,14 @@ def _alive(pid: int) -> bool:
             running = True
         status = Path(f"/proc/{pid}/stat")
         if running and status.exists():
-            # A killed process stays listed as a zombie until its parent reaps it.
-            running = status.read_text(encoding="ascii").rpartition(")")[2].split()[0] != "Z"
+            # A killed process stays listed as a zombie until its parent reaps it, and it
+            # can vanish between the check above and the read below.
+            try:
+                state = status.read_text(encoding="ascii").rpartition(")")[2].split()[0]
+            except (FileNotFoundError, ProcessLookupError):
+                running = False
+            else:
+                running = state != "Z"
     return running
 
 
