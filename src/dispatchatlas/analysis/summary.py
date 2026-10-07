@@ -477,8 +477,8 @@ def _design_limitations(
             Limitation(
                 "campaign",
                 f"{counts['missing']} of {planned} planned runs have no record yet; they count "
-                f"as failures. They belong to {len(cells)} cells of solver and problem, each "
-                f"with its number of such runs: {named}.",
+                "as failures. Their cells of solver and problem, each with its number of such "
+                f"runs: {named}.",
             )
         )
     killed = [run for run in scope.dataset.runs if run.killed]

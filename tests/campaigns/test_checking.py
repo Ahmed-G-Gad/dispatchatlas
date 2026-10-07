@@ -265,7 +265,7 @@ def test_a_plan_that_the_campaign_does_not_give_blocks(directory: Path) -> None:
     edit(directory / PLAN_FILE, lambda document: dropped.append(document["runs"].pop()))
     report = check(directory)
     (difference,) = one(report, "plan-differs").items
-    assert difference.startswith("1 runs of the derived plan are not in the stored plan: ")
+    assert difference.startswith("runs of the derived plan that are not in the stored plan (1): ")
     assert f"{dropped[0]['solver']} on {dropped[0]['problem']}" in difference
     # The record of the run that left the plan file is no longer read, and the
     # last session executed a plan of ten runs.
@@ -318,7 +318,7 @@ def test_a_plan_that_changed_between_sessions_is_a_limitation(directory: Path) -
     )
     report = check(directory)
     (item,) = one(report, "plan-changed").items
-    assert item.startswith("session 1: 1 runs left, 1 entered, 0 got another seed")
+    assert item.startswith("session 1: runs that left 1, entered 1, got another seed 0")
     assert report.ok
 
 
@@ -340,7 +340,7 @@ def test_missing_runs_are_listed_and_excluded_pairs_are_not(tmp_path: Path) -> N
     # The excluded solver has no run: it is reported apart and is not missing.
     assert codes(report) == {"solver-excluded-everywhere", "pairs-excluded"}
     assert one(report, "solver-excluded-everywhere").items == (
-        "test-no-deadlines: excluded from 1 problems",
+        "test-no-deadlines: excluded from 1 problem",
     )
     (pair,) = one(report, "pairs-excluded").items
     assert pair == f"test-no-deadlines does not model deadline (problem {deadlines.id})"
@@ -614,7 +614,7 @@ def test_hard_limits_that_differ_within_a_protocol_are_a_limitation(timed_direct
     assert codes(report) == {"hard-limits-differ"}
     finding = one(report, "hard-limits-differ")
     assert finding.protocol == "timed"
-    assert finding.items[0] == "30 s: 1 attempts"
+    assert finding.items[0] == "30 s: 1 attempt"
     assert finding.items[1].endswith(": 7 attempts")
 
 
@@ -735,7 +735,7 @@ def test_cells_below_the_replicate_floor_are_a_limitation(directory: Path) -> No
     # The floor counts completed replicates, so a missing record lowers a cell.
     (directory / RUNS / RECORD).unlink()
     finding = one(check(directory, replicate_floor=2), "replicates-below-floor")
-    assert finding.items == ("random-search: 1 cells, the fewest with 1 completed replicates",)
+    assert finding.items == ("random-search: 1 cell, the fewest with 1 completed replicate",)
 
 
 def test_a_seed_used_for_two_replicates_of_one_problem_blocks(directory: Path) -> None:

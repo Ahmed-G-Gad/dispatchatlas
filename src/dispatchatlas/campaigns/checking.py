@@ -491,6 +491,10 @@ def _tally(counts: Mapping[str, int]) -> str:
     return ", ".join(f"{number} {name}" for name, number in sorted(counts.items()))
 
 
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+
 def _named(run: PlannedRun) -> str:
     return f"{run.solver} on {run.problem} under {run.protocol}, replicate {run.replicate}"
 
@@ -602,12 +606,12 @@ def _plan_differences(stored: Plan, derived: Plan) -> list[str]:
         if derived.has_run(run.run_id) and derived.run(run.run_id).seed != run.seed
     ]
     for runs, what in (
-        (left, "runs of the stored plan are not in the derived plan"),
-        (entered, "runs of the derived plan are not in the stored plan"),
-        (reseeded, "runs have another seed in the derived plan"),
+        (left, "runs of the stored plan that are not in the derived plan"),
+        (entered, "runs of the derived plan that are not in the stored plan"),
+        (reseeded, "runs with another seed in the derived plan"),
     ):
         if runs:
-            differences.append(f"{len(runs)} {what}: {_first(runs)}")
+            differences.append(f"{what} ({len(runs)}): {_first(runs)}")
     digests = {problem.id: problem.digest for problem in derived.problems}
     changed = [
         problem.id
@@ -632,8 +636,8 @@ def _plan_differences(stored: Plan, derived: Plan) -> list[str]:
     again_excluded = {(item.problem, item.solver) for item in derived.exclusions}
     if excluded != again_excluded:
         differences.append(
-            f"{len(excluded ^ again_excluded)} pairs of problem and solver are excluded in one "
-            "plan and not in the other"
+            "pairs of problem and solver excluded in one plan and not in the other: "
+            f"{len(excluded ^ again_excluded)}"
         )
     return differences
 
@@ -713,7 +717,7 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
                 found.add(
                     code,
                     f"Under protocol {name}, {total} of {planned} planned runs {what}, in "
-                    f"{len(short)} cells of solver and problem.",
+                    f"{_count(len(short), 'cell')} of solver and problem.",
                     (
                         f"{solver} on {problem}: {counts[state]} of {sum(counts.values())} runs"
                         for (solver, problem), counts in short.items()
@@ -772,13 +776,13 @@ def _check_runs(plan: Plan, ledger: Ledger, states: Mapping[str, str], found: _F
             "solver-excluded-everywhere",
             f"{len(idle)} of {len(plan.solvers)} solvers have no planned run: the plan excludes "
             "them from every problem.",
-            (f"{solver}: excluded from {excluded[solver]} problems" for solver in idle),
+            (f"{solver}: excluded from {_count(excluded[solver], 'problem')}" for solver in idle),
         )
     if plan.exclusions:
         found.add(
             "pairs-excluded",
-            f"The plan excludes {len(plan.exclusions)} pairs of problem and solver, which have "
-            "no run and are not missing.",
+            "Pairs of problem and solver that the plan excludes, which have no run and are "
+            f"not missing: {len(plan.exclusions)}.",
             (item.reason for item in plan.exclusions),
         )
 
@@ -797,29 +801,34 @@ def _check_files(folder: Path, plan: Plan, ledger: Ledger, found: _Findings) -> 
         reason = stale.reason.removesuffix(f" ({stale.path})").removeprefix(f"{stale.path}: ")
         kinds.setdefault(code, []).append(f"{where}: {reason}")
     messages = {
-        "record-unreadable": "files at the paths of planned runs cannot be read as run records",
+        "record-unreadable": (
+            "Files at the paths of planned runs that cannot be read as run records"
+        ),
         "record-foreign": (
-            "records at the paths of planned runs belong to another configuration or to "
-            "another version of their problem, so their runs have no record"
+            "Records at the paths of planned runs that belong to another configuration or to "
+            "another version of their problem, so that their runs have no record"
         ),
         "record-hash-mismatch": (
-            "records no longer match a hash that was stored with them, so they were changed "
-            "after they were written"
+            "Records that no longer match a hash stored with them, and so were changed after "
+            "they were written"
         ),
-        "record-differs-from-plan": "records state something else than the plan does for them",
+        "record-differs-from-plan": (
+            "Records that state something else than the plan states for their run"
+        ),
         "failures-foreign": (
-            "files at the paths of failed attempts belong to another plan and count as no attempt"
+            "Files at the paths of failed attempts that belong to another plan and count as no "
+            "attempt"
         ),
     }
     for code, text in messages.items():
         if code in kinds:
-            found.add(code, f"{len(kinds[code])} {text}.", kinds[code])
+            found.add(code, f"{text}: {len(kinds[code])}.", kinds[code])
     if ledger.kept:
         found.add(
             "records-set-aside",
-            f"The valid records of {len(ledger.kept)} planned runs lie under superseded/ and "
-            "not at their paths, where no reader finds them; the next session of the campaign "
-            "moves them back.",
+            "Planned runs whose valid record lies under superseded/ and not at its path, "
+            f"where no reader finds it: {len(ledger.kept)}. The next session of the campaign "
+            "moves such a record back.",
             (
                 f"{_relative(item.kept, folder)} belongs at {_relative(item.path, folder)}"
                 for item in ledger.kept
@@ -828,8 +837,8 @@ def _check_files(folder: Path, plan: Plan, ledger: Ledger, found: _Findings) -> 
     if ledger.unreadable:
         found.add(
             "failures-unreadable",
-            f"{len(ledger.unreadable)} files under failures/ cannot be read as records of "
-            "failed attempts and count as no attempt.",
+            "Files under failures/ that cannot be read as records of failed attempts and "
+            f"count as no attempt: {len(ledger.unreadable)}.",
             (_relative(path, folder) for path in ledger.unreadable),
         )
     strays = read_strays(folder)
@@ -837,17 +846,17 @@ def _check_files(folder: Path, plan: Plan, ledger: Ledger, found: _Findings) -> 
         (
             strays.unplanned,
             "records-unplanned",
-            "records under runs/ belong to runs the plan does not hold; no reader returns them",
+            "Records under runs/ of runs the plan does not hold, which no reader returns",
         ),
         (
             strays.unreadable,
             "files-unreadable",
-            "files under runs/, at no path of a planned run, cannot be read as run records",
+            "Files under runs/, at no path of a planned run, that cannot be read as run records",
         ),
-        (strays.other, "files-stray", "files under runs/ are no JSON documents"),
+        (strays.other, "files-stray", "Files under runs/ that are no JSON documents"),
     ):
         if paths:
-            found.add(code, f"{len(paths)} {text}.", (_relative(path, folder) for path in paths))
+            found.add(code, f"{text}: {len(paths)}.", (_relative(path, folder) for path in paths))
 
 
 def _record_kind(stale: Stale, plan: Plan) -> str:
@@ -892,19 +901,21 @@ def _check_records(
             shown.setdefault(code, Counter())[cell] += 1
     texts = {
         "trace-time-axis": (
-            "hold a trace with a negative time, with times or evaluation counts that "
-            "decrease, or with a time beyond the elapsed time of the run, so the trace cannot "
-            "be read against time"
+            "records whose trace holds a negative time, times or evaluation counts that "
+            "decrease, or a time beyond the elapsed time of the run, so that it cannot be read "
+            "against time"
         ),
         "trace-contradicts-outcome": (
-            "hold a trace whose last value differs from the value of the outcome"
+            "records whose trace ends at another value than the value of the outcome"
         ),
-        "record-without-trace": "of iterative solvers hold a schedule and no trace",
+        "record-without-trace": ("records of iterative solvers that hold a schedule and no trace"),
         "clock-disagreement": (
-            "state an elapsed time that differs from the engine's wall time, or stopped for "
-            "their time limit before the limit"
+            "records whose elapsed time differs from the engine's wall time, or whose run "
+            "stopped for its time limit before the limit"
         ),
-        "records-noted": "carry notes of the engine that the check does not derive from them",
+        "records-noted": (
+            "records with notes of the engine that the check does not derive from them"
+        ),
     }
     for protocol in plan.protocols:
         name = protocol.name
@@ -923,7 +934,7 @@ def _check_records(
                     items += [f"for example: {note}" for note in list(examples[name])[:_SHOWN]]
                 found.add(
                     code,
-                    f"Under protocol {name}, {sum(cells.values())} records {text}.",
+                    f"Under protocol {name}, {text}: {sum(cells.values())}.",
                     items,
                     name,
                 )
@@ -981,7 +992,8 @@ def _check_hard_limits(
                 f"Under protocol {protocol.name}, the attempts ran under {len(counted)} "
                 "different hard limits, so the engine did not end them alike.",
                 (
-                    ("no hard limit" if limit is None else f"{limit:g} s") + f": {count} attempts"
+                    ("no hard limit" if limit is None else f"{limit:g} s")
+                    + f": {_count(count, 'attempt')}"
                     for limit, count in ordered
                 ),
                 protocol.name,
@@ -1006,8 +1018,8 @@ def _check_sessions(
     if absent:
         found.add(
             "sessions-missing",
-            f"The attempts of the directory name {len(absent)} sessions it holds no record "
-            "of, so the code and the settings they ran under are not known.",
+            "Sessions that the attempts of the directory name and that it holds no record "
+            f"of, so that the code and the settings they ran under are not known: {len(absent)}.",
             (f"session {number}" for number in absent),
         )
     executing = [by_number[number] for number in sorted(numbers) if number in by_number]
@@ -1023,13 +1035,14 @@ def _check_sessions(
     if changed:
         found.add(
             "plan-changed",
-            f"The plan changed in {len(changed)} sessions while the campaign file stayed the "
-            "same: the problems, the metadata of the solvers, or the library that plans "
-            "changed between sessions.",
+            "Sessions whose plan differs from the plan before them while the campaign file "
+            "stayed the same, because the problems, the metadata of the solvers, or the library "
+            f"that plans changed: {len(changed)}.",
             (
-                f"session {session.session}: {len(session.plan_left)} runs left, "
-                f"{len(session.plan_entered)} entered, {len(session.plan_reseeded)} got "
-                f"another seed, {len(session.plan_solvers)} fields of solver entries changed"
+                f"session {session.session}: runs that left {len(session.plan_left)}, "
+                f"entered {len(session.plan_entered)}, got another seed "
+                f"{len(session.plan_reseeded)}; changed fields of solver entries "
+                f"{len(session.plan_solvers)}"
                 for session in changed
             ),
         )
@@ -1092,8 +1105,8 @@ def _compare_sessions(executing: Sequence[SessionRecord], found: _Findings) -> N
             found.add(
                 code,
                 f"The {len(executing)} sessions that executed the attempts of the directory "
-                f"differ in {text}: {len(grouped[code])} fields differ from session "
-                f"{first.session}, the first of them.",
+                f"differ in {text}. Differences from session {first.session}, the first of "
+                f"them: {len(grouped[code])}.",
                 grouped[code],
             )
 
@@ -1124,8 +1137,8 @@ def _check_replicates(plan: Plan, states: Mapping[str, str], floor: int, found: 
                 f"Under protocol {protocol.name}, {total} of {replicated} cells of replicated "
                 f"solvers hold fewer than {floor} completed replicates.",
                 (
-                    f"{solver}: {len(cells)} cells, the fewest with {min(cells)} completed "
-                    "replicates"
+                    f"{solver}: {_count(len(cells), 'cell')}, the fewest with "
+                    f"{_count(min(cells), 'completed replicate')}"
                     for solver, cells in below.items()
                 ),
                 protocol.name,
@@ -1145,8 +1158,8 @@ def _check_seeds(plan: Plan, records: Mapping[str, RunRecord], found: _Findings)
     if reused:
         found.add(
             "seed-reused",
-            f"{len(reused)} seeds serve two or more replicates of one problem, so those "
-            "replicates are not independent.",
+            "Seeds that serve two or more replicates of one problem, which are then not "
+            f"independent: {len(reused)}.",
             (
                 f"{problem}: seed {seed} for replicates "
                 + ", ".join(str(number) for number in sorted(numbers))
@@ -1157,8 +1170,8 @@ def _check_seeds(plan: Plan, records: Mapping[str, RunRecord], found: _Findings)
     if unpaired:
         found.add(
             "seeds-unpaired",
-            f"{len(unpaired)} replicates of a problem ran with more than one seed, so their "
-            "runs do not share a seed across solvers and protocols.",
+            "Replicates of a problem that ran with more than one seed, so that their runs "
+            f"do not share a seed across solvers and protocols: {len(unpaired)}.",
             (
                 f"{problem}, replicate {replicate}: seeds "
                 + ", ".join(str(seed) for seed in sorted(values))

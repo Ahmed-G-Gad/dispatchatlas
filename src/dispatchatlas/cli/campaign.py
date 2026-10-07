@@ -513,10 +513,11 @@ def _check(arguments: argparse.Namespace) -> int:
 def _check_rows(report: CheckReport) -> list[tuple[str, object]]:
     """Lay a check report out as labelled values, each finding under its severity."""
     hash_text = "unknown" if report.config_hash is None else report.config_hash[:12]
-    nouns = ("blocking", "limitations", "notes")
     summary = ", ".join(
-        f"{len(report.of(severity))} {noun}"
-        for severity, noun in zip(SEVERITIES, nouns, strict=True)
+        f"{len(report.of(severity))} blocking"
+        if severity == "blocking"
+        else _count(len(report.of(severity)), severity)
+        for severity in SEVERITIES
     )
     rows: list[tuple[str, object]] = [
         ("campaign", f"{report.campaign or 'unknown'} (config hash {hash_text})"),

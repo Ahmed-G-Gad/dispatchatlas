@@ -425,7 +425,7 @@ def test_check_reports_findings_and_exits_1_when_one_is_blocking(cli: Cli, tmp_p
     (directory / "runs" / "random-search" / "flow-shop-4x3-1" / "r000-evals.json").unlink()
     blocked = cli("campaign", "check", directory)
     assert blocked.code == 1
-    assert "findings    1 blocking, 1 limitations, 0 notes" in blocked.out
+    assert "findings    1 blocking, 1 limitation, 0 notes" in blocked.out
     assert (
         "blocking    runs-unattempted (protocol evals): Under protocol evals, 1 of 6" in blocked.out
     )

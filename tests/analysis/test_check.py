@@ -88,8 +88,10 @@ def test_missing_runs_are_named_by_cell_and_reported_once(directory: Path) -> No
     (directory / RUNS / RECORD).unlink()
     topics = _topics(directory)
     assert "1 of 10 planned runs have no record yet" in topics["campaign"]
-    assert "1 cells of solver and problem" in topics["campaign"]
-    assert "random-search on flow-shop-3x2-1 (1)" in topics["campaign"]
+    assert topics["campaign"].endswith(
+        "Their cells of solver and problem, each with its number of such runs: "
+        "random-search on flow-shop-3x2-1 (1)."
+    )
     # The analysis states the missing runs itself, so the finding is not repeated;
     # the partial cell is what the check adds.
     assert "runs-unattempted" not in topics
