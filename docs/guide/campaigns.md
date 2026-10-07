@@ -797,12 +797,14 @@ when it concerns the runs of one protocol, that protocol. The severities are:
 The exit code is 0 when no finding is blocking, 1 when a finding is blocking
 or the path is no directory, and 2 for a command line that is not valid,
 such as a negative `--overrun-tolerance`, which is refused before anything
-is read. The text form names the first six items of a finding; `--json` prints the whole report,
-with `ok`, the planned runs by what the directory holds for them (`counts`),
-the number of findings of each severity (`severities`), and every finding
-with all of its items. Planning the campaign again loads every problem, so it
-needs the campaign's instance files and solvers; `--no-replan` leaves that
-comparison out and says so in a note.
+is read. The text form names the first six items of a finding; `--json`
+prints the whole report, with `ok`, the planned runs by what the directory
+holds for them (`counts`), the number of findings of each severity
+(`severities`), and every finding with all of its items. The counts are
+empty when the check ended at the plan or at a file that could not be read.
+Planning the campaign again loads every problem, so it needs the campaign's
+instance files and solvers; `--no-replan` leaves that comparison out and
+says so in a note.
 
 A directory can be checked while a session of the campaign writes into it.
 The report is then of that moment: a run that is executing counts as
@@ -818,7 +820,9 @@ planning the campaign again, and the analysis states the blocking findings
 and the limitations for the analysed protocol among its own limitations. It
 leaves out the five that it states itself, over the solvers and problems it
 analyses: `runs-unattempted`, `runs-failed`, `stop-reasons-diverge`,
-`budget-overrun`, and `replicates-below-floor`.
+`budget-overrun`, and `replicates-below-floor`. It carries `cells-partial`
+without the cells whose missing runs it names, and `solver-without-records`
+without the solvers whose every run is among the failures it counts.
 
 ## Replaying
 
