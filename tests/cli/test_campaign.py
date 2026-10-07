@@ -396,3 +396,83 @@ def test_validate_states_the_replication_and_the_seed_namespace(cli: Cli, tmp_pa
     assert document["config_hash"] != plain["config_hash"]
     assert plain["replicate_timed"] is False
     assert plain["seed_namespace"] is None
+
+
+def test_check_reports_findings_and_exits_1_when_one_is_blocking(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path)
+    output = tmp_path / "runs"
+    assert cli("campaign", "run", config, "--output", output, "--json").code == 0
+    directory = output / "tiny"
+
+    clean = cli("campaign", "check", directory)
+    assert clean.code == 0
+    assert "runs      planned 6, completed 6, failed 0, unsettled 0, unattempted 0" in clean.out
+    assert "findings  0 blocking, 0 limitations, 0 notes" in clean.out
+    document = cli("campaign", "check", directory, "--json").json()
+    assert (document["ok"], document["findings"], document["campaign"]) == (True, [], "tiny")
+    assert document["counts"]["completed"] == 6
+
+    # A limitation and a note leave the exit code at 0.
+    floor = cli("campaign", "check", directory, "--replicate-floor", "3", "--no-replan", "--json")
+    assert floor.code == 0
+    assert [(item["code"], item["severity"]) for item in floor.json()["findings"]] == [
+        ("replicates-below-floor", "limitation"),
+        ("plan-not-compared", "note"),
+    ]
+    assert cli("campaign", "check", directory, "--overrun-tolerance", "0").code == 0
+
+    # A blocking finding makes it 1 in both forms, and the JSON document is still printed.
+    (directory / "runs" / "random-search" / "flow-shop-4x3-1" / "r000-evals.json").unlink()
+    blocked = cli("campaign", "check", directory)
+    assert blocked.code == 1
+    assert "findings    1 blocking, 1 limitations, 0 notes" in blocked.out
+    assert (
+        "blocking    runs-unattempted (protocol evals): Under protocol evals, 1 of 6" in blocked.out
+    )
+    assert "            - random-search on flow-shop-4x3-1: 1 of 2 runs" in blocked.out
+    assert "limitation  cells-partial (protocol evals): " in blocked.out
+    assert "dispatchatlas: error: 1 blocking finding in " in blocked.err
+    as_json = cli("campaign", "check", directory, "--json")
+    assert as_json.code == 1
+    assert as_json.json()["ok"] is False
+    assert as_json.json()["severities"] == {"blocking": 1, "limitation": 1, "note": 0}
+    assert as_json.json()["findings"][0]["items"] == [
+        "random-search on flow-shop-4x3-1: 1 of 2 runs"
+    ]
+
+    # Running the campaign again gives the run its record, and the check passes.
+    assert cli("campaign", "run", config, "--output", output, "--json").code == 0
+    assert cli("campaign", "check", directory).code == 0
+
+
+def test_check_lists_the_first_items_and_refuses_what_is_no_directory(
+    cli: Cli, tmp_path: Path
+) -> None:
+    config = campaign_file(tmp_path, seeds="[1, 2, 3, 4]")
+    output = tmp_path / "runs"
+    assert cli("campaign", "run", config, "--output", output, "--json").code == 0
+    directory = output / "tiny"
+    for path in sorted((directory / "runs" / "random-search").rglob("r001-evals.json")):
+        path.unlink()
+    for path in sorted((directory / "runs" / "input-order").rglob("*.json")):
+        path.unlink()
+    result = cli("campaign", "check", directory)
+    assert result.code == 1
+    # Eight cells have a run without a record; the text names six of them.
+    assert result.out.count(": 1 of 2 runs\n") + result.out.count(": 1 of 1 runs\n") == 6
+    assert "- and 2 more; --json lists every item" in result.out
+    assert len(cli("campaign", "check", directory, "--json").json()["findings"][0]["items"]) == 8
+
+    absent = cli("campaign", "check", tmp_path / "absent")
+    assert absent.code == 1
+    assert "is not a directory" in absent.err
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    unreadable = cli("campaign", "check", empty, "--json")
+    assert unreadable.code == 1
+    assert [item["code"] for item in unreadable.json()["findings"]] == [
+        "recipe-missing",
+        "plan-unreadable",
+    ]
+    assert cli("campaign", "check", directory, "--replicate-floor", "0").code == 2
+    assert cli("campaign", "check").code == 2

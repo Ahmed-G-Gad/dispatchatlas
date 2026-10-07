@@ -33,6 +33,7 @@ COMMANDS = (
     ("campaign", "validate"),
     ("campaign", "estimate"),
     ("campaign", "run"),
+    ("campaign", "check"),
     ("campaign", "replay"),
     ("analyze",),
     ("references",),

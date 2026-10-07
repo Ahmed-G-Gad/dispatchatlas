@@ -1,4 +1,4 @@
-"""``dispatchatlas campaign``: validate, estimate, run, and replay experiment campaigns."""
+"""``dispatchatlas campaign``: validate, estimate, run, check, and replay experiment campaigns."""
 
 from __future__ import annotations
 
@@ -11,12 +11,14 @@ from typing import Any
 from dispatchatlas.campaigns import (
     Campaign,
     Caveat,
+    CheckReport,
     Compatibility,
     Estimate,
     ReplayEntry,
     ReplayReport,
     RunSummary,
     Verdict,
+    check_campaign,
     check_compatibility,
     estimate,
     load_campaign,
@@ -25,6 +27,7 @@ from dispatchatlas.campaigns import (
     replay,
     run,
 )
+from dispatchatlas.campaigns.checking import SEVERITIES
 from dispatchatlas.campaigns.config import BACKENDS, CPU_RESERVE
 from dispatchatlas.campaigns.store import (
     CAMPAIGN_FILE,
@@ -43,7 +46,9 @@ from dispatchatlas.cli._common import (
     emit_json,
     emit_table,
     existing_file,
+    finite_number,
     non_negative_integer,
+    positive_integer,
     seconds,
     text,
     workers,
@@ -59,11 +64,11 @@ _SHOWN = 6
 
 
 def register(commands: Commands) -> None:
-    """Add the ``campaign validate``, ``estimate``, ``run``, and ``replay`` commands."""
+    """Add the ``campaign validate``, ``estimate``, ``run``, ``check``, and ``replay`` commands."""
     group = add_group(
         commands,
         "campaign",
-        "Validate, estimate, run, and replay experiment campaigns.",
+        "Validate, estimate, run, check, and replay experiment campaigns.",
         "Run experiment campaigns described by a TOML or JSON file: every solver on every "
         "problem under every stopping protocol, with seeds shared across solvers, one "
         "record per run, and resumption after an interruption.",
@@ -135,6 +140,42 @@ def register(commands: Commands) -> None:
         type=non_negative_integer,
         metavar="N",
         help="attempt at most N runs in this session",
+    )
+    checked = add_command(
+        group,
+        "check",
+        _check,
+        "Check a campaign directory before its results are used.",
+        description="Read a campaign directory and report what qualifies its results: whether "
+        "the stored campaign still matches its config hash, whether the plan is the plan that "
+        "campaign gives, whether every planned run has a valid record or failures that settle "
+        "it, whether the budgets were kept, and whether the sessions agree on code and "
+        "settings. Each finding is blocking, a limitation, or a note. Nothing is written and "
+        "nothing runs. The exit code is 1 when a finding is blocking.",
+        epilog=f"example:\n  {PROG} campaign check results/shop-baselines --replicate-floor 10",
+    )
+    checked.add_argument(
+        "directory", metavar="DIR", help="campaign directory written by 'campaign run'"
+    )
+    checked.add_argument(
+        "--replicate-floor",
+        type=positive_integer,
+        metavar="N",
+        help="report the cells of replicated solvers with fewer than N completed replicates "
+        "(default: no floor)",
+    )
+    checked.add_argument(
+        "--overrun-tolerance",
+        type=finite_number,
+        metavar="SHARE",
+        help="share of a time limit by which a completed run may pass it without counting as "
+        "over (default: the margin of the engine's note on a run)",
+    )
+    checked.add_argument(
+        "--no-replan",
+        action="store_true",
+        help="do not derive the plan again from the stored campaign, which loads every "
+        "problem; the plan file is then compared with the last session's digest only",
     )
     replayed = add_command(
         group,
@@ -437,6 +478,59 @@ def _run_document(summary: RunSummary) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------- replay
+
+
+def _check(arguments: argparse.Namespace) -> int:
+    directory = Path(arguments.directory).resolve()
+    if not directory.is_dir():
+        raise CommandError(
+            f"{directory} is not a directory",
+            hint=f"pass the directory that '{PROG} campaign run' reported",
+        )
+    options: dict[str, Any] = {}
+    if arguments.overrun_tolerance is not None:
+        options["overrun_tolerance"] = arguments.overrun_tolerance
+    report = check_campaign(
+        directory,
+        replicate_floor=arguments.replicate_floor,
+        replan=not arguments.no_replan,
+        **options,
+    )
+    if arguments.json:
+        emit_json(report.to_dict())
+    else:
+        emit_fields(_check_rows(report))
+    blocking = len(report.of("blocking"))
+    if blocking:
+        raise CommandError(
+            f"{_count(blocking, 'blocking finding')} in {directory}",
+            hint="the results are not ready to be used; a run without a record gets one when "
+            f"'{PROG} campaign run' is run again with the same file and output",
+        )
+    return 0
+
+
+def _check_rows(report: CheckReport) -> list[tuple[str, object]]:
+    """Lay a check report out as labelled values, each finding under its severity."""
+    hash_text = "unknown" if report.config_hash is None else report.config_hash[:12]
+    nouns = ("blocking", "limitations", "notes")
+    summary = ", ".join(
+        f"{len(report.of(severity))} {noun}"
+        for severity, noun in zip(SEVERITIES, nouns, strict=True)
+    )
+    rows: list[tuple[str, object]] = [
+        ("campaign", f"{report.campaign or 'unknown'} (config hash {hash_text})"),
+        ("runs", _tally(report.counts) if report.counts else "not counted"),
+        ("findings", summary),
+    ]
+    for finding in report.findings:
+        under = "" if finding.protocol is None else f" (protocol {finding.protocol})"
+        lines = [f"{finding.code}{under}: {finding.message}"]
+        lines += [f"- {item}" for item in finding.items[:_SHOWN]]
+        if len(finding.items) > _SHOWN:
+            lines.append(f"- and {len(finding.items) - _SHOWN} more; --json lists every item")
+        rows.append((finding.severity, "\n".join(lines)))
+    return rows
 
 
 def _replay(arguments: argparse.Namespace) -> int:

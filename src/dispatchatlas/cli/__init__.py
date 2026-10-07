@@ -15,7 +15,7 @@ arguments, calls the library, and prints the result. The commands::
         catalogs build NAME --output DIR [--seed N] [--overwrite]
         solve PROBLEM --solver ID [--set KEY=VALUE ...] [limits] [--seed N] [--output FILE]
         check PROBLEM [SCHEDULE]             validate a problem, and a schedule against it
-        campaign validate | estimate | run | replay
+        campaign validate | estimate | run | check | replay
         analyze CAMPAIGN_DIR --output DIR [analysis options]
         references [KEY ...] [--format text|bibtex]
 
