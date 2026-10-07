@@ -77,9 +77,9 @@ class SessionLog:
     When the ``dispatchatlas`` logger lets fewer records through than
     ``level`` asks for, the block lowers the level of the logger and gives
     every handler the records reach, on that logger and on the loggers above
-    it, a filter at the earlier level. Those handlers therefore show what
-    they showed before, and the level and the filters are as they were when
-    the block ends.
+    it, a filter at the level the logger had. Those handlers therefore show
+    inside the block what they show outside it, and the block leaves the
+    level and the filters as it found them.
 
     Args:
         level: Lowest level of the records the file receives.

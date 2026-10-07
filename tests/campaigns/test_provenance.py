@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
@@ -67,6 +68,16 @@ def _registry() -> SolverRegistry:
 
 
 REGISTRY = _registry()
+
+
+@pytest.fixture
+def quiet_library() -> Iterator[logging.Logger]:
+    """The library logger at the level WARNING, whatever other tests left on it."""
+    library = logging.getLogger("dispatchatlas")
+    level = library.level
+    library.setLevel(logging.WARNING)
+    yield library
+    library.setLevel(level)
 
 
 def _write_problem(path: Path, seed: int) -> None:
@@ -427,7 +438,7 @@ def test_the_identity_hash_covers_what_names_a_run(tmp_path: Path) -> None:
     assert verified(identity_hash=None, seed=record.seed + 1) == ()
 
 
-def test_records_and_sessions_written_without_the_new_fields_still_load(
+def test_records_and_sessions_that_lack_the_optional_fields_load_and_resume(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     campaign = tiny_campaign()
@@ -438,7 +449,7 @@ def test_records_and_sessions_written_without_the_new_fields_still_load(
         for key in ("on_changed_code", "on_changed_problem"):
             execution.pop(key)
 
-    def session_as_before(document: dict[str, Any]) -> None:
+    def stripped_session(document: dict[str, Any]) -> None:
         for key in ("changes", "load"):
             document.pop(key)
         without_policies(document["execution"])
@@ -453,7 +464,7 @@ def test_records_and_sessions_written_without_the_new_fields_still_load(
 
     for path in (summary.directory / RUNS).rglob("*.json"):
         _edit(path, lambda document: document.pop("identity_hash"))
-    _edit(summary.directory / "sessions" / "1.json", session_as_before)
+    _edit(summary.directory / "sessions" / "1.json", stripped_session)
     campaign_file = summary.directory / "campaign.json"
     _edit(campaign_file, lambda document: without_policies(document["campaign"]["execution"]))
 
@@ -478,11 +489,9 @@ def test_records_and_sessions_written_without_the_new_fields_still_load(
 
 
 def test_a_session_writes_a_log_file_with_time_stamps(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, quiet_library: logging.Logger
 ) -> None:
-    library = logging.getLogger("dispatchatlas")
-    level = library.level
-    assert library.getEffectiveLevel() == logging.WARNING
+    library, level = quiet_library, quiet_library.level
     campaign = tiny_campaign(solvers=(SolverSpec("test-chatty"),), replicates=1)
     summary = run(campaign, tmp_path, registry=REGISTRY)
     lines = (summary.directory / LOGS / "session-1.log").read_text().splitlines()
@@ -545,8 +554,10 @@ def test_a_worker_that_starts_on_other_source_is_reported_and_its_runs_noted(
         assert note.endswith("than the session (digest ffffffffffff)")
 
 
-def test_a_session_log_leaves_other_handlers_as_they_were(tmp_path: Path) -> None:
-    library = logging.getLogger("dispatchatlas")
+def test_a_session_log_leaves_other_handlers_as_they_were(
+    tmp_path: Path, quiet_library: logging.Logger
+) -> None:
+    library = quiet_library
     seen: list[logging.LogRecord] = []
 
     class Collector(logging.Handler):

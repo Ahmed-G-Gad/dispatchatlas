@@ -329,8 +329,7 @@ def session_changes(
     say what a session does about a difference, and the resolved worker
     count is compared when both sessions state the same ``workers``. The
     environments are compared value by value. A value the earlier record
-    does not state is not compared, so a record of a library that recorded
-    less differs in nothing it lacks; a package, a plugin, or a git checkout
+    does not state is not compared; a package, a plugin, or a git checkout
     that only one session has is a difference. The load of the machine is no
     part of the environment and is not compared.
 

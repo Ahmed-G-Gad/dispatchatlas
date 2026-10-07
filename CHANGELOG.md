@@ -185,5 +185,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which `RunRecord.verify` checks beside the result hash.
 - Every session writes `logs/session-<n>.log` in its campaign directory,
   with UTC time stamps, including what is logged inside worker processes
-  (`dispatchatlas.core.logs.SessionLog`). Standard error shows what it
-  showed before.
+  (`dispatchatlas.core.logs.SessionLog`). The handlers of the application
+  show the same lines with and without the file.
