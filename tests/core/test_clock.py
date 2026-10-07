@@ -99,11 +99,12 @@ def test_a_search_counts_its_time_and_its_limit_from_the_origin() -> None:
 def test_the_set_up_of_a_search_is_inside_its_elapsed_time() -> None:
     problem = random_problem(3)
     with clock_origin():
-        time.sleep(0.05)
+        time.sleep(0.3)
         search = Search(problem, StopCriteria(max_evaluations=1), 0, RandomSearch.info)
-        assert search.elapsed >= 0.05
+        assert search.elapsed >= 0.3
         assert search.remaining_time() is None
-    assert Search(problem, StopCriteria(max_evaluations=1), 0, RandomSearch.info).elapsed < 0.05
+    # Outside the block a search counts from its own creation, a moment ago.
+    assert Search(problem, StopCriteria(max_evaluations=1), 0, RandomSearch.info).elapsed < 0.3
 
 
 def test_the_clock_of_the_exact_solvers_starts_at_the_origin() -> None:

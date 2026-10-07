@@ -110,7 +110,10 @@ def test_records_interpreter_platform_hardware_and_packages(tmp_path: Path) -> N
     assert captured["packages"]["numpy"]
     if platform.system() == "Linux":
         assert captured["memory_bytes"] > 0
-    if platform.system() in ("Linux", "Windows"):
+    # Windows states the model, the sockets, and the cores. On Linux they are read from
+    # /proc/cpuinfo, which names them on x86 and not on every other architecture.
+    x86 = platform.machine().lower() in ("x86_64", "amd64", "i686", "i386")
+    if platform.system() == "Windows" or (platform.system() == "Linux" and x86):
         assert cpu["model"]
         assert cpu["cores"] >= cpu["sockets"] >= 1
     assert "working_directory" not in captured["git"]
