@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -37,9 +38,11 @@ from dispatchatlas.campaigns import (
     store,
 )
 from dispatchatlas.campaigns.estimation import estimate
+from dispatchatlas.campaigns.execution import Failure
 from dispatchatlas.campaigns.io import campaign_from_dict, campaign_to_dict
+from dispatchatlas.campaigns.planning import prepare
 from dispatchatlas.campaigns.records import ErrorKind, RunRecord, SessionRecord, SessionStatus
-from dispatchatlas.campaigns.runner import session_changes
+from dispatchatlas.campaigns.runner import session_changes, tasks_for
 from dispatchatlas.campaigns.store import (
     FAILURES,
     LOGS,
@@ -1227,17 +1230,45 @@ def test_a_solver_that_floods_the_log_is_killed_at_its_hard_limit(tmp_path: Path
         grace=0.5,
         log_level="info",
     )
-    begun = time.perf_counter()
     summary = run(campaign, tmp_path / "out", registry=REGISTRY)
-    elapsed = time.perf_counter() - begun
     (failure,) = read_failures(summary.directory)
     assert failure.error.kind is ErrorKind.TIMEOUT
     assert failure.provenance.hard_limit == 1.0
-    # The kill follows the limit closely, and the session does not wait for the solver.
+    # The kill follows the limit closely: the log records do not postpone it.
     assert 1.0 <= failure.provenance.wall_seconds < 2.0
-    assert elapsed < 7.0
     text = (summary.directory / LOGS / "session-1.log").read_text()
     assert " INFO dispatchatlas.tests.counter: [worker-1] iteration 0" in text
+
+
+def test_log_records_that_wait_in_the_pipe_do_not_postpone_a_kill(tmp_path: Path) -> None:
+    # The same solver, and a sink so slow that the worker's pipe holds log records
+    # whenever the supervisor looks at it, also when the hard limit of 1 second passes.
+    campaign = tiny_campaign(
+        "flood",
+        solvers=(SolverSpec("test-counter", None, {"marker": str(tmp_path), "seconds": 8.0}),),
+        protocols=(Protocol("timed", StopCriteria(time_limit=0.5)),),
+        instances=(FamilySource("flow-shop", (1,), {"jobs": 3, "machines": 2}),),
+        replicates=1,
+        backend="process",
+        workers=1,
+        timeout_factor=1.0,
+        grace=0.5,
+    )
+    prepared = prepare(campaign, registry=REGISTRY)
+    (task,) = tasks_for(prepared, prepared.plan.runs, campaign.execution, lambda _: 1)
+    assert task.hard_limit == 1.0
+    received: list[str] = []
+
+    def slow(worker: str, created: float, level: int, name: str, message: str) -> None:
+        time.sleep(0.002)
+        received.append(message)
+
+    backend = backends.ProcessBackend(1, log=slow, log_level=logging.INFO)
+    (result,) = backend.run(deque([task]))
+    assert isinstance(result, Failure)
+    assert result.error.kind is ErrorKind.TIMEOUT
+    assert 1.0 <= result.measurement.wall_seconds < 2.0
+    assert received[0] == "iteration 0"
 
 
 SCRIPT = '''
