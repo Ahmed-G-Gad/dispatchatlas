@@ -448,8 +448,9 @@ of one campaign.
                        and the runs that left or entered the plan
     runs/<solver>/<problem>/r<replicate:03d>-<protocol>.json
     failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.json
-    superseded/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
-                       files moved aside before their runs were repeated
+    superseded/runs/<solver>/<problem>/r<replicate:03d>-<protocol>.<run id>.json
+    superseded/failures/<solver>/<problem>/r<replicate:03d>-<protocol>.attempt-<n>.<run id>.json
+                       files moved aside when new records took their places
     logs/session-<n>.log  what each session logged, with UTC time stamps
     .lock              held while a runner works on the campaign
 ```
@@ -496,6 +497,15 @@ indentation, ASCII text, and a final newline.
   it, and a resume keeps it aside and runs its run again. The times an
   attempt measured, the solver-specific extras, and the provenance are
   under neither hash. A record without the field is not checked for it.
+- A record is also compared with **what the plan states for its run**: the
+  id and the digest of the problem, the name, the id, and the parameters of
+  the solver, the protocol, the replicate, and the seed. The comparison
+  needs no hash, so it holds for a record that states no identity hash as
+  well. `read_runs` refuses a record that states another value, and a
+  resume runs its run again. A seed that the run had in an earlier plan of
+  the directory is accepted, as the session records name it in
+  `plan_reseeded`; when a session record cannot be read, the earlier seeds
+  are not known and the seed is not compared.
 - A **failure record** (`dispatchatlas.failure/1`) holds the error, its kind
   (`exception`, `timeout`, `startup`, `worker-exit`, or `transfer`), and
   whether it is terminal or recoverable. It says whether the solve had begun
@@ -521,15 +531,25 @@ indentation, ASCII text, and a final newline.
   the commit of a checkout, the commit of the version-control URL an
   installed copy came from, or the hash of an archive; it is null for a
   copy built from a local directory, whose record does not say which state
-  was built, and the source digest identifies that copy. `plugins` states
+  was built, and the source digest identifies that copy. When the package
+  that runs is not the one the installed distribution provides, such as a
+  copy that comes first on the module search path, the installer's record
+  does not describe it: `origin` is `path`, the version is null, and the
+  revision is that of the copy's checkout or null. `plugins` states
   the same facts for every distribution that provides a solver or
   benchmark entry point. `git` states, for the source and for the working
   directory when either is a checkout, the `commit`, whether the checkout
   is `dirty` (a tracked file differs from the commit, or there is an
   untracked file that git does not ignore), the number of `untracked`
   files, and a `digest` of the uncommitted changes, so two different sets
-  of edits of one commit have different digests; the directory of the
-  campaign is left out of the state of the working directory. The
+  of edits of one commit have different digests; an editable plugin states
+  the same for its checkout. The directory of the campaign is left out of
+  every one of these states, so results kept inside a checkout are no
+  change of its code. Untracked files enter the digest by their content up
+  to 16 MiB in all, in path order; a file past that total enters by its
+  size and modification time, and more than 1000 untracked files enter by
+  their paths only. The queries do not write to the checkout: git's index
+  stays as it is. The
   processor is recorded by its model name, with its `sockets` and physical
   `cores` where the system gives them. The record holds
   no host or user name. Under `load` it holds two samples of the machine,
@@ -549,24 +569,55 @@ indentation, ASCII text, and a final newline.
 `read_campaign`, `read_plan`, `read_runs`, `read_failures`, and
 `read_sessions` read these files back as typed records. `read_runs` returns
 the records of the plan, and warns about every other file under `runs/`:
-records of runs the plan does not hold, files that cannot be read, and files
-that are no records. `read_strays` returns those files. No session replaces
-or removes them.
+records of runs the plan does not hold, files that cannot be read (one that
+is not UTF-8 text or not JSON, one that is no run record, one the system
+does not let read), and files that are no records. `read_strays` returns
+those files. No session replaces or removes them.
 
-The log file of a session holds every record of level `INFO` or higher that
-the library logs while the session runs, one per line, with its UTC time to
-the millisecond, its level, and its logger. What a solver or the engine logs
-inside a worker process is in the file too, marked with the name of the
-worker, when it goes through `dispatchatlas.core.logs.get_logger`. The file
-is written beside whatever the application shows: the lines on standard
-error are the same with and without it.
+The log file of a session holds one record per line, with its UTC time to
+the millisecond, its level, and its logger:
+
+- what the engine itself logs while the session runs, from the level
+  `INFO`: the start of the session, its progress, its warnings, and its
+  summary;
+- what the other loggers of the library let through, among them those of
+  solvers and plugins that log through
+  `dispatchatlas.core.logs.get_logger`: `WARNING` and higher unless the
+  application lowered a level. A worker process starts with the default
+  level, so it sends `WARNING` and higher, each line marked with the name
+  of the worker.
+
+The execution key `log_level` asks for more: `"info"` or `"debug"` lowers
+the library's loggers to that level for the session, in the calling process
+and in every worker; the default `"inherit"` leaves them as they are. The
+file is written beside whatever the application shows. Under every setting
+the lines on standard error are the same with and without it, in the calling
+process and in the workers, for the library's loggers and for the
+application's own. Only a handler that is attached while a session runs is
+not held to that: it receives what the lowered loggers record.
+
+Logging inside a run costs the run time. A record below the level of its
+logger is not made, and the call that would log it costs next to nothing,
+so a solver that logs details in its loop is not slowed under the default
+setting. A record that is made costs its making, its formatting, and a
+buffered write or, in a worker, a place in a queue: tens of microseconds
+each. A solver that logs every iteration of a short loop therefore does a
+fraction of its work in the same time limit once `log_level` lets those
+records through, and its results under a time limit are not comparable
+with those of a session that did not. The thread that logs in a worker
+never waits for the calling process: the queue holds 10,000 records, a
+record beyond them is dropped, and the log states how many were. The log
+file is buffered, so the lines of a burst below `WARNING` reach the disk
+with the next warning, with the next record after a second, or when the
+session ends. It grows to about 64 MiB (2^26 characters) at most: later
+records are counted, and its last line states how many were left out.
 
 ## Resuming
 
 Running `campaign run` again with the same file and output resumes the
 campaign. A record already written is kept when it belongs to the same config
-hash and still matches its result hash and its identity hash, and only the
-runs that are neither
+hash, still matches its result hash and its identity hash, and states what
+the plan states for its run, and only the runs that are neither
 completed nor settled by failures are attempted. An interrupted session
 therefore loses at most the runs that were in progress.
 
@@ -590,24 +641,44 @@ therefore loses at most the runs that were in progress.
   With the execution key `on_changed_code = "refuse"`, a session whose
   code differs is refused before it writes anything; the default `"warn"`
   resumes. A difference of execution settings or of the machine is never
-  refused. Keep results out of the git state of the working directory, by
-  an ignore rule or an output directory outside the checkout, or the
-  results of other campaigns change it between sessions.
+  refused. The directory of the campaign itself is left out of every git
+  state, so it may lie inside the working directory, the library's
+  checkout, or the checkout of an editable plugin. Keep other files that
+  change between sessions, such as the results of other campaigns, out of
+  those states, by an ignore rule or a place outside the checkouts.
 - A worker process that starts after a source file of the library changed
   runs on other code than the session recorded. The runner warns about
   such a worker, and every run it completes carries a note with both
   source digests.
 - A file at the path of a planned run that is not the valid record of that
-  run is never replaced: before the run is repeated, the file moves to
-  `superseded/`, under the same solver and problem folders, with the run
-  id it states before `.json`. This holds for a record made on another
-  version of its problem, whose content changed under the same id, for a
-  record that no longer matches one of its hashes, and for a file that
-  cannot be read. With the execution key `on_changed_problem = "refuse"`,
-  a directory that holds a record of another version of a problem is
-  refused before anything moves; the default `"rerun"` keeps the record
-  aside and runs its run again. `--fresh` also discards `superseded/` and
-  `logs/`.
+  run does not count, and is never replaced. This holds for a record made
+  on another version of its problem, whose content changed under the same
+  id, for a record that no longer matches one of its hashes or the plan,
+  and for a file that cannot be read. The session names such files in a
+  warning when it starts and runs their runs again. Each file stays where
+  it is until its run is repeated, and moves to `superseded/` when the
+  repeated run gets its first record, of its result or of a failed
+  attempt: under `runs/` and the same solver and problem folders, with the
+  run id it states before `.json`. A session that repeats no run, because
+  of `--max-runs` or an interruption, moves nothing, and when the problem
+  is what it was again, its records count again without a rerun. The
+  record of a failed attempt on another version of a problem is kept the
+  same way, under `superseded/failures/`, when a new attempt takes its
+  path.
+- A record under `superseded/` that is the valid record of a planned run
+  again, because the problem was restored after some of its runs were
+  repeated, moves back to its path when a session starts, and the record
+  that stood there moves aside in its place. Nothing else reads
+  `superseded/`, and nothing replaces a file in it. `campaign estimate`
+  counts such a run as complete and moves nothing.
+- A file that cannot be moved aside, for example because another program
+  holds it open, ends the session as failed with an error that names the
+  file. The new record is not written, the file stays, and the next
+  session attempts the run again.
+- With the execution key `on_changed_problem = "refuse"`, a directory that
+  holds a record, or the record of a failed attempt, of another version of
+  a problem is refused before anything moves; the default `"rerun"` runs
+  the runs again. `--fresh` also discards `superseded/` and `logs/`.
 - A directory that holds results of another configuration is refused;
   `--fresh` discards its records first. Give a changed experiment a new `id`
   to keep both.

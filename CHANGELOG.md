@@ -165,7 +165,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution with its version and revision (`plugins`), a git state that
   counts untracked files and digests the uncommitted changes (`dirty`,
   `untracked`, `digest`), and the processor's model name, sockets, and
-  cores, on Windows from the registry. A session record holds two samples
+  cores, on Windows from the registry. A package that the installed
+  distribution does not provide, such as a copy first on the module search
+  path, is recorded with the origin `path`. The git states of the working
+  directory, of the library's checkout, and of every editable plugin leave
+  the campaign's directory out, are read without writing git's index, and
+  read at most 16 MiB of untracked files. A session record holds two samples
   of the machine's load, before its first run and after its last (`load`).
 - A session compares its execution settings and environment with those of
   the last recorded session of its directory, warns with each difference,
@@ -174,16 +179,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when it is `"refuse"`. A worker process that starts on other library
   source than its session is warned about, and its runs carry a note.
 - A file at the path of a planned run that is no valid record of the run
-  moves under `superseded/` before the run is repeated: a record made on
-  another version of its problem, one that fails a hash, or an unreadable
-  file. The execution key `on_changed_problem`, `"rerun"` by default,
-  refuses a directory with a record of another problem version when it is
-  `"refuse"`. `read_runs` warns about the other files under `runs/`, which
-  `read_strays` lists.
+  is never replaced: a record made on another version of its problem, one
+  that fails a hash or differs from the plan, or an unreadable file. It
+  moves under `superseded/` when the new record of its run is written, so
+  a session that repeats no run moves nothing and a restored problem needs
+  no rerun; the record of a failed attempt is kept the same way. A record
+  under `superseded/` that is valid for a planned run again moves back
+  when a session starts. The execution key `on_changed_problem`, `"rerun"`
+  by default, refuses a directory with a record of another problem version
+  when it is `"refuse"`. `read_runs` warns about the other files under
+  `runs/`, which `read_strays` lists, among them files that cannot be read.
 - A run record holds `identity_hash`, a hash of the problem digest, the
   solver and its parameters, the protocol, the replicate, and the seed,
-  which `RunRecord.verify` checks beside the result hash.
+  which `RunRecord.verify` checks beside the result hash. The store and
+  `read_runs` also compare every record with what the plan states for its
+  run, which needs no hash.
 - Every session writes `logs/session-<n>.log` in its campaign directory,
-  with UTC time stamps, including what is logged inside worker processes
-  (`dispatchatlas.core.logs.SessionLog`). The handlers of the application
-  show the same lines with and without the file.
+  with UTC time stamps (`dispatchatlas.core.logs.SessionLog`): the engine's
+  records from `INFO`, and what the other loggers of the library let
+  through, in the calling process and in the worker processes. The
+  execution key `log_level`, `"inherit"` by default, lowers the library's
+  loggers to `"info"` or `"debug"` for a session
+  (`dispatchatlas.core.logs.Lowered`). The handlers of the application
+  show the same lines with and without the file. A worker hands its
+  records over without waiting, the file is buffered and limited in size,
+  and dropped records are counted in it.

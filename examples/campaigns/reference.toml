@@ -124,9 +124,16 @@ on_changed_code = "warn"  # a session on other code than the last recorded
                           # it; "refuse" ends the session (default "warn")
 on_changed_problem = "rerun"
                           # a record made on another version of its
-                          # problem: "rerun" keeps it under superseded/
-                          # and runs its run again; "refuse" ends the
-                          # session (default "rerun")
+                          # problem: "rerun" runs its run again and keeps
+                          # the record under superseded/; "refuse" ends
+                          # the session (default "rerun")
+log_level = "inherit"     # what the session log holds beside the engine's
+                          # own lines: "inherit": what the library's loggers
+                          # let through, warnings unless the application
+                          # lowered a level; "info" or "debug": everything
+                          # from that level, which costs a solver that logs
+                          # in its loop time inside its time limit
+                          # (default "inherit")
 
 # ---------------------------------------------------------------- metadata
 # Free annotations, kept with the results; not part of the config hash.
