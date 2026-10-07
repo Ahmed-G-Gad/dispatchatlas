@@ -43,6 +43,7 @@ __all__ = [
     "LOAD_SAMPLE_SECONDS",
     "PACKAGES",
     "PLUGIN_GROUPS",
+    "UNTRACKED_BYTES",
     "UNTRACKED_HASHED",
     "capture_environment",
     "distribution_state",
@@ -67,11 +68,19 @@ LOAD_SAMPLE_SECONDS = 0.1
 UNTRACKED_HASHED = 1000
 """Most untracked files whose content enters the digest of a git state."""
 
+UNTRACKED_BYTES = 1 << 24
+"""Most bytes of untracked files that are read for the digest of a git state."""
+
 _GIT_TIMEOUT = 10.0
 """Seconds a git query may take before it counts as unanswered."""
 
 _CHUNK = 1 << 20
 """Bytes read at a time from a file that is hashed."""
+
+_STAT_FIELDS = 8
+"""Leading fields of a ``cpu`` line of ``/proc/stat`` that partition the processor time: user,
+nice, system, idle, iowait, irq, softirq, and steal. The guest fields after them repeat time
+that user and nice already count."""
 
 
 def capture_environment(
@@ -82,9 +91,11 @@ def capture_environment(
     Args:
         directory: The working directory whose git state to record.
             Defaults to the current directory.
-        exclude: Directories left out of the git state of the working
-            directory, such as the directory a campaign writes its results
-            to, whose files change with every session.
+        exclude: Directories left out of every git state: that of the
+            working directory, of the DispatchAtlas source, and of the
+            checkout of every editable plugin. The directory a campaign
+            writes its results to is one, since its files change with
+            every session.
 
     Returns:
         A JSON-ready dictionary with the keys ``python``, ``platform``,
@@ -105,11 +116,17 @@ def capture_environment(
         of them instead.
 
         ``library`` describes the DispatchAtlas distribution as
-        :func:`distribution_state` does, with two differences: its
+        :func:`distribution_state` does, with three differences. Its
         ``revision`` is the commit of the source when the source files are
-        tracked in a git checkout, and ``source_digest`` is
-        :func:`source_digest` of the package. ``plugins`` maps the name of
-        every distribution that provides an entry point of
+        tracked in a git checkout. ``source_digest`` is
+        :func:`source_digest` of the package. And when the package that
+        runs is not the one the installed distribution provides, for
+        example a copy that comes first on the module search path, the
+        installer's record does not describe it: ``origin`` is then
+        ``"path"``, and ``version``, ``editable``, and, outside a git
+        checkout, ``revision`` are ``None``, while ``packages`` still
+        states the version of the installed distribution. ``plugins`` maps
+        the name of every distribution that provides an entry point of
         :data:`PLUGIN_GROUPS` to its :func:`distribution_state`.
 
         ``git`` holds the :func:`git_state` of the DispatchAtlas source
@@ -119,12 +136,10 @@ def capture_environment(
         checkouts are left out.
     """
     source = Path(__file__).resolve().parent.parent
-    library, _ = _installed(LIBRARY)
-    if library is None:
-        library = {"version": None, "origin": None, "editable": None, "revision": None}
+    library = _library_state(source)
     git: dict[str, Any] = {}
     if _git(["ls-files", "--error-unmatch", "__init__.py"], source) is not None:
-        checkout = git_state(source)
+        checkout = git_state(source, exclude=exclude)
         if checkout is not None:
             git[LIBRARY] = checkout
             library["revision"] = checkout["commit"]
@@ -157,7 +172,7 @@ def capture_environment(
         "memory_bytes": _memory_bytes(),
         "packages": _package_versions(),
         "library": library,
-        "plugins": plugin_states(),
+        "plugins": plugin_states(exclude=exclude),
         "git": git,
     }
 
@@ -165,7 +180,7 @@ def capture_environment(
 # ------------------------------------------------------------ distributions
 
 
-def distribution_state(name: str) -> dict[str, Any] | None:
+def distribution_state(name: str, *, exclude: Sequence[str | Path] = ()) -> dict[str, Any] | None:
     """Return the version of an installed distribution and where it was installed from.
 
     The installer's record of a direct installation (``direct_url.json`` in
@@ -173,6 +188,8 @@ def distribution_state(name: str) -> dict[str, Any] | None:
 
     Args:
         name: Name of the distribution.
+        exclude: Directories left out of the git state of an editable
+            distribution's checkout.
 
     Returns:
         ``None`` when no such distribution is installed. Otherwise a
@@ -188,20 +205,28 @@ def distribution_state(name: str) -> dict[str, Any] | None:
         revision of a copy built from a local directory is ``None``: the
         record does not say which state of the directory was built.
     """
-    state, folder = _installed(name)
-    if state is not None and folder is not None:
-        checkout = git_state(folder)
+    try:
+        found = distribution(name)
+    except PackageNotFoundError:
+        return None
+    state, folder = _described(found)
+    if folder is not None:
+        checkout = git_state(folder, exclude=exclude)
         if checkout is not None:
             state["revision"] = checkout["commit"]
             state["git"] = checkout
     return state
 
 
-def plugin_states() -> dict[str, dict[str, Any]]:
+def plugin_states(*, exclude: Sequence[str | Path] = ()) -> dict[str, dict[str, Any]]:
     """Return the :func:`distribution_state` of every installed plugin distribution, by name.
 
     A plugin distribution is one that provides an entry point of
     :data:`PLUGIN_GROUPS`.
+
+    Args:
+        exclude: Directories left out of the git state of every editable
+            plugin's checkout.
     """
     names: set[str] = set()
     for group in PLUGIN_GROUPS:
@@ -211,7 +236,7 @@ def plugin_states() -> dict[str, dict[str, Any]]:
                 names.add(provider.name)
     states: dict[str, dict[str, Any]] = {}
     for name in sorted(names):
-        state = distribution_state(name)
+        state = distribution_state(name, exclude=exclude)
         if state is not None:
             states[name] = state
     return states
@@ -249,12 +274,42 @@ def source_digest(package: str | Path | None = None) -> str | None:
     return hasher.hexdigest()
 
 
-def _installed(name: str) -> tuple[dict[str, Any] | None, Path | None]:
-    """Return the state of a distribution without its git state, and its editable directory."""
+def _library_state(package: Path) -> dict[str, Any]:
+    """Return the state of the DispatchAtlas distribution, as far as it describes ``package``.
+
+    ``package`` is the directory of the package that runs. The installer's
+    record describes it only when the installed distribution provides that
+    directory; for any other directory the origin is ``"path"`` and the
+    other facts are unknown.
+    """
+    unknown = {"version": None, "origin": None, "editable": None, "revision": None}
     try:
-        found = distribution(name)
+        found = distribution(LIBRARY)
     except PackageNotFoundError:
-        return None, None
+        return unknown
+    state, folder = _described(found)
+    if not _provides(found, folder, package):
+        return {**unknown, "origin": "path"}
+    return state
+
+
+def _provides(found: Distribution, folder: Path | None, package: Path) -> bool:
+    """Return whether a distribution provides the package directory ``package``.
+
+    An editable distribution provides the packages under the directory it
+    was installed from, ``folder``; any other provides the package
+    directory among its installed files.
+    """
+    try:
+        if folder is not None:
+            return package.resolve().is_relative_to(folder.resolve())
+        return Path(str(found.locate_file(package.name))).samefile(package)
+    except (OSError, ValueError):
+        return False
+
+
+def _described(found: Distribution) -> tuple[dict[str, Any], Path | None]:
+    """Return the state of a distribution without its git state, and its editable directory."""
     state: dict[str, Any] = {
         "version": found.version,
         "origin": "index",
@@ -332,11 +387,17 @@ def git_state(directory: Path, *, exclude: Sequence[str | Path] = ()) -> dict[st
         the number of such untracked files; and ``digest``, a SHA-256
         digest of the uncommitted changes: the status of every changed
         path, the difference of the tracked files from the commit, and the
-        content of the untracked files, or only their paths when they are
-        more than :data:`UNTRACKED_HASHED`. Two checkouts of one commit with
+        content of the untracked files. Two checkouts of one commit with
         different uncommitted changes therefore have different digests. The
         digest of a checkout that is not dirty is ``None``, and ``dirty``,
         ``untracked``, and ``digest`` are ``None`` when git does not answer.
+
+    The untracked files are read in path order, at most
+    :data:`UNTRACKED_BYTES` bytes in all: a file that would pass that total
+    enters the digest by its path, its size, and its modification time
+    instead of its content. More than :data:`UNTRACKED_HASHED` untracked
+    files enter by their paths only. The queries leave the checkout as it
+    is: git writes neither its index nor any other file for them.
     """
     answer = _git(["rev-parse", "--show-toplevel", "HEAD"], directory)
     lines = [] if answer is None else answer.decode("utf-8", "replace").splitlines()
@@ -359,8 +420,10 @@ def git_state(directory: Path, *, exclude: Sequence[str | Path] = ()) -> dict[st
             return unknown
         hasher.update(difference)
     if len(untracked) <= UNTRACKED_HASHED:
+        budget = UNTRACKED_BYTES
         for name in sorted(untracked):
-            hasher.update(name + b"\0" + _file_digest(top / os.fsdecode(name)))
+            entry, budget = _untracked_entry(top / os.fsdecode(name), budget)
+            hasher.update(name + b"\0" + entry)
     return {
         "commit": commit,
         "dirty": True,
@@ -380,6 +443,22 @@ def _excluded(top: Path, exclude: Sequence[str | Path]) -> list[str]:
     return specs
 
 
+def _untracked_entry(path: Path, budget: int) -> tuple[bytes, int]:
+    """Return what an untracked file adds to a digest, and the bytes still to be read.
+
+    A file of at most ``budget`` bytes adds the digest of its content and
+    takes its size from the budget. A larger one adds its size and its
+    modification time, and one that cannot be examined the digest of nothing.
+    """
+    try:
+        found = path.stat()
+    except OSError:
+        return hashlib.sha256().digest(), budget
+    if found.st_size > budget:
+        return f"size {found.st_size} modified {found.st_mtime_ns}".encode("ascii"), budget
+    return _file_digest(path), budget - found.st_size
+
+
 def _file_digest(path: Path) -> bytes:
     """Return the SHA-256 digest of a file, or of nothing when it cannot be read."""
     hasher = hashlib.sha256()
@@ -390,7 +469,11 @@ def _file_digest(path: Path) -> bytes:
 
 
 def _git(arguments: list[str], directory: Path) -> bytes | None:
-    """Run a read-only git query and return its output, or ``None`` if it fails."""
+    """Run a git query and return its output, or ``None`` if it fails.
+
+    The query runs with git's optional locks off, so a command that
+    refreshes the index, such as ``status``, does not write it back.
+    """
     command = ["git", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", *arguments]
     try:
         completed = subprocess.run(
@@ -399,6 +482,7 @@ def _git(arguments: list[str], directory: Path) -> bytes | None:
             capture_output=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -458,14 +542,26 @@ def _processor_times() -> tuple[float, float] | None:
 def _stat_processor_times() -> tuple[float, float] | None:
     """Return the idle and the total processor time from the first line of ``/proc/stat``."""
     try:
-        fields = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0].split()
+        line = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    return _stat_times(line)
+
+
+def _stat_times(line: str) -> tuple[float, float] | None:
+    """Return the idle and the total processor time a ``cpu`` line of ``/proc/stat`` states.
+
+    The idle time includes the time spent waiting for input and output.
+    """
+    fields = line.split()
+    try:
         values = [float(value) for value in fields[1:]]
-    except (OSError, ValueError, IndexError):
+    except ValueError:
         return None
-    if fields[0] != "cpu" or len(values) < 4:  # user, nice, system, idle
+    if not fields or fields[0] != "cpu" or len(values) < 4:  # user, nice, system, idle
         return None
-    waiting = values[4] if len(values) > 4 else 0.0  # the time spent waiting for input
-    return values[3] + waiting, sum(values)
+    waiting = values[4] if len(values) > 4 else 0.0
+    return values[3] + waiting, sum(values[:_STAT_FIELDS])
 
 
 def _windows_processor_times() -> tuple[float, float] | None:  # pragma: no cover - Windows only

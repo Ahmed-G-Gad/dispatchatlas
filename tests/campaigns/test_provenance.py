@@ -213,9 +213,9 @@ def test_a_resume_after_a_change_of_a_plugin_version_names_it_and_can_refuse(
         return {"solver-pack": state}
 
     campaign = tiny_campaign()
-    monkeypatch.setattr(environment, "plugin_states", lambda: installed("1.0"))
+    monkeypatch.setattr(environment, "plugin_states", lambda exclude=(): installed("1.0"))
     first = run(campaign, tmp_path, registry=REGISTRY, max_runs=4)
-    monkeypatch.setattr(environment, "plugin_states", lambda: installed("1.1"))
+    monkeypatch.setattr(environment, "plugin_states", lambda exclude=(): installed("1.1"))
     strict = replace(campaign, execution=replace(campaign.execution, on_changed_code="refuse"))
     with pytest.raises(
         ConfigError, match=r"environment\.plugins\.solver-pack\.version 1\.0 -> 1\.1"
@@ -229,7 +229,7 @@ def test_a_resume_after_a_change_of_a_plugin_version_names_it_and_can_refuse(
     }
     assert "environment.plugins.solver-pack.version 1.0 -> 1.1" in caplog.text
     # A plugin that is no longer installed differs as a whole.
-    monkeypatch.setattr(environment, "plugin_states", dict)
+    monkeypatch.setattr(environment, "plugin_states", lambda exclude=(): {})
     run(campaign, tmp_path, registry=REGISTRY, max_runs=1)
     assert _fields(read_sessions(first.directory)[2]) == {
         "environment.plugins.solver-pack": (installed("1.1")["solver-pack"], None, "code"),

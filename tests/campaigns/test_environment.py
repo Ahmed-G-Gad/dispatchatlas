@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
@@ -23,24 +24,42 @@ from dispatchatlas.campaigns.environment import (
     sample_load,
     source_digest,
 )
+from dispatchatlas.core import ConfigError
 from tests.campaigns.solvers import registry, tiny_campaign
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
+PACKAGE = Path(environment.__file__).resolve().parent.parent
+"""The directory of the package that runs."""
+
 
 class _Distribution:
-    """An installed distribution with a scripted installer record."""
+    """An installed distribution with a scripted installer record.
 
-    def __init__(self, name: str, version: str, record: dict[str, Any] | None = None) -> None:
+    Its files are installed under ``location``, which defaults to the
+    directory that holds the package that runs.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        record: dict[str, Any] | None = None,
+        location: Path | None = None,
+    ) -> None:
         self.name = name
         self.version = version
         self._record = record
+        self._location = PACKAGE.parent if location is None else location
 
     def read_text(self, filename: str) -> str | None:
         assert filename == "direct_url.json"
         return None if self._record is None else json.dumps(self._record)
+
+    def locate_file(self, path: str) -> Path:
+        return self._location / path
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, *distributions: _Distribution) -> None:
@@ -186,6 +205,133 @@ def test_many_untracked_files_enter_the_digest_by_path_only(
     assert git_state(tmp_path)["digest"] != before["digest"]  # type: ignore[index]
 
 
+@needs_git
+def test_an_untracked_file_past_the_byte_budget_enters_by_size_and_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repository(tmp_path)
+    monkeypatch.setattr(environment, "UNTRACKED_BYTES", 8)
+    small, large = tmp_path / "a.txt", tmp_path / "b.bin"
+    small.write_bytes(b"small")  # 5 of the 8 bytes
+    large.write_bytes(b"0123456789")  # more than the 3 bytes that remain
+    read: list[str] = []
+    digest = environment._file_digest
+
+    def reading(path: Path) -> bytes:
+        read.append(path.name)
+        return digest(path)
+
+    monkeypatch.setattr(environment, "_file_digest", reading)
+    before = git_state(tmp_path)
+    assert before is not None
+    assert read == ["a.txt"]
+    # Other content of the same size and time is not seen; another time is.
+    stamp = large.stat()
+    large.write_bytes(b"9876543210")
+    os.utime(large, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert git_state(tmp_path) == before
+    os.utime(large, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 2_000_000_000))
+    assert git_state(tmp_path)["digest"] != before["digest"]  # type: ignore[index]
+    os.utime(large, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    large.write_bytes(b"01234567890")
+    os.utime(large, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert git_state(tmp_path)["digest"] != before["digest"]  # type: ignore[index]
+    # The content of the file within the budget is.
+    large.write_bytes(b"9876543210")
+    os.utime(large, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    small.write_bytes(b"SMALL")
+    assert git_state(tmp_path)["digest"] != before["digest"]  # type: ignore[index]
+
+
+@needs_git
+def test_a_git_state_does_not_write_the_index(tmp_path: Path) -> None:
+    _repository(tmp_path)
+    index = tmp_path / ".git" / "index"
+    # A tracked file with another time and the same content: git refreshes its index.
+    later = time.time() + 5
+    os.utime(tmp_path / "notes.txt", (later, later))
+    before = index.read_bytes()
+    state = git_state(tmp_path)
+    assert state is not None
+    assert state["dirty"] is False
+    assert index.read_bytes() == before
+    (tmp_path / "new.txt").write_text("untracked\n")
+    (tmp_path / "notes.txt").write_text("changed\n")
+    assert git_state(tmp_path)["dirty"] is True  # type: ignore[index]
+    assert index.read_bytes() == before
+
+
+@needs_git
+def test_an_excluded_directory_is_left_out_of_the_library_and_plugin_checkouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library, plugin = _checkouts(tmp_path, monkeypatch)
+    results = [library / "out" / "campaign", plugin / "out" / "campaign"]
+    for folder in results:
+        folder.mkdir(parents=True)
+        (folder / "record.json").write_text("{}")
+    counted = capture_environment(tmp_path)
+    assert counted["git"]["dispatchatlas"]["untracked"] == 1
+    assert counted["plugins"]["plugin"]["git"]["untracked"] == 1
+    left_out = capture_environment(tmp_path, exclude=results)
+    for state in (left_out["git"]["dispatchatlas"], left_out["plugins"]["plugin"]["git"]):
+        assert (state["dirty"], state["untracked"], state["digest"]) == (False, 0, None)
+    assert plugin_states(exclude=results) == left_out["plugins"]
+    assert distribution_state("plugin", exclude=results) == left_out["plugins"]["plugin"]
+
+
+@needs_git
+def test_a_campaign_directory_inside_the_checkouts_is_no_change_of_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One repository holds the library source, an editable plugin, and the results.
+    repository, _ = _checkouts(tmp_path, monkeypatch, plugin="library")
+    monkeypatch.chdir(repository)
+    campaign = tiny_campaign(on_changed_code="refuse")
+    for _ in range(3):
+        summary = run(campaign, repository / "out", registry=registry(), max_runs=4)
+    sessions = read_sessions(summary.directory)
+    assert [session.changes for session in sessions] == [(), (), ()]
+    for session in sessions:
+        states = session.environment["git"]
+        checkouts = (
+            states["dispatchatlas"],
+            states["working_directory"],
+            session.environment["plugins"]["plugin"]["git"],
+        )
+        assert [state["dirty"] for state in checkouts] == [False, False, False]
+    # A file beside the campaign directory is a change of the code.
+    (repository / "out" / "notes.txt").write_text("not a result\n")
+    with pytest.raises(ConfigError, match=r"environment\.git\.dispatchatlas\.untracked 0 -> 1"):
+        run(campaign, repository / "out", registry=registry())
+
+
+def _checkouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugin: str = "plugin"
+) -> tuple[Path, Path]:
+    """Make the library source and an editable plugin git checkouts under ``tmp_path``.
+
+    The library source becomes ``library/src/dispatchatlas`` and the plugin
+    is installed from the directory ``plugin``, which may be ``library``.
+    """
+    library = tmp_path / "library"
+    git = _repository(library)
+    package = library / "src" / "dispatchatlas"
+    (package / "campaigns").mkdir(parents=True)
+    for module in (package / "__init__.py", package / "campaigns" / "environment.py"):
+        module.write_text("")
+    git("add", "src")
+    git("commit", "-q", "-m", "package")
+    monkeypatch.setattr(environment, "__file__", str(package / "campaigns" / "environment.py"))
+    if plugin != "library":
+        _repository(tmp_path / plugin)
+    record = {"url": (tmp_path / plugin).as_uri(), "dir_info": {"editable": True}}
+    _install(monkeypatch, _Distribution("plugin", "0.3", record))
+    entry = SimpleNamespace(dist=SimpleNamespace(name="plugin"))
+    monkeypatch.setattr(environment, "entry_points", lambda group: [entry])
+    return library, tmp_path / plugin
+
+
 def test_the_origin_of_an_installed_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
     vcs = {"url": "https://example.org/x.git", "vcs_info": {"vcs": "git", "commit_id": COMMIT}}
     archive = {"url": "https://example.org/x.whl", "archive_info": {"hashes": {"sha256": "ab12"}}}
@@ -262,6 +408,43 @@ def test_an_installed_copy_of_the_library_records_the_revision_it_was_installed_
     assert captured["packages"] == {"dispatchatlas": "0.1.0"}
 
 
+def test_a_package_the_installed_distribution_does_not_provide_has_the_origin_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(environment, "_git", lambda arguments, directory: None)
+    unknown = {
+        "version": None,
+        "origin": "path",
+        "editable": None,
+        "revision": None,
+        "source_digest": source_digest(),
+    }
+    # The installed distribution is another copy: the package that runs is not its file.
+    record = {"url": "https://example.org/d.git", "vcs_info": {"vcs": "git", "commit_id": COMMIT}}
+    elsewhere = tmp_path / "site-packages"
+    (elsewhere / "dispatchatlas").mkdir(parents=True)
+    _install(monkeypatch, _Distribution("dispatchatlas", "9.9.9", record, location=elsewhere))
+    captured = capture_environment(tmp_path)
+    assert captured["library"] == unknown
+    assert captured["packages"] == {"dispatchatlas": "9.9.9"}
+    missing = _Distribution("dispatchatlas", "9.9.9", record, location=tmp_path / "nowhere")
+    _install(monkeypatch, missing)
+    assert capture_environment(tmp_path)["library"] == unknown
+    # An editable distribution provides the packages under its directory, and no other.
+    other = {"url": (tmp_path / "another-checkout").as_uri(), "dir_info": {"editable": True}}
+    _install(monkeypatch, _Distribution("dispatchatlas", "9.9.9", other, location=elsewhere))
+    assert capture_environment(tmp_path)["library"] == unknown
+    this = {"url": PACKAGE.parent.as_uri(), "dir_info": {"editable": True}}
+    _install(monkeypatch, _Distribution("dispatchatlas", "0.1.0", this, location=elsewhere))
+    assert capture_environment(tmp_path)["library"] == {
+        "version": "0.1.0",
+        "origin": "directory",
+        "editable": True,
+        "revision": None,
+        "source_digest": source_digest(),
+    }
+
+
 @needs_git
 def test_a_checkout_of_the_library_records_the_revision_of_its_source(tmp_path: Path) -> None:
     source = Path(environment.__file__).resolve().parent.parent
@@ -324,6 +507,19 @@ def test_a_load_sample_states_the_busy_share_of_the_processors() -> None:
         assert sample["load_average"] is None
     else:
         assert sample["load_average"] >= 0.0
+
+
+def test_the_processor_time_of_a_guest_is_counted_once() -> None:
+    # user nice system idle iowait irq softirq steal guest guest_nice; the kernel
+    # counts guest time in user time as well. Between the readings the machine is
+    # busy for 100 ticks, 80 of them in a guest, and idle for 100.
+    first = environment._stat_times("cpu  1000 0 500 8000 100 0 50 0 400 0")
+    second = environment._stat_times("cpu  1100 0 500 8100 100 0 50 0 480 0")
+    assert first == (8100.0, 9650.0)
+    assert second == (8200.0, 9850.0)
+    assert environment._stat_times("cpu 1 2 3 4") == (4.0, 10.0)
+    for line in ("", "cpu 1 2 3", "cpu0 1 2 3 4 5", "cpu 1 2 three 4"):
+        assert environment._stat_times(line) is None
 
 
 def test_every_session_records_its_environment(tmp_path: Path) -> None:
