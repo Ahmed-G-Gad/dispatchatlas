@@ -1234,8 +1234,10 @@ def test_a_solver_that_floods_the_log_is_killed_at_its_hard_limit(tmp_path: Path
     (failure,) = read_failures(summary.directory)
     assert failure.error.kind is ErrorKind.TIMEOUT
     assert failure.provenance.hard_limit == 1.0
-    # The kill follows the limit closely: the log records do not postpone it.
-    assert 1.0 <= failure.provenance.wall_seconds < 2.0
+    # The kill follows the limit and not the log records: it comes long before the eight
+    # seconds of the solver, which never writes its count.
+    assert 1.0 <= failure.provenance.wall_seconds < 4.0
+    assert not (marker / "chatty").exists()
     text = (summary.directory / LOGS / "session-1.log").read_text()
     assert " INFO dispatchatlas.tests.counter: [worker-1] iteration 0" in text
 
@@ -1258,17 +1260,36 @@ def test_log_records_that_wait_in_the_pipe_do_not_postpone_a_kill(tmp_path: Path
     (task,) = tasks_for(prepared, prepared.plan.runs, campaign.execution, lambda _: 1)
     assert task.hard_limit == 1.0
     received: list[str] = []
+    taken: list[tuple[float, float]] = []  # when the sink took each record, and when it returned
 
     def slow(worker: str, created: float, level: int, name: str, message: str) -> None:
-        time.sleep(0.002)
+        # Two milliseconds of computing: a sleep that short lasts as long as the timer
+        # of the system makes it.
+        began = time.perf_counter()
+        while time.perf_counter() - began < 0.002:
+            pass
         received.append(message)
+        taken.append((began, time.perf_counter()))
 
     backend = backends.ProcessBackend(1, log=slow, log_level=logging.INFO)
     (result,) = backend.run(deque([task]))
     assert isinstance(result, Failure)
     assert result.error.kind is ErrorKind.TIMEOUT
-    assert 1.0 <= result.measurement.wall_seconds < 2.0
     assert received[0] == "iteration 0"
+    # The supervisor ends the message it is handing to the sink, one batch of records and
+    # at most one warning about dropped ones, and then looks at the limit. So the kill is
+    # late by what the sink took for one message, measured here on this machine, and not
+    # by what the pipe held.
+    size = backends._LOG_BATCH + 1
+    message = max(
+        taken[min(first + size, len(taken)) - 1][1] - taken[first][0]
+        for first in range(max(1, len(taken) - size + 1))
+    )
+    late = result.measurement.wall_seconds - task.hard_limit
+    assert 0.0 <= late < message + backends.LOG_READ_SECONDS + 2.0
+    # A kill that waited for the pipe to be empty would have come after the eight
+    # seconds of the solver, which then had written its count.
+    assert not (tmp_path / "chatty").exists()
 
 
 SCRIPT = '''

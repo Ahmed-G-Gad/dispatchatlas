@@ -192,9 +192,9 @@ def test_no_built_in_solver_imports_a_module_during_its_first_solve() -> None:
 
 
 def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(tmp_path: Path) -> None:
-    limit = 0.3
+    limit, paid = 0.4, 1.0
     campaign = tiny_campaign(
-        solvers=(SolverSpec("test-warmed", parameters={"seconds": 0.5, "key": "workers"}),),
+        solvers=(SolverSpec("test-warmed", parameters={"seconds": paid, "key": "workers"}),),
         protocols=(Protocol("clock", StopCriteria(time_limit=limit)),),
         instances=ONE_PROBLEM,
         replicates=4,
@@ -202,18 +202,21 @@ def test_process_workers_warm_up_a_solver_before_the_start_of_its_solve(tmp_path
         workers=2,
     )
     summary = run(campaign, tmp_path, registry=REGISTRY)
+    assert read_failures(summary.directory) == ()
     records = read_runs(summary.directory)
     assert len(records) == 4
-    # Each of the two workers paid 0.5 s for its first run, before the instant
-    # its hard limit, its wall time, and its solver's clock count from.
+    # Each of the two workers paid a second for its first run, before the instant its
+    # hard limit, its wall time, and its solver's clock count from. A run charged
+    # with it would last that second at least, and would find its first incumbent
+    # after it; half of it is the margin of a slow machine.
     for record in records:
-        assert record.provenance.wall_seconds < limit + 0.2
+        assert record.provenance.wall_seconds < limit + paid / 2
         assert record.outcome.trace[0].elapsed < limit
         assert record.outcome.evaluations > 1
         assert record.notes == ()
     # The warm-up is part of what the first run of a worker waited for its solve.
     waited = [record.provenance.waited_seconds or 0.0 for record in records]
-    assert max(waited) >= 0.5
+    assert max(waited) >= paid
 
 
 def test_a_warm_up_that_raises_in_a_worker_fails_the_run(tmp_path: Path) -> None:
