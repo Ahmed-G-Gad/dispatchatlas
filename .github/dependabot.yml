@@ -15,3 +15,9 @@ updates:
     groups:
       python:
         patterns: ["*"]
+    # pyproject.toml caps these two extras; raising a cap waits for the exact-solver tests.
+    ignore:
+      - dependency-name: pulp
+        versions: [">=4"]
+      - dependency-name: highspy
+        versions: [">=1.14"]
