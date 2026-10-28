@@ -228,7 +228,7 @@ def _omnibus(
     matrix = [[scores[(solver, problem)] for solver in solvers] for problem in blocks]
     friedman = friedman_test([dict(zip(solvers, row, strict=True)) for row in matrix], sense)
     corrected = iman_davenport(friedman)
-    rows = [[*oriented_ranks(row, sense), tie_sum(row)] for row in matrix]
+    rows = [[*oriented_ranks(row, sense), tie_sum(row, sense)] for row in matrix]
     concordance = _interval(rows, config, _kendalls_w)
     p_value = friedman.p_value if config.omnibus == "friedman" else corrected.p_value
     return OmnibusResult(

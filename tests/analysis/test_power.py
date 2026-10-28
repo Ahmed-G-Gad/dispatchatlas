@@ -5,9 +5,15 @@ from __future__ import annotations
 import math
 from statistics import NormalDist
 
+import numpy as np
 import pytest
 
+from dispatchatlas.analysis.stats.nonparametric import (
+    WILCOXON_EXACT_LIMIT,
+    wilcoxon_signed_rank,
+)
 from dispatchatlas.analysis.stats.power import (
+    _rejection_threshold,
     attainable_floor,
     detectable_effect_size,
     required_paired_count,
@@ -62,6 +68,89 @@ def test_the_simulation_is_seeded():
     first = wilcoxon_power(10, 0.9, replicates=REPLICATES, seed=1)
     assert wilcoxon_power(10, 0.9, replicates=REPLICATES, seed=1) == first
     assert wilcoxon_power(40, 0.0, replicates=REPLICATES) == pytest.approx(0.05, abs=0.015)
+
+
+def _attained_size(pairs: int, alpha: float = 0.05) -> float:
+    """Return the rejection probability under the null of the exact two-sided test.
+
+    The count of sign assignments by rank sum is the coefficient list of the product of
+    ``1 + x^r`` over the ranks, formed by convolution, and the test rejects when the smaller
+    rank sum has a two-sided tail of at most ``alpha``.
+    """
+    counts = np.ones(1, dtype=np.int64)
+    for rank in range(1, pairs + 1):
+        factor = np.zeros(rank + 1, dtype=np.int64)
+        factor[0] = factor[rank] = 1
+        counts = np.convolve(counts, factor)
+    cumulative = [int(total) for total in np.cumsum(counts)]
+    rejecting = [
+        value for value, tail in enumerate(cumulative) if 2.0 * tail / (1 << pairs) <= alpha
+    ]
+    return 2.0 * cumulative[max(rejecting)] / (1 << pairs)
+
+
+def _greedy_negatives(pairs: int, target: int) -> list[float]:
+    """Return the differences ``1..pairs`` whose negative magnitudes sum to ``target``."""
+    differences: list[float] = []
+    remaining = target
+    for magnitude in range(pairs, 0, -1):
+        if magnitude <= remaining:
+            remaining -= magnitude
+            differences.append(-float(magnitude))
+        else:
+            differences.append(float(magnitude))
+    assert remaining == 0
+    return differences
+
+
+@pytest.mark.parametrize("pairs", [25, 26, 32, 50])
+def test_the_rejection_threshold_is_the_largest_statistic_the_exact_test_rejects(pairs):
+    threshold = _rejection_threshold(pairs, 0.05)
+    assert threshold is not None
+    assert threshold == int(threshold)
+    rejected = wilcoxon_signed_rank(_greedy_negatives(pairs, int(threshold)))
+    assert (rejected.method, rejected.statistic) == ("exact", threshold)
+    assert rejected.p_value <= 0.05
+    kept = wilcoxon_signed_rank(_greedy_negatives(pairs, int(threshold) + 1))
+    assert (kept.method, kept.statistic) == ("exact", threshold + 1)
+    assert kept.p_value > 0.05
+
+
+def test_the_threshold_reads_the_exact_null_up_to_the_limit_and_the_normal_one_above():
+    # 32 untied pairs reject at a smaller rank sum of 159 (p = 0.04977) and not at 160. The
+    # continuity-corrected normal reading puts the threshold at 158.68, so it rejects only to 158.
+    assert _rejection_threshold(32, 0.05) == 159.0
+    assert _rejection_threshold(WILCOXON_EXACT_LIMIT, 0.05) == 434.0
+    above = _rejection_threshold(WILCOXON_EXACT_LIMIT + 1, 0.05)
+    mean = 51 * 52 / 4.0
+    deviation = math.sqrt(51 * 52 * 103 / 24.0)
+    assert above is not None
+    assert above == pytest.approx(mean - 0.5 - NormalDist().inv_cdf(0.975) * deviation, abs=1e-4)
+    assert above != int(above)
+
+
+@pytest.mark.parametrize("pairs", [26, 32, 50])
+def test_the_simulated_size_at_26_to_50_pairs_is_the_attained_size_of_the_exact_test(pairs):
+    attained = _attained_size(pairs)
+    assert 0.04 < attained <= 0.05
+    size = wilcoxon_power(pairs, 0.0, replicates=40000, seed=7)
+    assert size == pytest.approx(attained, abs=0.006)
+
+
+def test_power_is_continuous_across_the_exact_limit():
+    at_limit = wilcoxon_power(WILCOXON_EXACT_LIMIT, 0.4, replicates=REPLICATES, seed=3)
+    above = wilcoxon_power(WILCOXON_EXACT_LIMIT + 1, 0.4, replicates=REPLICATES, seed=3)
+    assert 0.5 < at_limit < 1.0
+    assert above == pytest.approx(at_limit, abs=0.05)
+
+
+def test_the_detectable_effect_at_32_pairs_is_searched_on_the_exact_test():
+    assessment = detectable_effect_size(32, replicates=REPLICATES, seed=5)
+    assert wilcoxon_power(32, assessment.effect, replicates=REPLICATES, seed=5) >= 0.8
+    # The paired t-test needs a d_z of about 0.51 for 80% power at 32 pairs; the signed-rank
+    # test on normal differences is nearly as efficient.
+    assert assessment.effect == pytest.approx(0.51, abs=0.06)
+    assert required_paired_count(assessment.effect, replicates=REPLICATES, seed=5) <= 32
 
 
 @pytest.mark.parametrize(

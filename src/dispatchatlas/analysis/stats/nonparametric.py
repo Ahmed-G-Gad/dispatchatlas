@@ -13,14 +13,15 @@ approximation with the tie-corrected variance and a continuity correction of
 0.5, whose tail comes from
 :func:`~dispatchatlas.analysis.stats.distributions.normal_sf` so that very
 small p-values keep their precision. Rank ties follow
-:data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`, while the variance
-corrections group values by exact equality, which can only leave the variance
-at or above its tie-corrected value and the p-value on the conservative side.
+:data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`, and so do the
+variance corrections: :func:`tie_sum` counts the groups that the midranks
+share.
 """
 
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -64,8 +65,13 @@ statistic given the midranks of tied magnitudes, ``"normal"`` the normal
 approximation, and ``"degenerate"`` a test without data.
 """
 
-WILCOXON_EXACT_LIMIT = 25
-"""Largest number of non-zero pairs for which the exact Wilcoxon null is used."""
+WILCOXON_EXACT_LIMIT = 50
+"""Largest number of non-zero pairs for which the exact Wilcoxon null is used.
+
+The subset-sum recursion costs about ``n * n (n + 1)`` additions, 130 thousand
+at the limit, and the counts of sign assignments stay below ``2^53``, so their
+conversion to floats is exact.
+"""
 
 MANN_WHITNEY_EXACT_LIMIT = 20
 """Largest size of either sample for which the exact Mann-Whitney null is used."""
@@ -241,7 +247,7 @@ def wilcoxon_signed_rank(differences: Iterable[float]) -> WilcoxonResult:
         method: TestMethod = "exact" if len(set(ranks)) == count else "exact-conditional"
         return WilcoxonResult(statistic, _wilcoxon_exact(statistic, ranks), count, zeros, method)
     mean = count * (count + 1) / 4.0
-    variance = count * (count + 1) * (2 * count + 1) / 24.0 - tie_sum(magnitudes) / 48.0
+    variance = count * (count + 1) * (2 * count + 1) / 24.0 - _rank_tie_sum(ranks) / 48.0
     p_value = _normal_two_sided(statistic, mean, variance)
     return WilcoxonResult(statistic, p_value, count, zeros, "normal")
 
@@ -323,7 +329,7 @@ def mann_whitney_u(first: Iterable[float], second: Iterable[float]) -> MannWhitn
     if n1 <= MANN_WHITNEY_EXACT_LIMIT and n2 <= MANN_WHITNEY_EXACT_LIMIT and not tied:
         return MannWhitneyResult(statistic, _mann_whitney_exact(statistic, n1, n2), n1, n2, "exact")
     total = n1 + n2
-    variance = (n1 * n2 / 12.0) * ((total + 1) - tie_sum(pooled) / (total * (total - 1)))
+    variance = (n1 * n2 / 12.0) * ((total + 1) - _rank_tie_sum(ranks) / (total * (total - 1)))
     p_value = _normal_two_sided(statistic, n1 * n2 / 2.0, variance)
     return MannWhitneyResult(statistic, p_value, n1, n2, "normal")
 
@@ -384,9 +390,10 @@ def friedman_test(blocks: Sequence[Mapping[str, float]], sense: Sense = "min") -
         if set(block) != set(names):
             raise ConfigError("every Friedman block must hold the same groups")
         values = finite_or_infinite([block[name] for name in names], "Friedman values")
-        for name, rank in zip(names, oriented_ranks(values, orientation), strict=True):
+        ranks = oriented_ranks(values, orientation)
+        for name, rank in zip(names, ranks, strict=True):
             totals[name] += rank
-        ties_total += tie_sum(values)
+        ties_total += _rank_tie_sum(ranks)
     count, groups = len(blocks), len(names)
     statistic = friedman_statistic(list(totals.values()), count, ties_total)
     return FriedmanResult(
@@ -476,16 +483,34 @@ def nemenyi_critical_difference(groups: int, blocks: int, alpha: float = 0.05) -
     return nemenyi_q(groups, alpha) * math.sqrt(groups * (groups + 1) / (6.0 * blocks))
 
 
-def tie_sum(values: Sequence[float]) -> float:
-    """Return ``sum(t^3 - t)`` over the groups ``t`` of exactly equal values.
+def tie_sum(values: Sequence[float], sense: Sense = "min") -> float:
+    """Return ``sum(t^3 - t)`` over the groups ``t`` of tied values.
 
     This is the tie term of the Wilcoxon, Mann-Whitney, and Friedman
-    variance corrections.
+    variance corrections. Values tie when they are equal within
+    :data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`: the groups are
+    the ones that share a midrank in
+    :func:`~dispatchatlas.analysis.stats.ranks.oriented_ranks`, so the term
+    always agrees with the ranks the tests use.
+
+    Args:
+        values: The values of one sample or block.
+        sense: Whether smaller or larger values are better, the orientation in
+            which the ranks are formed.
+
+    Raises:
+        ConfigError: If ``sense`` is neither ``"min"`` nor ``"max"``.
     """
-    counts: dict[float, int] = {}
-    for value in values:
-        counts[value] = counts.get(value, 0) + 1
-    return float(sum(size**3 - size for size in counts.values()))
+    return _rank_tie_sum(oriented_ranks(values, check_sense(sense)))
+
+
+def _rank_tie_sum(ranks: Iterable[float]) -> float:
+    """Return ``sum(t^3 - t)`` over the groups of equal midranks.
+
+    Disjoint groups of consecutive positions have different mean positions, so
+    values share a midrank exactly when they form one tie group.
+    """
+    return float(sum(size**3 - size for size in Counter(ranks).values()))
 
 
 def _normal_two_sided(statistic: float, mean: float, variance: float) -> float:

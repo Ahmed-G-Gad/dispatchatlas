@@ -207,11 +207,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the solvers without a record whose runs its `failures` limitation
   counts. Its `campaign` limitation names the cells of solver and problem
   whose runs have no record.
-- The Wilcoxon signed-rank test is exact up to 25 pairs with tied
+- The Wilcoxon signed-rank test is exact up to 50 pairs with tied
   magnitudes too: the p-value comes from the distribution of the rank sum
   over every assignment of signs to the midranks, and the result names the
   method `exact-conditional`. The normal approximation is left to larger
-  samples.
+  samples. The tie term of its variance, and of the Mann-Whitney and
+  Friedman variances, counts the groups that share a midrank, so values
+  equal within the tolerance of the ranks tie there too; `tie_sum` takes the
+  `sense` in which the ranks are formed. The power analysis uses the exact
+  rejection region up to the same 50 pairs.
 - A bibliography of every implemented method, exported as text or BibTeX.
 - The `dispatchatlas` command line, documentation, and runnable examples.
 - The environment of a session identifies the code and the machine further:

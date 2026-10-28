@@ -14,9 +14,13 @@ from __future__ import annotations
 import itertools
 import math
 import random
+from collections.abc import Sequence
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
+from dispatchatlas.analysis.stats.distributions import normal_sf
 from dispatchatlas.analysis.stats.nonparametric import (
     WILCOXON_EXACT_LIMIT,
     friedman_statistic,
@@ -29,7 +33,7 @@ from dispatchatlas.analysis.stats.nonparametric import (
     tie_sum,
     wilcoxon_signed_rank,
 )
-from dispatchatlas.analysis.stats.ranks import midranks
+from dispatchatlas.analysis.stats.ranks import SENSES, midranks, oriented_ranks
 from dispatchatlas.core.errors import ConfigError
 
 WILCOXON_EXACT = [
@@ -248,6 +252,13 @@ WILCOXON_NORMAL = [
         560.0,
         0.766717184666274,
     ),
+]
+# Tied samples above the exact limit: concatenations of the three larger samples above, read by
+# scipy.stats.wilcoxon(method="asymptotic") of SciPy 1.18.1, with 69, 78, and 87 non-zero pairs.
+WILCOXON_NORMAL_LARGE = [
+    (WILCOXON_NORMAL[1][0] + WILCOXON_NORMAL[2][0], 967.0, 0.15099689822933146),
+    (WILCOXON_NORMAL[1][0] + WILCOXON_NORMAL[3][0], 1361.0, 0.3671104477062823),
+    (WILCOXON_NORMAL[2][0] + WILCOXON_NORMAL[3][0], 1673.0, 0.3043594195374256),
 ]
 WILCOXON_TAIL = (0.0, 2.7403472934092292e-67)
 MANN_WHITNEY_EXACT = [
@@ -548,13 +559,25 @@ def test_wilcoxon_exact_null_matches_scipy(differences, statistic, p_value):
     assert result.p_value == pytest.approx(p_value, rel=1e-12)
 
 
-@pytest.mark.parametrize(("differences", "statistic", "p_value"), WILCOXON_NORMAL[1:])
+@pytest.mark.parametrize(("differences", "statistic", "p_value"), WILCOXON_NORMAL_LARGE)
 def test_wilcoxon_tied_normal_approximation_matches_scipy(differences, statistic, p_value):
     result = wilcoxon_signed_rank(differences)
     assert result.pairs > WILCOXON_EXACT_LIMIT
     assert result.method == "normal"
     assert result.statistic == statistic
     assert result.p_value == pytest.approx(p_value, rel=1e-12)
+
+
+@pytest.mark.parametrize(("differences", "statistic", "normal"), WILCOXON_NORMAL[1:])
+def test_tied_samples_of_30_to_48_pairs_take_the_exact_conditional_null(
+    differences, statistic, normal
+):
+    result = wilcoxon_signed_rank(differences)
+    assert 25 < result.pairs <= WILCOXON_EXACT_LIMIT
+    assert (result.statistic, result.method) == (statistic, "exact-conditional")
+    assert result.p_value == pytest.approx(_distribution_p_value(differences)[1], rel=1e-12)
+    # SciPy's asymptotic p-value reads the same statistic, and lies near the exact one.
+    assert result.p_value == pytest.approx(normal, abs=0.01)
 
 
 def _enumerated(differences: list[float]) -> tuple[float, float]:
@@ -574,6 +597,62 @@ def _enumerated(differences: list[float]) -> tuple[float, float]:
         positive = math.fsum(rank for rank, sign in zip(ranks, signs, strict=True) if sign)
         extreme += min(positive, total - positive) <= statistic + 1e-9
     return statistic, extreme / 2 ** len(ranks)
+
+
+def _sign_assignments(ranks: Sequence[float]) -> NDArray[np.int64]:
+    """Return the number of sign assignments of the ranks at each doubled positive rank sum.
+
+    Each rank ``r`` contributes the polynomial ``1 + x^(2r)``, and midranks are multiples of one
+    half, so the exponents are integers. The product by convolution is exact in 64-bit integers
+    up to ``2^62`` assignments, a different computation from the library's in-place recursion.
+    """
+    counts = np.ones(1, dtype=np.int64)
+    for rank in ranks:
+        doubled = round(2.0 * rank)
+        factor = np.zeros(doubled + 1, dtype=np.int64)
+        factor[0] = factor[doubled] = 1
+        counts = np.convolve(counts, factor)
+    return counts
+
+
+def _distribution_p_value(differences: Sequence[float]) -> tuple[float, float]:
+    """Return ``min(W+, W-)`` and its two-sided p-value from the polynomial product."""
+    nonzero = [value for value in differences if abs(value) > 1e-12]
+    ranks = midranks([abs(value) for value in nonzero])
+    total = math.fsum(ranks)
+    positive = math.fsum(rank for rank, value in zip(ranks, nonzero, strict=True) if value > 0.0)
+    statistic = min(positive, total - positive)
+    lower = int(_sign_assignments(ranks)[: round(2.0 * statistic) + 1].sum())
+    return statistic, min(1.0, 2 * lower / 2 ** len(ranks))
+
+
+def _with_negatives_summing_to(size: int, target: int) -> list[float]:
+    """Return the differences ``1..size`` whose negative ones sum to ``target``, chosen greedily.
+
+    Taking the largest magnitude that still fits reaches every target from 0 to
+    ``size (size + 1) / 2``.
+    """
+    differences: list[float] = []
+    remaining = target
+    for magnitude in range(size, 0, -1):
+        if magnitude <= remaining:
+            differences.append(-float(magnitude))
+            remaining -= magnitude
+        else:
+            differences.append(float(magnitude))
+    assert remaining == 0
+    return differences
+
+
+def test_the_polynomial_product_agrees_with_the_enumeration_it_stands_in_for():
+    generator = random.Random(25)
+    for _ in range(60):
+        size = generator.randint(1, 12)
+        differences = [float(generator.randint(-5, 5) or 1) for _ in range(size)]
+        statistic, p_value = _enumerated(differences)
+        assert _distribution_p_value(differences)[0] == statistic
+        assert _distribution_p_value(differences)[1] == pytest.approx(p_value, rel=1e-12)
+    assert list(_sign_assignments([1.0, 2.0, 3.0])) == [1, 0, 1, 0, 1, 0, 2, 0, 1, 0, 1, 0, 1]
 
 
 @pytest.mark.parametrize(
@@ -627,6 +706,71 @@ def test_untied_samples_keep_the_exact_null_of_the_ranks_one_to_n():
     # The count of sign assignments by rank sum over 1..n, as Wilcoxon tabulates it: with
     # n = 5 and W = 2 the sums 0, 1, 2 have 1, 1, 1 assignments of 32.
     assert wilcoxon_signed_rank([1.0, -2.0, 3.0, 4.0, 5.0]).p_value == 2 * 3 / 32
+
+
+@pytest.mark.parametrize("size", range(26, 51))
+def test_untied_samples_of_26_to_50_pairs_take_the_exact_null(size):
+    generator = random.Random(size)
+    # Magnitudes in [index, index + 1) never tie; a third of the signs are negative.
+    differences = [
+        (-1.0 if generator.random() < 0.35 else 1.0) * (index + generator.random())
+        for index in range(1, size + 1)
+    ]
+    result = wilcoxon_signed_rank(differences)
+    statistic, p_value = _distribution_p_value(differences)
+    assert (result.method, result.pairs, result.zeros) == ("exact", size, 0)
+    assert result.statistic == statistic
+    assert result.p_value == pytest.approx(p_value, rel=1e-12)
+
+
+@pytest.mark.parametrize("size", [26, 32, 50])
+def test_the_exact_null_of_26_to_50_pairs_has_its_extremes_and_its_centre(size):
+    total = size * (size + 1) // 2
+    one_sign = wilcoxon_signed_rank([float(index) for index in range(1, size + 1)])
+    assert (one_sign.statistic, one_sign.method) == (0.0, "exact")
+    assert one_sign.p_value == 2 / 2**size
+    # The smallest p-value over a larger sample is smaller: the exact floor falls with n.
+    smaller = wilcoxon_signed_rank([float(index) for index in range(1, size)])
+    assert one_sign.p_value < smaller.p_value
+    # The p-value never falls as the smaller rank sum grows, and reaches 1 at the centre.
+    previous = 0.0
+    for statistic in range(0, total // 2 + 1, max(1, total // 40)):
+        result = wilcoxon_signed_rank(_with_negatives_summing_to(size, statistic))
+        assert (result.statistic, result.method) == (float(statistic), "exact")
+        assert result.p_value >= previous
+        previous = result.p_value
+    centre = wilcoxon_signed_rank(_with_negatives_summing_to(size, total // 2))
+    assert centre.p_value == 1.0
+
+
+def test_32_untied_pairs_with_a_negative_rank_sum_of_159_are_significant_exactly():
+    # Negative magnitudes 32, 31, 30, 29, 28, and 9 sum to 159 of the total 528.
+    differences = _with_negatives_summing_to(32, 159)
+    negatives = sorted(-value for value in differences if value < 0.0)
+    assert negatives == [9.0, 28.0, 29.0, 30.0, 31.0, 32.0]
+    result = wilcoxon_signed_rank(differences)
+    assert (result.statistic, result.pairs, result.method) == (159.0, 32, "exact")
+    assert result.p_value == pytest.approx(0.04977, abs=5e-6)
+    assert result.p_value < 0.05
+    # The continuity-corrected normal approximation of the same statistic misses 0.05.
+    variance = 32 * 33 * 65 / 24.0
+    z = (abs(159.0 - 32 * 33 / 4.0) - 0.5) / math.sqrt(variance)
+    assert 2.0 * normal_sf(z) > 0.05
+
+
+def test_tied_samples_of_32_pairs_take_the_exact_conditional_null():
+    generator = random.Random(32)
+    # Integer differences of 1 to 12 tie often, as integer makespans do.
+    differences = [generator.choice((-1.0, 1.0)) * generator.randint(1, 12) for _ in range(32)]
+    assert len(set(map(abs, differences))) < 32
+    result = wilcoxon_signed_rank(differences)
+    statistic, p_value = _distribution_p_value(differences)
+    assert (result.method, result.pairs, result.zeros) == ("exact-conditional", 32, 0)
+    assert result.statistic == statistic
+    assert result.p_value == pytest.approx(p_value, rel=1e-12)
+    assert result.p_value >= 2 / 2**32
+    # Ties in magnitude do not move the exact floor: all differences positive gives 2 / 2^n.
+    assert wilcoxon_signed_rank([float(1 + index // 2) for index in range(32)]).p_value == 2 / 2**32
 
 
 def test_a_tied_sample_at_the_exact_limit_is_exact_and_one_above_it_is_normal():
@@ -756,6 +900,80 @@ def test_friedman_refuses_incomplete_or_small_designs():
 def test_friedman_statistic_from_rank_sums_and_tie_sum():
     assert tie_sum([1.0, 1.0, 2.0, 3.0, 3.0, 3.0]) == 6.0 + 24.0
     assert friedman_statistic([6.0, 12.0, 18.0], 6) == pytest.approx(12.0)
+
+
+def test_tie_sum_groups_values_equal_within_the_tolerance_as_one_group():
+    nearly_equal = [0.5 + index * 1e-15 for index in range(6)]
+    assert len(set(nearly_equal)) == 6
+    assert tie_sum(nearly_equal) == 6**3 - 6
+    assert tie_sum(nearly_equal, "max") == 6**3 - 6
+    # Groups of 2, 1, and 2: the values 1 and 1 + 1e-13 tie, 2 stands alone, 3 and 3 tie.
+    assert tie_sum([3.0, 1.0, 2.0, 1.0 + 1e-13, 3.0]) == 6.0 + 6.0
+    # A relative tolerance applies to large values, an absolute one near zero.
+    assert tie_sum([1e9, 1e9 + 1e-4, -1e9]) == 6.0
+    assert tie_sum([0.0, 1e-13, -1e-13, 1.0]) == 24.0
+    assert tie_sum([math.inf, math.inf, 1.0, -math.inf]) == 6.0
+    assert tie_sum([]) == 0.0
+    assert tie_sum([1.0, 2.0, 3.0]) == 0.0
+
+
+def test_tie_sum_forms_the_groups_of_the_midranks_in_either_orientation():
+    # The tolerance does not chain: a group takes the values within it of its first value, which
+    # is the smallest when ranking ascending and the largest when ranking descending.
+    chain = [0.0, 0.3e-12, 1.05e-12, 1.1e-12]
+    assert tie_sum(chain, "min") == 2 * (2**3 - 2)
+    assert tie_sum(chain, "max") == 3**3 - 3
+    generator = random.Random(23)
+    for _ in range(50):
+        values = [generator.choice((0.0, 0.3, 0.6, 1.1)) * 1e-12 for _ in range(8)]
+        for sense in SENSES:
+            ranks = oriented_ranks(values, sense)
+            groups = [ranks.count(rank) for rank in set(ranks)]
+            assert tie_sum(values, sense) == sum(size**3 - size for size in groups)
+    with pytest.raises(ConfigError, match="sense"):
+        tie_sum([1.0, 2.0], "median")  # type: ignore[arg-type]
+
+
+def _noisy(values: Sequence[float], seed: int) -> list[float]:
+    """Return ``values`` with float-level noise that ties by the rank tolerance, not by equality."""
+    generator = random.Random(seed)
+    return [value * (1.0 + 1e-15 * generator.random()) for value in values]
+
+
+def test_the_wilcoxon_variance_ties_values_by_the_rank_tolerance():
+    for differences, _, _ in WILCOXON_NORMAL_LARGE:
+        exact = wilcoxon_signed_rank(differences)
+        noisy = wilcoxon_signed_rank(_noisy(differences, 3))
+        assert noisy.method == "normal"
+        assert noisy.statistic == exact.statistic
+        assert noisy.p_value == pytest.approx(exact.p_value, rel=1e-12)
+
+
+def test_the_mann_whitney_variance_ties_values_by_the_rank_tolerance():
+    generator = random.Random(24)
+    first = [float(generator.randint(1, 9)) for _ in range(25)]
+    second = [float(generator.randint(2, 11)) for _ in range(30)]
+    exact = mann_whitney_u(first, second)
+    noisy = mann_whitney_u(_noisy(first, 1), _noisy(second, 2))
+    assert (exact.method, noisy.method) == ("normal", "normal")
+    assert noisy.statistic == exact.statistic
+    assert noisy.p_value == pytest.approx(exact.p_value, rel=1e-12)
+
+
+@pytest.mark.parametrize("sense", ["min", "max"])
+def test_the_friedman_statistic_ties_values_by_the_rank_tolerance(sense):
+    generator = random.Random(26)
+    rows = [[float(generator.randint(1, 4)) for _ in range(5)] for _ in range(12)]
+    exact = friedman_test(
+        [{f"s{column}": v for column, v in enumerate(row)} for row in rows], sense
+    )
+    noisy_rows = [_noisy(row, index) for index, row in enumerate(rows)]
+    noisy = friedman_test(
+        [{f"s{column}": v for column, v in enumerate(row)} for row in noisy_rows], sense
+    )
+    assert noisy.average_ranks == exact.average_ranks
+    assert noisy.statistic == pytest.approx(exact.statistic, rel=1e-12)
+    assert noisy.p_value == pytest.approx(exact.p_value, rel=1e-12)
 
 
 def test_nemenyi_table_matches_the_studentized_range():

@@ -75,7 +75,7 @@ _METHODS: tuple[Method, ...] = (
         "Wilcoxon signed-rank test",
         "test",
         "Ranks the magnitudes of the paired differences and compares the rank sums of the "
-        "positive and negative ones, exactly up to 25 untied pairs.",
+        "positive and negative ones, exactly up to 50 pairs, with or without ties.",
         (_PAIRED, "the differences are symmetric about their median"),
         ("wilcoxon1945individual", "derrac2011practical"),
         f"{_STATS}.nonparametric.wilcoxon_signed_rank",
