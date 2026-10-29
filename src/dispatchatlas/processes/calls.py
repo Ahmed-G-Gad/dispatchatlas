@@ -17,7 +17,9 @@ written by the runner alone.
   joins by name; whatever a call leaves running ends when the call ends, and
   every child ends when the runner dies.
 - **Resume.** The rows file is the record of what is done: calls whose key
-  (read back through ``key_of``) has a row are skipped. A torn last line is
+  (read back through ``key_of``) has a row are skipped. A torn last line, a
+  key with two rows, a second runner on the same file, and a resume whose
+  stamp, workers, or processors differ from the first invocation's are
   refused before anything starts.
 - **Failures.** A call that raises, returns something that is not a row,
   dies, or passes its time limit is recorded in the errors sidecar
@@ -31,7 +33,10 @@ written by the runner alone.
 
 Next to the rows file the runner writes ``<stem>.errors.jsonl``,
 ``<stem>.ballast.jsonl`` (with ``ballast``), ``<stem>.children.log`` (the
-children's standard error, tracebacks included), and ``<stem>.report.json``.
+children's standard output and error, tracebacks included),
+``<stem>.runs.jsonl`` (one line per invocation: its stamp, workers, and
+processors), ``<stem>.lock`` (held while a runner uses the file), and
+``<stem>.report.json``.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ import logging
 import os
 import queue
 import random
+import select
 import signal
 import subprocess
 import sys
@@ -70,7 +76,14 @@ from dispatchatlas.processes.affinity import (
 )
 from dispatchatlas.processes.child import SCHEMA, THREAD_VARIABLES, clean_message
 from dispatchatlas.processes.groups import ProcessGroup, group_name
-from dispatchatlas.processes.rows import Key, RowWriter, canonical_key, done_keys, read_rows
+from dispatchatlas.processes.rows import (
+    Key,
+    RowWriter,
+    canonical_key,
+    done_keys,
+    duplicate_keys,
+    read_rows,
+)
 
 __all__ = [
     "ERROR_SCHEMA",
@@ -89,6 +102,7 @@ ERROR_SCHEMA = "dispatchatlas.call-error/1"
 _LOG = get_logger(__name__)
 _JOIN_SECONDS = 30.0
 _STOP_SECONDS = 60.0
+_BALLAST_FAILURES = 3
 
 
 @dataclass(frozen=True)
@@ -173,7 +187,8 @@ class CallError:
             child (``PinningRefused``, ``GroupRefused``, ``TargetNotFound``,
             ``RowNotMapping``, ``RowNotSerializable``, ``BadDocument``), or
             the runner's (``ProcessDied``, ``Timeout``, ``KeyMismatch``,
-            ``RowRefused``, ``StartFailed``).
+            ``RowRefused``, ``StartFailed``, ``AttendFailed``); without
+            caller-named tokens.
         message: The message, without file paths or caller-named tokens.
         returncode: The child's exit code; negative for a POSIX signal.
         last_line: Whether the child wrote its reply line.
@@ -333,6 +348,7 @@ class _Running:
     last_line: bytes = b""
     returncode: int | None = None
     start_error: str | None = None
+    attend_error: str | None = None
 
 
 class _Sidecar:
@@ -365,6 +381,8 @@ def run_calls(
     max_failures: int = 3,
     skip_failed: bool = False,
     ballast: bool | Sequence[Call] = False,
+    ballast_seed: int | None = None,
+    allow_changed_run: bool = False,
     python: str | Path | None = None,
     entry: Sequence[str] = ("-m", "dispatchatlas.processes.child"),
     environment: Mapping[str, str] | None = None,
@@ -388,10 +406,12 @@ def run_calls(
             their number matters.
         workers: Worker slots, at most ``len(cpus)``; slot ``i`` owns
             ``cpus[i]``. Defaults to ``len(cpus)``.
-        pin: Pin the runner to the set and each child to its slot's
+        pin: Pin the runner to the whole set and each child to its slot's
             processor. Refused where the platform cannot pin.
         stamp: Constant fields added to every row, such as provenance; a
-            field the row already has is a ``RowRefused`` failure.
+            field the row already has is a ``RowRefused`` failure. A resume
+            whose stamp differs from the first invocation's is refused
+            unless ``allow_changed_run``.
         finish: Turns the function's row and the call's facts into the row
             written; by default the facts go under ``row["run"]``.
         max_failures: Failed attempts of real calls after which the run
@@ -399,8 +419,15 @@ def run_calls(
         skip_failed: Skip calls with an earlier error record instead of
             retrying them.
         ballast: ``True`` to keep idle slots busy with repeats of ``calls``
-            in a seeded order, or the calls to repeat; their rows are
-            discarded and their facts go to the ballast sidecar.
+            in a seeded order, or the calls to repeat, in the order given;
+            their rows are discarded and their facts go to the ballast
+            sidecar. Ballast stops after three ballast calls in a row fail.
+        ballast_seed: Seed of the order of ``ballast=True``; by default one
+            derived from the rows file's name.
+        allow_changed_run: Resume although the stamp, the number of workers,
+            or the processors differ from those of the file's first
+            invocation (recorded in ``<rows stem>.runs.jsonl``, or, for a
+            file without it, the stamp fields of its rows).
         python: The interpreter of the children; ``sys.executable`` by
             default.
         entry: Arguments after the interpreter that run
@@ -417,9 +444,17 @@ def run_calls(
     Returns:
         The report, also written to ``<rows stem>.report.json``.
 
+    A row holding a NaN, an infinity, or a value JSON has no form for is a
+    ``RowNotSerializable`` failure (``RowRefused`` when ``finish`` or
+    ``stamp`` put it there), which names the field: standard JSON has no
+    NaN, so write ``None`` or a string.
+
     Raises:
         ConfigError: If the arguments are invalid or the platform cannot
-            do what they ask; nothing is read or started then.
+            do what they ask (nothing is read or started then), if another
+            runner holds the rows file, if the file holds a key twice, or
+            if the run differs from the file's first invocation (see
+            ``allow_changed_run``); nothing is started then.
         TornRowsError: If the rows file or the errors sidecar ends in a
             torn line; nothing is started then.
         CallsStoppedError: When ``max_failures`` is reached; every child has
@@ -431,12 +466,8 @@ def run_calls(
     logger = log or _LOG
     rows_path = Path(rows)
     stem = str(rows_path.with_suffix(""))
-    errors_path = Path(f"{stem}.errors.jsonl")
-    ballast_path = Path(f"{stem}.ballast.jsonl") if ballast is not False else None
-    children_log = Path(f"{stem}.children.log")
-    report_path = Path(f"{stem}.report.json")
 
-    slots_cpus = _slot_cpus(cpus, workers, pin=pin)
+    chosen, slots_cpus = _slot_cpus(cpus, workers, pin=pin)
     canonical = [canonical_key(call.key) for call in calls]
     if len(set(canonical)) != len(canonical):
         raise ConfigError("the calls' keys are not distinct")
@@ -446,7 +477,80 @@ def run_calls(
         if limit is not None and not limit > 0:
             raise ConfigError(f"a time limit is positive, not {limit}")
     stamp_fields = dict(stamp or {})
+    try:
+        canonical_key(stamp_fields)
+    except ValueError as error:
+        raise ConfigError(f"the stamp cannot be written as JSON: {error}") from None
 
+    with _held(Path(f"{stem}.lock"), rows_path):
+        _check_rows(rows_path, key_of)
+        record = {
+            "started_utc": _utc_now(),
+            "stamp": stamp_fields,
+            "workers": len(slots_cpus),
+            "cpus": list(slots_cpus),
+            "pin": pin,
+        }
+        runs_path = Path(f"{stem}.runs.jsonl")
+        if not allow_changed_run:
+            _check_same_run(record, runs_path, rows_path)
+        with RowWriter(runs_path) as runs:
+            runs.write(record)
+        return _resume(
+            calls,
+            canonical,
+            rows_path,
+            key_of=key_of,
+            chosen=chosen if pin else (),
+            slots_cpus=slots_cpus,
+            stamp=stamp_fields,
+            finish=finish,
+            max_failures=max_failures,
+            skip_failed=skip_failed,
+            ballast=ballast,
+            ballast_seed=ballast_seed,
+            python=python,
+            entry=entry,
+            environment=environment,
+            cwd=cwd,
+            clean_tokens=clean_tokens,
+            timeout_seconds=timeout_seconds,
+            progress_every=progress_every,
+            log=logger,
+            began=began,
+        )
+
+
+def _resume(
+    calls: Sequence[Call],
+    canonical: list[str],
+    rows_path: Path,
+    *,
+    key_of: Callable[[Mapping[str, Any]], Any],
+    chosen: Sequence[int],
+    slots_cpus: list[int | None],
+    stamp: dict[str, Any],
+    finish: Callable[[dict[str, Any], CallFacts], Mapping[str, Any]] | None,
+    max_failures: int,
+    skip_failed: bool,
+    ballast: bool | Sequence[Call],
+    ballast_seed: int | None,
+    python: str | Path | None,
+    entry: Sequence[str],
+    environment: Mapping[str, str] | None,
+    cwd: str | Path | None,
+    clean_tokens: Sequence[str],
+    timeout_seconds: float | None,
+    progress_every: int,
+    log: logging.Logger,
+    began: float,
+) -> CallReport:
+    """Read what is done, then run the rest with the runner on its processors."""
+    stem = str(rows_path.with_suffix(""))
+    errors_path = Path(f"{stem}.errors.jsonl")
+    ballast_path = Path(f"{stem}.ballast.jsonl") if ballast is not False else None
+    children_log = Path(f"{stem}.children.log")
+    report_path = Path(f"{stem}.report.json")
     done = done_keys(rows_path, key_of)
     earlier: dict[str, int] = {}
     if errors_path.exists():
@@ -463,14 +567,14 @@ def run_calls(
         else:
             pending.append((call, name))
     repeats: Iterator[Call] | None = None
-    if ballast is not False:
-        source = list(calls) if ballast is True else list(ballast)
-        if source:
-            ordered = interleaved(source, seed=zlib.crc32(rows_path.name.encode("utf-8")))
-            repeats = itertools.cycle(ordered)
+    if ballast is True:
+        seed = zlib.crc32(rows_path.name.encode("utf-8")) if ballast_seed is None else ballast_seed
+        if calls:
+            repeats = itertools.cycle(interleaved(calls, seed=seed))
+    elif not isinstance(ballast, bool) and ballast:
+        repeats = itertools.cycle(list(ballast))
 
-    owned = [cpu for cpu in slots_cpus if cpu is not None]
-    with _runner_on(owned):
+    with _runner_on(list(chosen)):
         return _run(
             pending=pending,
             repeats=repeats,
@@ -478,7 +582,7 @@ def run_calls(
             earlier=earlier,
             key_of=key_of,
             finish=finish,
-            stamp=stamp_fields,
+            stamp=stamp,
             tokens=tuple(clean_tokens),
             timeout=timeout_seconds,
             command=[str(python or sys.executable), *entry],
@@ -487,10 +591,114 @@ def run_calls(
             paths=(rows_path, errors_path, ballast_path, children_log, report_path),
             max_failures=max_failures,
             progress_every=max(1, progress_every),
-            log=logger,
+            log=log,
             counts=(done_before, skipped_failed),
             began=began,
         )
+
+
+_LOCK_OFFSET = 1 << 30
+"""Where the Windows lock byte of a lock file sits, past the holder's text."""
+
+
+@contextlib.contextmanager
+def _held(path: Path, rows: Path) -> Iterator[None]:
+    """Hold the lock file of a rows file for the context, or raise :class:`ConfigError`.
+
+    The lock is the operating system's (``msvcrt.locking`` on Windows,
+    ``flock`` elsewhere), so it ends with the process that holds it and a
+    killed runner leaves no stale lock; the file's text only says who holds it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stream = path.open("a+b")
+    try:
+        if not _try_lock(stream):
+            stream.seek(0)
+            holder = stream.read(400).decode("utf-8", errors="replace").strip()
+            raise ConfigError(
+                f"{rows} is in use by another runner ({holder or 'holder unknown'}); "
+                "a rows file has one runner at a time"
+            )
+        stream.truncate(0)
+        stream.write(f"pid {os.getpid()} since {_utc_now()}\n".encode())
+        stream.flush()
+        yield
+    finally:
+        stream.close()  # releases the lock
+
+
+def _try_lock(stream: IO[bytes]) -> bool:
+    """Take an exclusive lock on an open file without waiting; return whether it was taken.
+
+    Windows locks are mandatory, so the locked byte lies far past the text,
+    which other processes may then still read.
+    """
+    locked = True
+    if sys.platform == "win32":
+        import msvcrt  # noqa: PLC0415 - Windows only
+
+        stream.seek(_LOCK_OFFSET)
+        try:
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            locked = False
+        stream.seek(0)
+    else:
+        import fcntl  # noqa: PLC0415 - POSIX only
+
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            locked = False
+    return locked
+
+
+def _check_rows(rows: Path, key_of: Callable[[Mapping[str, Any]], Any]) -> None:
+    """Refuse a rows file that holds a key twice."""
+    repeated = duplicate_keys(rows, key_of)
+    if repeated:
+        shown = ", ".join(repeated[:10]) + (" and more" if len(repeated) > 10 else "")
+        raise ConfigError(
+            f"{rows} holds more than one row for {len(repeated)} key(s): {shown}; a rows file "
+            "has one row per key, so two runners wrote it or rows were copied in. Move the "
+            "extra rows aside before resuming"
+        )
+
+
+def _check_same_run(record: Mapping[str, Any], runs: Path, rows: Path) -> None:
+    """Refuse a resume whose stamp, workers, or processors differ from the file's first run."""
+    changes: list[str] = []
+    stamp: Mapping[str, Any] = record["stamp"]
+    if runs.exists():
+        first = next(iter(read_rows(runs)), None)
+        if first is not None:
+            old_stamp = first.get("stamp") or {}
+            for name in sorted(set(old_stamp) | set(stamp)):
+                _note_change(changes, f"stamp {name}", old_stamp.get(name), stamp.get(name))
+            for name in ("workers", "cpus"):
+                _note_change(changes, name, first.get(name), record[name])
+    elif stamp and rows.exists():
+        missing = object()
+        seen: dict[str, Any] = {}
+        for row in read_rows(rows):
+            for name, value in stamp.items():
+                if name not in seen:
+                    old = row.get(name, missing)
+                    if old is missing or canonical_key(old) != canonical_key(value):
+                        seen[name] = None if old is missing else old
+        for name, old in seen.items():
+            changes.append(f"stamp {name}: {old!r} in the rows, {stamp[name]!r} now")
+    if changes:
+        raise ConfigError(
+            f"{rows} was begun by a different run: " + "; ".join(changes) + ". Resume with the "
+            "same stamp, workers, and processors, start a new rows file, or pass "
+            "allow_changed_run=True to mix them knowingly"
+        )
+
+
+def _note_change(changes: list[str], name: str, old: Any, new: Any) -> None:
+    if canonical_key(old) != canonical_key(new):
+        changes.append(f"{name}: {old!r} then, {new!r} now")
 
 
 @contextlib.contextmanager
@@ -603,8 +811,11 @@ def _run(
 
 def _slot_cpus(
     cpus: Sequence[int] | int | str, workers: int | None, *, pin: bool
-) -> list[int | None]:
-    """Return each slot's processor, or raise :class:`ConfigError`."""
+) -> tuple[tuple[int, ...], list[int | None]]:
+    """Return the run's processors and each slot's processor, or raise :class:`ConfigError`.
+
+    Without pinning every slot's processor is ``None``.
+    """
     try:
         if isinstance(cpus, str):
             chosen = parse_cpus(cpus)
@@ -624,7 +835,7 @@ def _slot_cpus(
             f"workers is between 1 and the number of processors ({len(chosen)}), not {count}"
         )
     if not pin:
-        return [None] * count
+        return chosen, [None] * count
     refusal = pinning_refusal_text()
     if refusal is not None:
         raise ConfigError(f"cannot pin the run's processes: {refusal}; pass pin=False")
@@ -636,7 +847,7 @@ def _slot_cpus(
                 f"processor(s) {outside} are outside the set this process may use "
                 f"({describe_cpus(allowed)})"
             )
-    return list(chosen[:count])
+    return chosen, list(chosen[:count])
 
 
 def _child_environment(extra: Mapping[str, str] | None) -> dict[str, str]:
@@ -679,6 +890,7 @@ class _State:
     events: queue.Queue[int] = field(default_factory=queue.Queue)
     failures: int = 0
     ballast_runs: int = 0
+    ballast_failed_in_row: int = 0
     real_running: int = 0
     stderr: IO[bytes] | None = None
 
@@ -758,8 +970,10 @@ class _State:
             "attempt": attempt,
             "ballast": ballast,
             "clean_tokens": list(self.tokens),
+            "parent": os.getpid(),
         }
         group = self.groups[slot]
+        process: subprocess.Popen[bytes] | None = None
         try:
             with confined(cpu) if cpu is not None else contextlib.nullcontext():
                 process = subprocess.Popen(
@@ -773,10 +987,12 @@ class _State:
                 )
         except (OSError, RuntimeError, ValueError) as error:
             running.start_error = f"{type(error).__name__}: {error}"
+            if process is not None:  # started (suspended on Windows), then the restore failed
+                _discard(process)
             self.events.put(slot)  # the slot frees at once; the failure is recorded then
             return running
         running.process = process
-        refused = group.assign(process.pid)
+        refused = group.assign_process(process)
         if refused is not None:
             self.log.debug("slot %d: the parent could not assign the child: %s", slot, refused)
         payload = json.dumps(document, ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -813,14 +1029,15 @@ class _State:
                 self._kill(running)
 
     def _kill(self, running: _Running) -> None:
-        self.groups[running.slot].terminate()
+        self.groups[running.slot].terminate()  # honours forget: a reaped member is not signalled
         process = running.process
-        if process is not None:
-            if sys.platform != "win32":
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(process.pid, signal.SIGKILL)
-            with contextlib.suppress(OSError):
-                process.kill()
+        if process is None or process.returncode is not None or running.returncode is not None:
+            return  # reaped: its id may already belong to another process
+        if sys.platform != "win32":
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+        with contextlib.suppress(OSError):
+            process.kill()
 
     def _finish(self, slot: int) -> None:
         running = self.slots[slot]
@@ -835,6 +1052,10 @@ class _State:
             return
         reply, problem = _reply(running.last_line)
         facts = self._facts(running, reply.get("facts") if reply else None)
+        if running.attend_error is not None and not running.stopped:
+            message = f"the runner lost track of the child: {running.attend_error}"
+            self._fail(running, "AttendFailed", message, facts, last_line=reply is not None)
+            return
         if running.stopped:
             if running.ballast and self.ballast is not None:
                 self.ballast.write(
@@ -863,6 +1084,7 @@ class _State:
             self._fail(running, "RowRefused", "the reply holds no row object", facts)
             return
         if running.ballast:
+            self.ballast_failed_in_row = 0
             if self.ballast is not None:
                 self.ballast.write(
                     {"key": running.call.key, "outcome": "row", "facts": facts.to_dict()}
@@ -920,7 +1142,7 @@ class _State:
         record = CallError(
             key=running.call.key,
             attempt=running.attempt,
-            type=kind,
+            type=clean_message(kind, tokens=self.tokens),
             message=clean_message(message, tokens=self.tokens),
             returncode=running.returncode,
             last_line=last_line and running.process is not None,
@@ -933,6 +1155,14 @@ class _State:
             if self.ballast is not None:
                 self.ballast.write(
                     {"key": running.call.key, "outcome": "error", "error": record.to_dict()}
+                )
+            self.ballast_failed_in_row += 1
+            if self.repeats is not None and self.ballast_failed_in_row >= _BALLAST_FAILURES:
+                self.repeats = None
+                self.log.warning(
+                    "ballast stopped: %d ballast calls in a row failed (the last: %s)",
+                    self.ballast_failed_in_row,
+                    record.type,
                 )
             return
         self.errors.write(record.to_dict())
@@ -1037,22 +1267,40 @@ class _State:
 def _attend(
     running: _Running, payload: bytes, group: ProcessGroup, events: queue.Queue[int]
 ) -> None:
-    """Feed a child its document, collect its last line, wait for it, and clean its group."""
+    """Feed a child its document, collect its last line, wait for it, and clean its group.
+
+    The slot's event is posted whatever happens here: an error is kept in
+    ``running.attend_error`` (and recorded as ``AttendFailed``) after the
+    child has been ended, so the runner never waits for a slot forever.
+    """
     process = running.process
-    if process is None:
+    try:
+        if process is None:
+            return
+        reader = threading.Thread(target=_read_last_line, args=(running,), daemon=True)
+        reader.start()
+        if process.stdin is not None:
+            with contextlib.suppress(OSError):
+                process.stdin.write(payload)
+            with contextlib.suppress(OSError):
+                process.stdin.close()
+        _await_child(running, process, group)
+        reader.join(_JOIN_SECONDS)
+    except Exception as error:  # any failure here must still free the slot
+        running.attend_error = f"{type(error).__name__}: {error}"
+        if process is not None:
+            group.terminate()
+            _discard(process)
+            running.returncode = process.returncode
+    finally:
         events.put(running.slot)
-        return
-    reader = threading.Thread(target=_read_last_line, args=(running,), daemon=True)
-    reader.start()
-    if process.stdin is not None:
-        with contextlib.suppress(OSError):
-            process.stdin.write(payload)
-        with contextlib.suppress(OSError):
-            process.stdin.close()
+
+
+def _await_child(running: _Running, process: subprocess.Popen[bytes], group: ProcessGroup) -> None:
+    """Wait for a child to end, end what it left in its group, and reap it."""
     if sys.platform != "win32":
         # Wait without reaping, so the group id cannot be reused before it is killed.
-        with contextlib.suppress(ChildProcessError, OSError):
-            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+        _wait_unreaped(process)
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
         group.forget(process.pid)  # before the reap, so a reused id is never signalled
@@ -1060,8 +1308,54 @@ def _attend(
     else:
         running.returncode = process.wait()
         group.terminate()  # what the call left running in the slot's job
-    reader.join(_JOIN_SECONDS)
-    events.put(running.slot)
+
+
+def _wait_unreaped(process: subprocess.Popen[bytes]) -> None:
+    """Wait for a child to end without reaping it, where the platform allows (POSIX).
+
+    ``os.waitid`` with ``WNOWAIT`` where it exists; a kqueue process-exit
+    event where it does not (macOS before Python 3.13); otherwise a plain
+    wait, which reaps.
+    """
+    waitid = getattr(os, "waitid", None)
+    if waitid is not None:
+        flags = getattr(os, "WEXITED", 4) | getattr(os, "WNOWAIT", 0x01000000)
+        with contextlib.suppress(ChildProcessError, OSError):
+            waitid(getattr(os, "P_PID", 1), process.pid, flags)
+        return
+    kqueues: Any = select
+    if hasattr(kqueues, "kqueue"):
+        try:
+            watcher = kqueues.kqueue()
+            try:
+                event = kqueues.kevent(
+                    process.pid,
+                    filter=kqueues.KQ_FILTER_PROC,
+                    flags=kqueues.KQ_EV_ADD | kqueues.KQ_EV_ONESHOT,
+                    fflags=kqueues.KQ_NOTE_EXIT,
+                )
+                watcher.control([event], 1, None)
+            finally:
+                watcher.close()
+        except OSError:  # it has already ended (and waits, unreaped, as a zombie)
+            pass
+        return
+    process.wait()
+
+
+def _discard(process: subprocess.Popen[bytes]) -> None:
+    """End a child the runner will not attend, with its process group, and reap it."""
+    if sys.platform != "win32" and process.returncode is None:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()  # TerminateProcess ends a suspended process too
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(_JOIN_SECONDS)
+    for stream in (process.stdin, process.stdout):
+        if stream is not None:
+            with contextlib.suppress(OSError):
+                stream.close()
 
 
 def _read_last_line(running: _Running) -> None:

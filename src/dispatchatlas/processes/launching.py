@@ -29,6 +29,9 @@ from typing import Any
 
 __all__ = ["Launched", "launch_detached", "main"]
 
+_ACCESS_DENIED = 5
+"""The Windows error of a breakaway that the caller's job does not permit."""
+
 
 @dataclass(frozen=True)
 class Launched:
@@ -91,7 +94,9 @@ def launch_detached(
                     **options,
                 )
                 breakaway = True
-            except OSError:
+            except OSError as error:
+                if getattr(error, "winerror", None) != _ACCESS_DENIED:
+                    raise  # a missing command, say: not the job's doing
                 stream.write(
                     b"--- warning: the caller's job forbids breakaway; the command ends with it\n"
                 )

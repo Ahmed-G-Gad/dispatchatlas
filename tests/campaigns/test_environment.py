@@ -577,6 +577,25 @@ def test_trees_are_compared_by_path_and_digest(tmp_path: Path) -> None:
     assert not found.identical
 
 
+def test_a_tree_comparison_records_whether_newlines_were_normalized(tmp_path: Path) -> None:
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    for root, content in ((source, b"one\ntwo\n"), (installed, b"one\r\ntwo\r\n")):
+        root.mkdir()
+        (root / "a.py").write_bytes(content)
+    text = environment.compare_trees(installed, source)
+    exact = environment.compare_trees(installed, source, normalize_newlines=False)
+    assert (text.identical, text.normalized_newlines) == (True, True)
+    assert (exact.identical, exact.normalized_newlines) == (False, False)
+    assert exact.to_dict() == {
+        "identical": False,
+        "normalized_newlines": False,
+        "matched": 0,
+        "missing": [],
+        "extra": [],
+        "differing": ["a.py"],
+    }
+
+
 def test_an_installed_package_is_located_without_importing_it() -> None:
     found = environment.installed_package_dir("dispatchatlas")
     assert found is not None

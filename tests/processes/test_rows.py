@@ -118,3 +118,42 @@ def test_lines_are_counted_incrementally(tmp_path: Path, monkeypatch: pytest.Mon
     more, new_size = count_lines(path, offset=size)
     assert (first, first + more) == (3, 5)
     assert count_lines(path) == (5, new_size)
+
+
+def test_a_row_is_in_the_file_before_its_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "rows.jsonl"
+    seen: list[bytes] = []
+    real = os.fsync
+
+    def look(fd: int) -> None:
+        seen.append(path.read_bytes())  # through another handle: flushed bytes only
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", look)
+    with RowWriter(path) as writer:
+        writer.write({"a": 1})
+        writer.write({"b": 2})
+    assert seen == [b'{"a":1}\n', b'{"a":1}\n{"b":2}\n']
+
+
+def test_a_row_that_is_not_json_names_its_field(tmp_path: Path) -> None:
+    with RowWriter(tmp_path / "rows.jsonl", fsync=False) as writer:
+        with pytest.raises(ValueError, match=r"field 'x\.y' is nan"):
+            writer.write({"x": {"y": float("nan")}})
+        with pytest.raises(ValueError, match=r"field 'z\[1\]' is a set"):
+            writer.write({"z": [1, {2}]})
+    assert rows_module.unwritable_field({"a": [1, 2.5, None, {"b": "c"}]}) is None
+    assert (
+        rows_module.unwritable_field({(1, 2): 3}) == "the row has a key of type tuple, not a string"
+    )
+
+
+def test_repeated_keys_are_listed_in_order_of_first_sight(tmp_path: Path) -> None:
+    path = tmp_path / "rows.jsonl"
+    assert rows_module.duplicate_keys(path, lambda row: row["k"]) == []
+    with RowWriter(path, fsync=False) as writer:
+        for key in ("b", "a", "b", "c", "a", "b"):
+            writer.write({"k": key})
+    assert rows_module.duplicate_keys(path, lambda row: row["k"]) == ['"b"', '"a"']

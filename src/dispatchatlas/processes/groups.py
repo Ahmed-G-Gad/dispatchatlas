@@ -156,6 +156,28 @@ class ProcessGroup:
                 self._members.append(pid)
         return error
 
+    def assign_process(self, process: subprocess.Popen[Any]) -> str | None:
+        """Put a process started with :meth:`popen_options` in the group; return the error.
+
+        Like :meth:`assign`, but on Windows it uses the handle that
+        :class:`subprocess.Popen` already holds (with full access) instead of
+        opening the process again by its id, so a process that cannot be
+        opened is still assigned and, above all, resumed.
+        """
+        handle = getattr(process, "_handle", None) if sys.platform == "win32" else None
+        if handle is None:
+            return self.assign(process.pid)
+        error: str | None
+        if self.platform == "job" and self.handle is not None:
+            error = _assign_handle(self.handle, int(handle), process.pid, resume=True)
+        else:
+            error = self.error or "the group could not be created"
+            _assign_handle(None, int(handle), process.pid, resume=True)
+        if error is None:
+            with self._lock:
+                self._members.append(process.pid)
+        return error
+
     def forget(self, pid: int) -> None:
         """Stop tracking a member that has ended (POSIX: its process group)."""
         with self._lock, contextlib.suppress(ValueError):
@@ -232,26 +254,53 @@ def join_group(name: str) -> str:
     return joined
 
 
-def end_with_parent_process() -> None:
+def end_with_parent_process(runner: int | None = None) -> None:
     """End the calling process and its process group when its parent is gone (POSIX).
 
-    A daemon thread polls the parent's id once a second; when it changes,
-    the parent has died, and the thread kills the process group this process
-    leads, or this process alone. On Windows it does nothing: the job
+    Args:
+        runner: The id of the process that started this one, as that process
+            recorded it. When the parent seen now is another process and
+            ``runner`` no longer exists, the runner died before this call
+            (during the interpreter's start), and the process ends at once.
+            A parent seen now that differs while ``runner`` lives is a
+            launcher in between, which is watched instead.
+
+    A daemon thread then polls the parent's id once a second; when it
+    changes, the parent has died, and the thread kills the process group this
+    process leads, or this process alone. On Windows it does nothing: the job
     object of the group ends with the parent's handle.
     """
     if sys.platform != "win32":
         parent = os.getppid()
+        if runner is not None and parent != runner and not _exists(runner):
+            _end_own_group()
 
         def watch() -> None:
             while os.getppid() == parent:
                 time.sleep(_PARENT_POLL_SECONDS)
-            if os.getpgrp() == os.getpid():
-                with contextlib.suppress(OSError):
-                    os.killpg(os.getpgrp(), signal.SIGKILL)
-            os._exit(1)
+            _end_own_group()
 
         threading.Thread(target=watch, name="dispatchatlas-parent-watch", daemon=True).start()
+
+
+def _exists(pid: int) -> bool:
+    """Return whether a process ``pid`` exists (POSIX); one owned by another user counts."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _end_own_group() -> None:
+    """Kill the process group this process leads, or end this process alone (POSIX)."""
+    if sys.platform != "win32":
+        if os.getpgrp() == os.getpid():
+            with contextlib.suppress(OSError):
+                os.killpg(os.getpgrp(), signal.SIGKILL)
+    os._exit(1)
 
 
 # ----------------------------------------------------------------- Windows
@@ -362,25 +411,34 @@ def _assign(job: int | None, pid: int, *, resume: bool = False) -> str | None:
     """
     error: str | None = "job objects are a Windows facility"
     if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-
         kernel32 = _kernel32()
         access = _SET_QUOTA_AND_TERMINATE | (_SUSPEND_RESUME if resume else 0)
         handle = kernel32.OpenProcess(access, False, pid)
         if not handle:
             error = f"process {pid} could not be opened: {_last_error()}"
         else:
-            error = None
-            if job is not None and not kernel32.AssignProcessToJobObject(job, handle):
-                error = f"process {pid} could not join the job object: {_last_error()}"
-            if resume:
-                ntdll = ctypes.WinDLL("ntdll")
-                ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
-                ntdll.NtResumeProcess.restype = ctypes.c_long
-                status = ntdll.NtResumeProcess(handle)
-                if status != 0 and error is None:
-                    error = f"process {pid} could not be resumed: status {status & 0xFFFFFFFF:#x}"
+            error = _assign_handle(job, handle, pid, resume=resume)
             kernel32.CloseHandle(handle)
+    return error
+
+
+def _assign_handle(job: int | None, handle: int, pid: int, *, resume: bool) -> str | None:
+    """Put the process of an open ``handle`` in a job object and resume it if asked (Windows)."""
+    error: str | None = "job objects are a Windows facility"
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 - Windows only
+
+        kernel32 = _kernel32()
+        error = None
+        if job is not None and not kernel32.AssignProcessToJobObject(job, handle):
+            error = f"process {pid} could not join the job object: {_last_error()}"
+        if resume:
+            ntdll = ctypes.WinDLL("ntdll")
+            ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
+            ntdll.NtResumeProcess.restype = ctypes.c_long
+            status = ntdll.NtResumeProcess(handle)
+            if status != 0 and error is None:
+                error = f"process {pid} could not be resumed: status {status & 0xFFFFFFFF:#x}"
     return error
 
 

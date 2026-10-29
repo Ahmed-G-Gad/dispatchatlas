@@ -5,20 +5,24 @@ standard input::
 
     {"schema": "dispatchatlas.call/1", "key": ..., "target": "package.module:function",
      "arguments": {...}, "cpu": 7, "group": "<name>", "attempt": 1,
-     "clean_tokens": [...]}
+     "clean_tokens": [...], "parent": 1234}
 
-and then, in this order: joins its process group by name
-(:func:`~dispatchatlas.processes.groups.join_group`), pins itself to ``cpu``
-and reads its mask back (:func:`~dispatchatlas.processes.affinity.pin_self`),
-on POSIX systems starts a thread that ends it when its parent dies, points
-``sys.stdout`` at the standard error stream so the function's prints cannot
-corrupt the reply, imports the target, and calls it with the arguments. The
-**last line** of its standard output is the reply, one JSON object:
+First it keeps a private copy of its standard output descriptor for the
+reply and points descriptor 1, ``sys.stdout``, and on Windows the standard
+output handle at the standard error stream for good, so nothing the function
+or anything it starts writes can corrupt the reply. Then, in this order, it
+joins its process group by name
+(:func:`~dispatchatlas.processes.groups.join_group`), on POSIX systems ends
+itself if the runner ``parent`` is already gone and starts a thread that ends
+it when the runner dies, pins itself to ``cpu`` and reads its mask back
+(:func:`~dispatchatlas.processes.affinity.pin_self`), imports the target, and
+calls it with the arguments. The **last line** of its standard output is the
+reply, one JSON object:
 ``{"row": {...}, "facts": {...}}`` with exit code 0, or ``{"error": {"type":
 ..., "message": ...}, "facts": {...}}`` with exit code 1. A traceback goes
 to the standard error stream only. Each failing step has its own error type:
 ``BadDocument``, ``GroupRefused``, ``PinningRefused``, ``TargetNotFound``,
-``RowNotMapping``, or the class of what the function raised.
+``RowNotMapping``, ``RowNotSerializable``, or the class of what the function raised.
 
 ``facts`` holds ``pid``, ``cpu``, ``affinity_inherited`` (the mask the
 process started with), ``affinity_mask`` (the mask read back after pinning),
@@ -35,6 +39,7 @@ rather than imported.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import os
@@ -49,6 +54,7 @@ from typing import Any
 from dispatchatlas.processes.affinity import current_mask, pin_self
 from dispatchatlas.processes.groups import end_with_parent_process, join_group
 from dispatchatlas.processes.memory import peak_memory_bytes
+from dispatchatlas.processes.rows import unwritable_field
 
 __all__ = [
     "SCHEMA",
@@ -74,10 +80,21 @@ THREAD_VARIABLES = (
 """Environment variables that limit the thread pools of numerical libraries."""
 
 _MESSAGE_LIMIT = 2000
+_STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
 _TRACEBACK_LINE = re.compile(r'File "[^\n]*')
-_WINDOWS_PATH = re.compile(r"\b[A-Za-z]:[\\/][^\s\"'<>|]*")
-_UNC_PATH = re.compile(r"\\\\[^\s\"'<>|\\]+\\[^\s\"'<>|]*")
-_POSIX_PATH = re.compile(r"(?<![\w.:/\\~-])/(?:[^\s/\"'<>|]+/)+[^\s/\"'<>|]*")
+# A path in quotes, as the text of an OSError gives it (with doubled backslashes):
+# everything up to the matching closing quote.
+_QUOTED_PATH = re.compile(
+    r"""(?P<quote>['"])"""
+    r"(?:[A-Za-z]:(?:\\\\|\\|/)|\\\\(?:\\\\)?[^\s'\"\\]|/[^\s'\"/]|~/)"
+    r"[^\r\n]*?(?P=quote)"
+)
+# Unquoted paths may hold spaces: each runs to the last separator on its line,
+# then to the end of that last name.
+_REST = r"(?:[^\"'<>|\r\n]*[\\/])?[^\s\"'<>|]*"
+_WINDOWS_PATH = re.compile(r"\b[A-Za-z]:(?:\\\\|\\|/)" + _REST)
+_UNC_PATH = re.compile(r"\\\\(?:\\\\)?[^\s\"'<>|\\]+(?:\\\\|\\)" + _REST)
+_POSIX_PATH = re.compile(r"(?<![\w.:/\\~<>-])/[^\s/\"'<>|]+/" + _REST)
 _SPACE = re.compile(r"\s+")
 
 
@@ -92,34 +109,54 @@ class _RefusedError(Exception):
 def clean_message(text: str, *, tokens: Iterable[str] = (), limit: int = _MESSAGE_LIMIT) -> str:
     """Return an error message with file paths and named tokens removed.
 
-    Removed: everything from ``File "`` to the end of its line (a traceback
-    frame), Windows drive paths, UNC paths, and absolute POSIX paths of two
-    or more segments, each replaced by ``<path>``; then every token,
-    ignoring case, replaced by ``<token>``. Whitespace is collapsed and the
-    result cut to ``limit`` characters.
+    Removed, in this order: everything from ``File "`` to the end of its
+    line (a traceback frame), replaced by ``<frame>``; a path in quotes, up
+    to its closing quote, replaced by ``<path>`` inside the same quotes;
+    Windows drive paths, UNC paths, and absolute POSIX paths of two or more
+    segments, each replaced by ``<path>``; then every token, ignoring case,
+    replaced by ``<token>``. Whitespace is collapsed and the result cut to
+    ``limit`` characters.
+
+    An unquoted path may hold spaces, so it is taken to run to the last path
+    separator on its line: text after a path on the same line can be
+    removed with it. Names that must never appear are best passed as
+    ``tokens``, which are removed wherever they occur.
     """
     cleaned = _TRACEBACK_LINE.sub("<frame>", text)
-    cleaned = _UNC_PATH.sub("<path>", cleaned)
+    cleaned = _QUOTED_PATH.sub(r"\g<quote><path>\g<quote>", cleaned)
     cleaned = _WINDOWS_PATH.sub("<path>", cleaned)
+    cleaned = _UNC_PATH.sub("<path>", cleaned)
     cleaned = _POSIX_PATH.sub("<path>", cleaned)
-    for token in sorted({item for item in tokens if item}, key=len, reverse=True):
-        cleaned = re.sub(re.escape(token), "<token>", cleaned, flags=re.IGNORECASE)
+    cleaned = _remove_tokens(cleaned, tokens)
     cleaned = _SPACE.sub(" ", cleaned).strip()
     if len(cleaned) > limit:
         cleaned = cleaned[: max(0, limit - 3)] + "..."
     return cleaned
 
 
+def _remove_tokens(text: str, tokens: Iterable[str]) -> str:
+    """Replace every token in ``text``, ignoring case, by ``<token>``; longest first."""
+    for token in sorted({str(item) for item in tokens if item}, key=len, reverse=True):
+        text = re.sub(re.escape(token), "<token>", text, flags=re.IGNORECASE)
+    return text
+
+
 def describe_error(error: BaseException, *, tokens: Iterable[str] = ()) -> dict[str, str]:
-    """Return ``{"type", "message"}`` for an exception, the message cleaned.
+    """Return ``{"type", "message"}`` for an exception, both cleaned of tokens.
 
     Classes of the ``builtins`` module keep their plain name; others are
     qualified by their module. An empty message becomes the type's name.
+    The tokens are removed from the type too, since a module or class name
+    can hold one.
     """
+    tokens = tuple(tokens)
     cls = type(error)
     module = cls.__module__
     name = cls.__qualname__ if module == "builtins" else f"{module}.{cls.__qualname__}"
-    return {"type": name, "message": clean_message(str(error) or name, tokens=tokens)}
+    return {
+        "type": _remove_tokens(name, tokens),
+        "message": clean_message(str(error) or name, tokens=tokens),
+    }
 
 
 def locate_callable(target: str) -> Callable[..., Any]:
@@ -209,7 +246,8 @@ def _prepare(
             facts["group"] = join_group(str(group))
         except RuntimeError as error:
             raise _RefusedError("GroupRefused", str(error)) from None
-        end_with_parent_process()
+        parent = document.get("parent")
+        end_with_parent_process(parent if isinstance(parent, int) else None)
     cpu = document.get("cpu")
     if cpu is not None:
         try:
@@ -247,58 +285,90 @@ def child_main(
 
     Returns:
         The exit code: 0 for a row, 1 for an error reply.
+
+    The reply travels on a private copy of the standard output descriptor.
+    Before anything else runs, descriptor 1 (and, on Windows, the process's
+    standard output handle) is pointed at the standard error stream for the
+    rest of the process's life, so whatever the function, an exit handler,
+    a late thread, or a helper process that inherited it writes to standard
+    output, before or after the reply, lands in the standard error stream.
+    The function is meant to be the entry of a process of its own.
     """
     arguments = sys.argv[1:] if argv is None else list(argv)
     if "--help" in arguments or "-h" in arguments:
         sys.stdout.write(__doc__ or "")
         return 0
-    reply_stream = sys.stdout
-    sys.stdout = sys.stderr  # a print from the function must not reach the reply
+    reply_fd = _divert_standard_output()
+    document: Any = None
+    problem: str | None = None
     try:
-        document: Any = None
-        problem: str | None = None
-        try:
-            document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as error:
-            problem = clean_message(str(error))
-        if problem is None and not isinstance(document, Mapping):
-            problem = "the document is not an object"
-        if problem is None:
-            reply, code = run_child(document, resolve=resolve)
-        else:
-            reply = {
-                "error": {"type": "BadDocument", "message": problem},
-                "facts": {"pid": os.getpid()},
-            }
-            code = 1
-        try:
-            line = json.dumps(reply, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-        except (TypeError, ValueError) as error:
-            line = json.dumps(
-                {
-                    "error": {
-                        "type": "RowNotSerializable",
-                        "message": clean_message(f"the row cannot be written as JSON: {error}"),
-                    },
-                    "facts": reply.get("facts"),
+        document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        problem = clean_message(str(error))
+    if problem is None and not isinstance(document, Mapping):
+        problem = "the document is not an object"
+    if problem is None:
+        reply, code = run_child(document, resolve=resolve)
+    else:
+        reply = {
+            "error": {"type": "BadDocument", "message": problem},
+            "facts": {"pid": os.getpid()},
+        }
+        code = 1
+    try:
+        line = json.dumps(reply, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError) as error:
+        reason = unwritable_field(reply.get("row")) or unwritable_field(reply) or str(error)
+        tokens = tuple(str(token) for token in (document or {}).get("clean_tokens") or ())
+        line = json.dumps(
+            {
+                "error": {
+                    "type": "RowNotSerializable",
+                    "message": clean_message(
+                        f"the row cannot be written as JSON: {reason}", tokens=tokens
+                    ),
                 },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            code = 1
-        # A leading line feed ends whatever the function wrote to the descriptor directly.
-        data = "\n" + line + "\n"
-        binary = getattr(reply_stream, "buffer", None)
-        if binary is not None:
-            reply_stream.flush()
-            binary.write(data.encode("utf-8"))
-            binary.flush()
-        else:
-            reply_stream.write(data)
-            reply_stream.flush()
-    finally:
-        sys.stdout = reply_stream
+                "facts": reply.get("facts"),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        code = 1
+    _write_reply(reply_fd, "\n" + line + "\n")
     return code
+
+
+def _divert_standard_output() -> int:
+    """Keep a private descriptor for the reply and point standard output at stderr for good.
+
+    Returns:
+        The private descriptor, not inherited by processes started later.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        sys.stdout.flush()
+    reply_fd = os.dup(1)  # not inheritable (PEP 446)
+    os.dup2(2, 1)
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 - Windows only
+        import msvcrt  # noqa: PLC0415 - Windows only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.SetStdHandle.argtypes = [ctypes.c_ulong, ctypes.c_void_p]
+        kernel32.SetStdHandle.restype = ctypes.c_int
+        kernel32.SetStdHandle(_STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(2))
+    sys.stdout = sys.stderr
+    return reply_fd
+
+
+def _write_reply(descriptor: int, text: str) -> None:
+    """Write the reply in full to its descriptor, then close it so the reader sees its end."""
+    data = memoryview(text.encode("utf-8"))
+    try:
+        while data:
+            written = os.write(descriptor, data)
+            data = data[written:]
+    finally:
+        os.close(descriptor)
 
 
 def _utc_now() -> str:

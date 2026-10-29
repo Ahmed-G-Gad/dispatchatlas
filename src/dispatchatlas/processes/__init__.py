@@ -67,6 +67,7 @@ if TYPE_CHECKING:
         TornRowsError,
         canonical_key,
         done_keys,
+        duplicate_keys,
         read_rows,
         repair_rows,
     )
@@ -108,6 +109,7 @@ _EXPORTS = {
         "TornRowsError",
         "canonical_key",
         "done_keys",
+        "duplicate_keys",
         "read_rows",
         "repair_rows",
     ),
@@ -144,6 +146,7 @@ __all__ = [
     "current_mask",
     "descendants",
     "done_keys",
+    "duplicate_keys",
     "end_process",
     "format_status",
     "interleaved",

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from dispatchatlas.processes import groups
 from dispatchatlas.processes.child import SCHEMA
 from dispatchatlas.processes.groups import ProcessGroup, group_name, join_group
 from dispatchatlas.processes.snapshots import end_process
@@ -150,6 +153,84 @@ def test_children_end_when_the_runner_is_killed(tmp_path: Path) -> None:
         assert end_process(runner_pid) is None
         assert gone(child, within=20)
         assert gone(grandchild, within=20)
+    finally:
+        runner.kill()
+        runner.wait(30)
+
+
+@windows_only
+def test_a_suspended_child_is_assigned_and_resumed_through_its_own_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = groups._kernel32
+
+    class NoOpening:
+        """kernel32 whose OpenProcess always fails, as for a process that cannot be opened."""
+
+        def __init__(self) -> None:
+            self._library = real()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._library, name)
+
+        @staticmethod
+        def OpenProcess(*arguments: Any) -> int:  # noqa: N802 - the Windows function's name
+            return 0
+
+    monkeypatch.setattr(groups, "_kernel32", NoOpening)
+    with ProcessGroup.create(group_name(os.getpid(), 97) + "-handle") as group:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(0.5)"],
+            stdin=subprocess.DEVNULL,
+            **group.popen_options(),
+        )
+        try:
+            assert group.assign_process(process) is None
+            assert process.wait(60) == 0  # resumed, so it ran and ended
+        finally:
+            process.kill()
+            process.wait(30)
+
+
+@posix_only
+def test_a_child_whose_runner_died_during_its_start_ends_at_once() -> None:
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait(30)  # reaped: its id names no process now
+    document = {
+        "schema": SCHEMA,
+        "key": "k",
+        "target": "tests.processes.child_targets:sleep",
+        "arguments": {"seconds": 60},
+        "cpu": None,
+        "group": "session",
+        "attempt": 1,
+        "parent": dead.pid,
+    }
+    completed = subprocess.run(
+        [sys.executable, "-m", "dispatchatlas.processes.child"],
+        input=json.dumps(document).encode("utf-8"),
+        capture_output=True,
+        cwd=ROOT,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert b'"row"' not in completed.stdout
+
+
+@posix_only
+@pytest.mark.slow
+def test_a_child_ends_within_seconds_of_its_runner_being_killed(tmp_path: Path) -> None:
+    runner = subprocess.Popen(
+        [sys.executable, "-m", "tests.processes.runner_script", str(tmp_path)], cwd=ROOT
+    )
+    try:
+        child, grandchild = map(int, wait_for(tmp_path / "pids", within=120).split())
+        runner_pid = int(wait_for(tmp_path / "runner.pid"))
+        if sys.platform != "win32":
+            os.kill(runner_pid, signal.SIGKILL)
+        assert gone(child, within=3)
+        assert gone(grandchild, within=3)
     finally:
         runner.kill()
         runner.wait(30)

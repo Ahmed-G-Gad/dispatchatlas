@@ -15,9 +15,11 @@ that JSON gives back for it are one key.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import threading
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,8 +35,10 @@ __all__ = [
     "canonical_key",
     "count_lines",
     "done_keys",
+    "duplicate_keys",
     "read_rows",
     "repair_rows",
+    "unwritable_field",
 ]
 
 type Key = str | int | tuple[Key, ...] | list[Key]
@@ -53,6 +57,46 @@ def canonical_key(key: Any) -> str:
         return json.dumps(key, sort_keys=True, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError) as error:
         raise ValueError(f"key {key!r} cannot be written as JSON: {error}") from error
+
+
+def unwritable_field(value: Any) -> str | None:
+    """Say which field of a row stops it being written as standard JSON, or ``None``.
+
+    The row is walked depth first; the first problem found is described with
+    its dotted path (``x.y``, ``items[2]``): a NaN or an infinity, which
+    standard JSON cannot hold, an object key that is not a string, or a value
+    of a type JSON has no form for (a set, a NumPy scalar, a date).
+    """
+    return _unwritable(value, "")
+
+
+def _unwritable(value: Any, path: str) -> str | None:
+    where = f"field '{path}'" if path else "the row"
+    if value is None or isinstance(value, str | bool | int):
+        return None
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return None
+        return (
+            f"{where} is {value!r} (NaN and infinities are not standard JSON; write null or a "
+            "string)"
+        )
+    if isinstance(value, Mapping):
+        for name, item in value.items():
+            if not (name is None or isinstance(name, str | int | float)):
+                return f"{where} has a key of type {type(name).__name__}, not a string"
+            label = str(name)
+            found = _unwritable(item, f"{path}.{label}" if path else label)
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list | tuple):
+        for index, item in enumerate(value):
+            found = _unwritable(item, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    return f"{where} is a {type(value).__name__}, which JSON has no form for"
 
 
 class TornRowsError(ValueError):
@@ -116,7 +160,8 @@ class RowWriter:
         try:
             text = json.dumps(dict(row), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
         except (TypeError, ValueError) as error:
-            raise ValueError(f"the row cannot be written as JSON: {error}") from error
+            reason = unwritable_field(row) or str(error)
+            raise ValueError(f"the row cannot be written as JSON: {reason}") from error
         data = text.encode("utf-8") + b"\n"
         with self._lock:
             self._stream.write(data)
@@ -181,6 +226,23 @@ def done_keys(path: str | Path, key_of: Callable[[Mapping[str, Any]], Any]) -> s
     if not target.exists():
         return set()
     return {canonical_key(key_of(row)) for row in read_rows(target)}
+
+
+def duplicate_keys(path: str | Path, key_of: Callable[[Mapping[str, Any]], Any]) -> list[str]:
+    """Return the canonical keys held by more than one row, in order of first sight.
+
+    A rows file written by one runner holds one row per key; a repeated key
+    means two runners wrote it, or rows were copied in by hand. Empty when
+    the file does not exist.
+
+    Raises:
+        TornRowsError: If a line is torn (see :func:`read_rows`).
+    """
+    target = Path(path)
+    if not target.exists():
+        return []
+    seen = Counter(canonical_key(key_of(row)) for row in read_rows(target))
+    return [key for key, count in seen.items() if count > 1]
 
 
 @dataclass(frozen=True)

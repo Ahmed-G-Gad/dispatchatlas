@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import os
 import subprocess
 import sys
@@ -70,3 +71,39 @@ def records_env(**arguments: Any) -> dict[str, Any]:
         "unbuffered": os.environ.get("PYTHONUNBUFFERED"),
         "mask": current_mask(),
     }
+
+
+def fail_after(seconds: float, message: str, **arguments: Any) -> dict[str, Any]:
+    """Sleep, then raise."""
+    time.sleep(seconds)
+    raise ValueError(message)
+
+
+def prints_at_exit(**arguments: Any) -> dict[str, Any]:
+    """Return the row; an exit handler prints to standard output after the reply."""
+    atexit.register(print, "printed at exit")
+    return dict(arguments)
+
+
+def helper_after_reply(**arguments: Any) -> dict[str, Any]:
+    """Start a helper that prints after the reply; the exit waits for it."""
+    helper = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(0.3); print('late', flush=True)"]
+    )
+    atexit.register(helper.wait)
+    return dict(arguments)
+
+
+class SecretBoom(Exception):  # noqa: N818 - the test needs a token in the class name
+    """An error whose class name holds a caller's word."""
+
+
+def raises_secret(**arguments: Any) -> dict[str, Any]:
+    """Raise an error whose class name holds a caller's word."""
+    raise SecretBoom("boom in secret")
+
+
+def unwritable(kind: str, **arguments: Any) -> dict[str, Any]:
+    """Return a row that standard JSON cannot hold: an infinity or a set, under ``x.y``."""
+    value: Any = float("inf") if kind == "inf" else {1, 2}
+    return {**arguments, "x": {"y": value}}

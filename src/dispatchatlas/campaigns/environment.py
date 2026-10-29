@@ -289,17 +289,35 @@ class TreeComparison:
         missing: Relative paths in the source tree but not in the installed one.
         extra: Relative paths in the installed tree but not in the source one.
         differing: Relative paths in both trees whose digests differ.
+        normalized_newlines: Whether CRLF was read as LF before hashing, so
+            that :attr:`identical` means the same text rather than the same
+            bytes.
     """
 
     matched: int
     missing: tuple[str, ...]
     extra: tuple[str, ...]
     differing: tuple[str, ...]
+    normalized_newlines: bool
 
     @property
     def identical(self) -> bool:
-        """Whether both trees hold the same files with the same content."""
+        """Whether both trees hold the same files with the same content.
+
+        Byte identity only when :attr:`normalized_newlines` is ``False``.
+        """
         return not (self.missing or self.extra or self.differing)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the comparison as a JSON-able dictionary, ``identical`` included."""
+        return {
+            "identical": self.identical,
+            "normalized_newlines": self.normalized_newlines,
+            "matched": self.matched,
+            "missing": list(self.missing),
+            "extra": list(self.extra),
+            "differing": list(self.differing),
+        }
 
 
 def compare_trees(
@@ -332,6 +350,7 @@ def compare_trees(
         missing=tuple(sorted(second.keys() - first.keys())),
         extra=tuple(sorted(first.keys() - second.keys())),
         differing=differing,
+        normalized_newlines=normalize_newlines,
     )
 
 

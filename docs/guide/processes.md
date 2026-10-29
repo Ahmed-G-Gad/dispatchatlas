@@ -64,6 +64,22 @@ line number and byte offset); `dispatchatlas processes rows-repair FILE`
 is not last means another writer touched the file, and is left for you to
 inspect.
 
+One rows file has one runner. For the whole run, `run_calls` holds an
+operating-system lock on `<rows stem>.lock` (whose text names the holder's
+process id and start time); a second `run_calls` on the same file, in this
+process or another, raises `ConfigError` before it starts anything. The lock
+ends with the process that holds it, so a killed runner leaves none behind. A
+rows file that holds one key twice is refused too (`duplicate_keys` lists
+the keys): move the extra rows aside before resuming.
+
+Each invocation appends a line to `<rows stem>.runs.jsonl`: when it started,
+its `stamp`, its number of workers, and its processors. A resume whose stamp,
+workers, or processors differ from the first line's raises `ConfigError`
+naming each difference, so one file never mixes code revisions or load
+conditions by accident; `allow_changed_run=True` resumes anyway. A rows file
+written before the runs sidecar existed is checked against the stamp fields
+of its rows.
+
 By default the runner adds what it knows about the call under `row["run"]`
 (see [Load](#load) and [Processors](#processors)). A `finish(row, facts)`
 function shapes the row instead, for example to flatten the fields a reader
@@ -77,8 +93,8 @@ the code (a stamp field the row already has is refused).
 calling process may use. Slot `i` owns `cpus[i]`; `workers` (at most
 `len(cpus)`) sets how many slots run.
 
-- The runner pins itself to the whole set for the run and returns to its
-  earlier set afterwards.
+- The runner pins itself to the whole set, the spare processors beyond
+  `workers` included, for the run and returns to its earlier set afterwards.
 - It creates each child while confined to the slot's processor, so the child
   and everything it starts begin there.
 - The child then pins **itself** to that processor and reads its mask back;
@@ -109,7 +125,9 @@ Each slot has a kill-on-close `ProcessGroup` for the whole run:
   lasting handle: when the runner dies, for any reason, the kernel ends every
   process in every slot's job.
 - On **POSIX** systems each child leads a session of its own, and a thread in
-  the child ends its process group when the runner's process is gone.
+  the child ends its process group when the runner's process is gone. A
+  child whose runner died while the child's interpreter was still starting
+  ends at once, since the runner's process id travels in the call's document.
 
 When a call ends, its slot's group is ended too, so nothing a call started
 keeps running beside the next call. A per-call `timeout_seconds` (or the
@@ -117,24 +135,43 @@ runner's `timeout_seconds`) ends the group of a call that passes it.
 
 ## Failures
 
-The child's last line of standard output is its reply: the row, or an error
-object; `print` in the function goes to standard error, which the runner
-appends to `<rows stem>.children.log` with every traceback. A failure is one
-line of `<rows stem>.errors.jsonl` (`CallError`): the key, the attempt, the
-type, a message with file paths, traceback frames, and the words of
-`clean_tokens` removed, the return code, whether the child replied, the
-call's facts, the processor, and the times. Types:
+The child's reply, the row or an error object, travels as the last line on a
+private copy of its standard output descriptor. Everything the call, an exit
+handler, a late thread, or a helper process writes to standard output, before
+or after the reply, goes to standard error instead, which the runner appends
+to `<rows stem>.children.log` with every traceback; it cannot take the
+reply's place. A failure is one line of `<rows stem>.errors.jsonl`
+(`CallError`): the key, the attempt, the type and a message with the words of
+`clean_tokens` removed (from both, since a module or class name can hold
+one), the message also without file paths and traceback frames, the return
+code, whether the child replied, the call's facts, the processor, and the
+times.
+
+Paths are recognised by their roots (`C:\`, `\\server\`, `/home/...`, and
+quoted paths as `OSError` prints them); an unquoted path may hold spaces, so
+it is taken to run to the last separator on its line, and text after it on
+that line can go with it. `clean_tokens` is the dependable filter for names
+that must never reach the sidecar: it removes them wherever they occur.
+
+Rows are standard JSON: a NaN, an infinity, or a value JSON has no form for
+(a set, a NumPy scalar, a date) makes the call fail with
+`RowNotSerializable`, and the message names the field (`field 'x.y' is inf`).
+Write `None` or a string instead, and convert NumPy scalars with `.item()`.
+
+Types:
 
 | Type | Meaning |
 | --- | --- |
-| the exception's class | the function raised (`ValueError`, `mypkg.errors.Bad`) |
-| `TargetNotFound`, `RowNotMapping`, `RowNotSerializable`, `BadDocument` | the call could not be made, or its result is not a row |
+| the exception's class | the function raised (`ValueError`, `mypkg.errors.Bad`); tokens removed |
+| `TargetNotFound`, `RowNotMapping`, `BadDocument` | the call could not be made, or its result is not a mapping |
+| `RowNotSerializable` | the row holds a NaN, an infinity, or a value that is not JSON; the message names the field |
 | `PinningRefused`, `GroupRefused` | the child could not pin itself or join its group |
 | `ProcessDied` | the child ended without a reply (exit code or signal) |
 | `Timeout` | the call passed its time limit and was ended |
 | `KeyMismatch` | `key_of` on the final row does not give the call's key |
 | `RowRefused` | `finish` failed, a stamp field collides, or the row is not JSON |
 | `StartFailed` | the child process could not be started |
+| `AttendFailed` | the runner's thread attending the child failed; the child was ended |
 
 After `max_failures` failures in one invocation (0 for no limit) the run
 stops at once: nothing more starts, every group is ended, the report is
@@ -153,9 +190,12 @@ as busy throughout, although for a few milliseconds no process of it runs
 while the next child starts. In the tail of a run, slots
 fall idle and the last calls run on a quieter machine. `ballast=True` keeps
 every slot busy until the last real call ends, with repeats of the calls in
-a seeded order (or with the calls you pass as `ballast`); their rows are
-discarded and their facts go to `<rows stem>.ballast.jsonl`. Ballast costs
-processor time and nothing else.
+a seeded order (`ballast_seed`, by default derived from the rows file's name),
+or with the calls you pass as `ballast`, repeated in the order you give;
+their rows are discarded and their facts go to `<rows stem>.ballast.jsonl`.
+Ballast costs processor time and nothing else. Ballast failures do not count
+towards `max_failures`, and after three ballast calls in a row fail, ballast
+stops for the rest of the run with a warning.
 
 ## Order
 
@@ -176,13 +216,23 @@ dispatchatlas processes watch --pid <printed pid> --rows results/rows.jsonl --cp
 its output appended to the log, in a process group of its own; on Windows it
 first asks to leave the job of the calling process (which an agent session
 or a CI step may hold with kill-on-close), and says `breakaway no` when the
-job forbids it, since the command then ends with that job.
+job forbids it, since the command then ends with that job. Any other failure
+to start, such as a missing command, is raised.
+
+The pid `launch` prints is that of the process it started. Where `python` is
+a virtual environment's launcher executable (on Windows), that process is the
+launcher, and the interpreter running the driver is its child: read masks
+from the child, and give either pid to `watch`.
 
 `watch` prints one line per interval: whether the runner is alive
-(`RUNNER-DEAD` first when it is not), its live descendants, the other Python
-interpreters whose masks meet the run's processors (with their ids), the
-rows file's line count and size, and the available memory. It never starts,
-restarts, or ends anything. `dispatchatlas processes list` shows processes
+(`RUNNER-DEAD` first when it is not), its live descendants (`children`, every
+process at any depth: about two per busy slot with a Windows launcher, plus
+console hosts), how many of them are named like an interpreter
+(`interpreters`), the other Python interpreters whose masks meet the run's
+processors (with their ids), the rows file's line count and size, and the
+available memory. Interpreter-named launchers above the watched process and
+above the watcher itself are not counted as other interpreters. It never
+starts, restarts, or ends anything. `dispatchatlas processes list` shows processes
 with parent, mask, and start time (`--children-of PID`,
 `--interpreters-on CPUS`), and `dispatchatlas processes end PID` ends a
 process on request.
@@ -196,7 +246,8 @@ A driver that refuses to start on unrecorded code can use:
 - `compare_trees(installed_package_dir("mypkg"), source)`: whether the
   installed copy of a package holds the same files with the same SHA-256
   digests as a source tree (`__pycache__` left out; CRLF read as LF unless
-  `normalize_newlines=False`);
+  `normalize_newlines=False`, so pass `False` to claim byte identity; the
+  result's `normalized_newlines` records which);
 - `peak_memory_bytes()` and `available_memory_bytes()`.
 
 Their results go into `stamp`, so every row carries them.

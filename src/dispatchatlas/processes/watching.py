@@ -33,7 +33,14 @@ from pathlib import Path
 from dispatchatlas.processes.affinity import parse_cpus
 from dispatchatlas.processes.memory import available_memory_bytes
 from dispatchatlas.processes.rows import count_lines
-from dispatchatlas.processes.snapshots import descendants, interpreters_on, is_running, snapshot
+from dispatchatlas.processes.snapshots import (
+    _PYTHON,
+    ProcessInfo,
+    descendants,
+    interpreters_on,
+    is_running,
+    snapshot,
+)
 
 __all__ = ["Status", "format_status", "main", "watch"]
 
@@ -45,9 +52,14 @@ class Status:
     Attributes:
         time_utc: When the poll was taken, ISO 8601 in UTC.
         runner_alive: Whether the runner process was running.
-        live_children: Processes the runner started, at any depth, running.
+        live_children: Processes the runner started, at any depth, running:
+            every launcher, interpreter, helper, and console host, so about
+            two per busy slot with a Windows virtual-environment launcher.
+        live_interpreters: Those of them named like a Python interpreter
+            (launchers included).
         foreign_interpreters: Python interpreters on the watched processors
-            that are neither the runner, its descendants, nor the watcher.
+            that are neither the runner, its descendants, the watcher, nor
+            an interpreter-named launcher above the runner or the watcher.
         foreign_pids: Their process ids.
         rows_lines: Complete lines of the rows file.
         rows_bytes: Size of the rows file.
@@ -57,6 +69,7 @@ class Status:
     time_utc: str
     runner_alive: bool
     live_children: int
+    live_interpreters: int
     foreign_interpreters: int
     foreign_pids: tuple[int, ...]
     rows_lines: int
@@ -95,6 +108,7 @@ def watch(
         children = tuple(info for info in tree if is_running(info.pid)) if alive else ()
         excluded = {own, pid, *(info.pid for info in tree)}
         excluded |= {info.pid for info in descendants(own, listed)}
+        excluded |= _interpreter_ancestors(own, listed) | _interpreter_ancestors(pid, listed)
         foreign = tuple(
             info
             for info in interpreters_on(watched, listed, exclude=excluded)
@@ -110,6 +124,7 @@ def watch(
             time_utc=datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
             runner_alive=alive,
             live_children=len(children),
+            live_interpreters=sum(1 for info in children if _PYTHON.match(info.name)),
             foreign_interpreters=len(foreign),
             foreign_pids=tuple(info.pid for info in foreign),
             rows_lines=lines,
@@ -120,6 +135,35 @@ def watch(
         if (not alive and not keep) or (until is not None and polls >= until):
             return
         time.sleep(interval)
+
+
+def _interpreter_ancestors(pid: int, listed: Sequence[ProcessInfo]) -> set[int]:
+    """Return the interpreters above ``pid`` up to the first process that is not one.
+
+    With a virtual environment's launcher executable on Windows, the parent
+    of an interpreter is a launcher named like an interpreter, which shares
+    its mask; it is part of the process watched, not a foreign one.
+    """
+    by_pid = {info.pid: info for info in listed}
+    found: set[int] = set()
+    current = by_pid.get(pid)
+    while current is not None and current.parent_pid is not None:
+        parent = by_pid.get(current.parent_pid)
+        if (
+            parent is None
+            or parent.pid in found
+            or parent.pid == pid
+            or not _PYTHON.match(parent.name)
+            or (
+                parent.started_utc
+                and current.started_utc
+                and parent.started_utc > current.started_utc
+            )
+        ):
+            break
+        found.add(parent.pid)
+        current = parent
+    return found
 
 
 def format_status(status: Status) -> str:
@@ -133,7 +177,8 @@ def format_status(status: Status) -> str:
     head = "RUNNER-DEAD " if not status.runner_alive else ""
     return (
         f"{head}{status.time_utc} runner={'alive' if status.runner_alive else 'dead'} "
-        f"children={status.live_children} foreign={status.foreign_interpreters} "
+        f"children={status.live_children} interpreters={status.live_interpreters} "
+        f"foreign={status.foreign_interpreters} "
         f"foreign_pids={foreign} rows={status.rows_lines} bytes={status.rows_bytes} "
         f"available={memory}"
     )

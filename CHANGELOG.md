@@ -163,15 +163,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the caller's key function, so a second invocation skips the calls that have
   a row and refuses a torn last line with its line number and byte offset;
   `repair_rows` and `dispatchatlas processes rows-repair` move the torn bytes
-  aside. Every row carries the processor, the affinity mask the child read
+  aside. A lock file held for the run refuses a second runner on the same
+  rows file, a file holding a key twice is refused (`duplicate_keys`), and a
+  resume whose stamp, worker count, or processors differ from the file's
+  first invocation, recorded in a runs sidecar, is refused unless the caller
+  allows it. A row holding a NaN, an infinity, or a value JSON has no form
+  for is a failure that names the field. Every row carries the processor, the affinity mask the child read
   back after pinning itself and the one it inherited, the process id, the
   thread limits, the peak working set, the times, the number of worker
   slots, and how many were busy when the call started and at the least
   during its life; an optional ballast mode keeps every slot busy with
   discarded repeat calls until the last real call ends. A call that raises,
   dies, returns something that is not a row, or passes its time limit is
-  recorded in a sidecar file, with a message cleared of file paths and of
-  caller-named words, never in the rows file, and is retried on the next
+  recorded in a sidecar file, with a message cleared of file paths (with or
+  without spaces) and a message and type cleared of caller-named words,
+  never in the rows file, and is retried on the next
   invocation unless skipped; after a given number of failures the run stops
   at once, ends every child through its process group, writes its report,
   and raises `CallsStoppedError`. `interleaved` orders calls by a seeded
@@ -182,7 +188,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interpreter. Each slot has a kill-on-close process group, a Windows job
   object that a child enters before its first instruction and also joins by
   name, or a session on POSIX systems, so a dead runner takes its children
-  with it and the end of a call ends what it started. The child entry,
+  with it and the end of a call ends what it started. The child sends its
+  reply on a private copy of its standard output and points standard output
+  at the children's log for good, so nothing the call or a helper prints,
+  before or after the reply, can take the reply's place. The child entry,
   `python -m dispatchatlas.processes.child`, loads neither NumPy nor the
   solvers.
 - Process tools without extra dependencies: a process snapshot with parent,
@@ -199,7 +208,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same ones.
 - Provenance helpers: `git_state` can judge dirtiness within one folder of a
   checkout, `compare_trees` tells whether an installed package holds the
-  same files with the same SHA-256 digests as a source tree, and
+  same files with the same SHA-256 digests as a source tree (CRLF read as LF
+  unless `normalize_newlines=False`, and the result records which), and
   `peak_memory_bytes` and `available_memory_bytes` read the peak working set
   of the process and the available memory of the machine on Linux and
   Windows.
