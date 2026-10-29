@@ -890,7 +890,9 @@ class _Slot:
             child.close()
             raise
         child.close()
-        self._process, self._connection = process, parent
+        # On Windows the pipe's end is typed as a PipeConnection, a sibling of Connection.
+        self._connection = parent  # type: ignore[assignment, unused-ignore]
+        self._process = process
         self._job = contain(process)
         self._held, self._ready, self._note = None, False, None
 

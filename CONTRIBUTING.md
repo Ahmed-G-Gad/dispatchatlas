@@ -43,6 +43,8 @@ Every pull request must pass the same checks as the continuous integration:
 uv run ruff format --check .   # formatting; `uv run ruff format .` fixes it
 uv run ruff check .            # lint rules, including docstrings
 uv run mypy                    # strict type checking of src, tests, and examples
+uv run mypy --platform win32   # the same, as Windows sees the code
+uv run mypy --platform darwin  # the same, as macOS sees the code
 uv run pytest                  # the test suite
 uv run pytest -m "not slow"    # the suite without the slow tests
 uv run pre-commit run --all-files

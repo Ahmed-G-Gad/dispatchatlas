@@ -1141,21 +1141,22 @@ def _foreign(found_id: str, found_hash: str, run_id: str, config_hash: str) -> s
 
 
 def _try_lock(handle: IO[bytes]) -> bool:
+    locked = True
     if sys.platform == "win32":
         import msvcrt  # noqa: PLC0415 - Windows only
 
         try:
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
-            return False
-        return True
-    import fcntl  # noqa: PLC0415 - POSIX only
+            locked = False
+    else:
+        import fcntl  # noqa: PLC0415 - POSIX only
 
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return False
-    return True
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            locked = False
+    return locked
 
 
 def _unlock(handle: IO[bytes]) -> None:
@@ -1164,7 +1165,7 @@ def _unlock(handle: IO[bytes]) -> None:
 
         with contextlib.suppress(OSError):
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl  # noqa: PLC0415 - POSIX only
+    else:
+        import fcntl  # noqa: PLC0415 - POSIX only
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

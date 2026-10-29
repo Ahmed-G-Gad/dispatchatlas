@@ -602,14 +602,14 @@ def test_a_worker_without_its_supervisor_ends_only_a_process_group_it_leads(
     if sys.platform == "win32":
         limits._end_self()
         assert exits == [1]
-        return
-    monkeypatch.setattr(os, "killpg", lambda group, sent: killed.append((group, sent)))
-    monkeypatch.setattr(os, "getpgrp", lambda: os.getpid() + 1)  # the group of another process
-    limits._end_self()
-    assert (killed, exits) == ([], [1])
-    monkeypatch.setattr(os, "getpgrp", os.getpid)
-    limits._end_self()
-    assert (killed, exits) == ([(os.getpid(), signal.SIGKILL)], [1, 1])
+    else:
+        monkeypatch.setattr(os, "killpg", lambda group, sent: killed.append((group, sent)))
+        monkeypatch.setattr(os, "getpgrp", lambda: os.getpid() + 1)  # another process's group
+        limits._end_self()
+        assert (killed, exits) == ([], [1])
+        monkeypatch.setattr(os, "getpgrp", os.getpid)
+        limits._end_self()
+        assert (killed, exits) == ([(os.getpid(), signal.SIGKILL)], [1, 1])
 
 
 @pytest.mark.parametrize("limit", [0.0, -1.0, float("inf"), float("nan")])

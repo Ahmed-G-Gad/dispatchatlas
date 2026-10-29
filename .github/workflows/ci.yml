@@ -30,6 +30,8 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy
+      - run: uv run mypy --platform win32
+      - run: uv run mypy --platform darwin
 
   test:
     name: Test on ${{ matrix.os }} with Python ${{ matrix.python }}
