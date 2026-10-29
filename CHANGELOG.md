@@ -153,6 +153,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   analysis bundle states the `runs_digest` of the analysed plan and, when
   the campaign sets them, `seed_namespace`, `replicate_timed`, and the
   solvers' own replicate counts (`solver_replicates`).
+- A `processes` package for runs of caller-defined functions outside a
+  campaign. `run_calls` runs every `Call` of a list in a child process of its
+  own, started with the running interpreter on a processor of its own from an
+  allowed set given as indices, a mask, or ranges, and appends the mapping
+  each call returns as one JSON line to a rows file: UTF-8 without a
+  byte-order mark, line feeds only, one `fsync` per row, one writer. A call is
+  identified by a caller-defined key, which the rows file gives back through
+  the caller's key function, so a second invocation skips the calls that have
+  a row and refuses a torn last line with its line number and byte offset;
+  `repair_rows` and `dispatchatlas processes rows-repair` move the torn bytes
+  aside. Every row carries the processor, the affinity mask the child read
+  back after pinning itself and the one it inherited, the process id, the
+  thread limits, the peak working set, the times, the number of worker
+  slots, and how many were busy when the call started and at the least
+  during its life; an optional ballast mode keeps every slot busy with
+  discarded repeat calls until the last real call ends. A call that raises,
+  dies, returns something that is not a row, or passes its time limit is
+  recorded in a sidecar file, with a message cleared of file paths and of
+  caller-named words, never in the rows file, and is retried on the next
+  invocation unless skipped; after a given number of failures the run stops
+  at once, ends every child through its process group, writes its report,
+  and raises `CallsStoppedError`. `interleaved` orders calls by a seeded
+  shuffle, optionally class by class.
+- Each child pins itself to its slot's processor first thing and refuses to
+  run when the mask it reads back differs, which matters where the
+  environment's `python` executable is a launcher that starts the real
+  interpreter. Each slot has a kill-on-close process group, a Windows job
+  object that a child enters before its first instruction and also joins by
+  name, or a session on POSIX systems, so a dead runner takes its children
+  with it and the end of a call ends what it started. The child entry,
+  `python -m dispatchatlas.processes.child`, loads neither NumPy nor the
+  solvers.
+- Process tools without extra dependencies: a process snapshot with parent,
+  executable, affinity mask, and start time (Toolhelp on Windows, `/proc` on
+  Linux), the descendants of a process, the Python interpreters running on
+  given processors, `is_running`, `end_process`, `launch_detached` for a
+  command that must outlive its shell (no window, its own process group, out
+  of the caller's job where allowed), and `watch`, which reports once per
+  interval whether a runner is alive, its live children, other interpreters
+  on its processors, the rows file's line count, and the available memory,
+  and never restarts anything; on the command line as
+  `dispatchatlas processes launch | watch | list | end | rows-check | rows-repair`.
+  The campaign engine's affinity, job-object, and memory primitives are the
+  same ones.
+- Provenance helpers: `git_state` can judge dirtiness within one folder of a
+  checkout, `compare_trees` tells whether an installed package holds the
+  same files with the same SHA-256 digests as a source tree, and
+  `peak_memory_bytes` and `available_memory_bytes` read the peak working set
+  of the process and the available memory of the machine on Linux and
+  Windows.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in

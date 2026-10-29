@@ -42,9 +42,10 @@ import os
 import signal
 import sys
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dispatchatlas.core.logs import get_logger
+from dispatchatlas.processes import groups as _groups
 
 if TYPE_CHECKING:
     from multiprocessing.process import BaseProcess
@@ -55,18 +56,6 @@ if TYPE_CHECKING:
 __all__ = ["contain", "detach", "end_with_parent", "hard_limit", "kill", "release"]
 
 _LOG = get_logger(__name__)
-
-_KILL_ON_JOB_CLOSE = 0x2000
-"""``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``: closing the last handle ends every process."""
-
-_EXTENDED_LIMIT_INFORMATION = 9
-"""``JobObjectExtendedLimitInformation``, the class of the limits a job is given."""
-
-_SET_QUOTA_AND_TERMINATE = 0x0100 | 0x0001
-"""The access rights a process handle needs for the process to join a job."""
-
-_TERMINATED = 0x10000
-"""Exit code of the processes of a terminated job, the one ``multiprocessing`` kills with."""
 
 
 def hard_limit(stop: StopCriteria, execution: Execution) -> float | None:
@@ -179,7 +168,7 @@ def kill(process: BaseProcess, job: int | None = None, *, wait: float = 5.0) -> 
     """
     if job is not None:
         _end_job(job, terminate=True)
-    if process.pid is not None and hasattr(os, "killpg"):
+    if process.pid is not None and sys.platform != "win32":
         # Before the worker has called detach(), no group has its pid, and
         # the call fails harmlessly; the direct kill below covers that case.
         with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -199,99 +188,14 @@ def release(job: int | None) -> None:
         _end_job(job, terminate=False)
 
 
-def _kernel32() -> Any:
-    """Return ``kernel32`` with the signatures of the job functions declared, on Windows."""
-    library: Any = None
-    if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-        from ctypes import wintypes  # noqa: PLC0415 - Windows only
-
-        library = ctypes.WinDLL("kernel32", use_last_error=True)
-        library.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
-        library.CreateJobObjectW.restype = wintypes.HANDLE
-        library.SetInformationJobObject.argtypes = [
-            wintypes.HANDLE,
-            ctypes.c_int,
-            wintypes.LPVOID,
-            wintypes.DWORD,
-        ]
-        library.SetInformationJobObject.restype = wintypes.BOOL
-        library.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        library.OpenProcess.restype = wintypes.HANDLE
-        library.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-        library.AssignProcessToJobObject.restype = wintypes.BOOL
-        library.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-        library.TerminateJobObject.restype = wintypes.BOOL
-        library.CloseHandle.argtypes = [wintypes.HANDLE]
-        library.CloseHandle.restype = wintypes.BOOL
-    return library
-
-
 def _new_job(pid: int) -> tuple[int | None, str | None]:
-    """Create a kill-on-close job holding process ``pid``; return its handle, or the error."""
-    job: int | None = None
-    error: str | None = "job objects are a Windows facility"
-    if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-        from ctypes import wintypes  # noqa: PLC0415 - Windows only
+    """Create a kill-on-close job holding process ``pid``; return its handle, or the error.
 
-        class BasicLimits(ctypes.Structure):
-            _fields_ = (
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            )
-
-        class ExtendedLimits(ctypes.Structure):
-            _fields_ = (
-                ("BasicLimitInformation", BasicLimits),
-                ("IoInfo", ctypes.c_uint64 * 6),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            )
-
-        def failed(step: str) -> str:
-            return f"{step}: {ctypes.FormatError(ctypes.get_last_error()).strip()}"
-
-        kernel32 = _kernel32()
-        limits = ExtendedLimits()
-        limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
-        created = kernel32.CreateJobObjectW(None, None)
-        error = None
-        if not created:
-            error = failed("the job object could not be created")
-        elif not kernel32.SetInformationJobObject(
-            created, _EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
-        ):
-            error = failed("the job object could not be configured")
-        else:
-            handle = kernel32.OpenProcess(_SET_QUOTA_AND_TERMINATE, False, pid)
-            if not handle:
-                error = failed("the worker process could not be opened")
-            else:
-                if not kernel32.AssignProcessToJobObject(created, handle):
-                    error = failed("the worker process could not join the job object")
-                kernel32.CloseHandle(handle)
-        if error is None:
-            job = int(created)
-        elif created:
-            kernel32.CloseHandle(created)
-    return job, error
+    The job-object primitives live in :mod:`dispatchatlas.processes.groups`.
+    """
+    return _groups._new_job(pid)
 
 
 def _end_job(job: int, *, terminate: bool) -> None:
     """Terminate the processes of a job object, or close its handle."""
-    if sys.platform == "win32":
-        kernel32 = _kernel32()
-        if terminate:
-            kernel32.TerminateJobObject(job, _TERMINATED)
-        else:
-            kernel32.CloseHandle(job)
+    _groups._end_job(job, terminate=terminate)

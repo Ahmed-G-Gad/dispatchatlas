@@ -531,3 +531,54 @@ def test_every_session_records_its_environment(tmp_path: Path) -> None:
     assert session.environment["python"]["version"] == platform.python_version()
     assert session.workers == 1
     assert session.execution.backend == "sequential"
+
+
+@needs_git
+def test_dirtiness_can_be_judged_within_one_folder(tmp_path: Path) -> None:
+    git = _repository(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "driver.py").write_text("x = 1\n")
+    git("add", "scripts/driver.py")
+    git("commit", "-q", "-m", "scripts")
+    (tmp_path / "notes.txt").write_text("changed outside\n")
+    inside = environment.git_state(tmp_path, within="scripts")
+    assert inside is not None
+    assert (inside["commit"], inside["dirty"]) == (git("rev-parse", "HEAD"), False)
+    assert environment.git_state(tmp_path)["dirty"] is True  # type: ignore[index]
+    (tmp_path / "scripts" / "driver.py").write_text("x = 2\n")
+    assert environment.git_state(tmp_path, within=tmp_path / "scripts")["dirty"] is True  # type: ignore[index]
+    assert environment.git_state(tmp_path, within=tmp_path.parent) is None
+
+
+def test_trees_are_compared_by_path_and_digest(tmp_path: Path) -> None:
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    for root in (source, installed):
+        (root / "sub").mkdir(parents=True)
+        (root / "a.py").write_bytes(b"one\n")
+        (root / "sub" / "b.py").write_bytes(b"two\n")
+    (installed / "sub" / "__pycache__").mkdir()
+    (installed / "sub" / "__pycache__" / "b.cpython-313.pyc").write_bytes(b"\0")
+    assert environment.compare_trees(installed, source).identical
+    (source / "a.py").write_bytes(b"one\r\n")
+    assert environment.compare_trees(installed, source).identical
+    assert environment.compare_trees(installed, source, normalize_newlines=False).differing == (
+        "a.py",
+    )
+    (installed / "sub" / "b.py").write_bytes(b"changed\n")
+    (installed / "extra.py").write_bytes(b"")
+    (source / "missing.py").write_bytes(b"")
+    found = environment.compare_trees(installed, source)
+    assert (found.matched, found.differing, found.extra, found.missing) == (
+        1,
+        ("sub/b.py",),
+        ("extra.py",),
+        ("missing.py",),
+    )
+    assert not found.identical
+
+
+def test_an_installed_package_is_located_without_importing_it() -> None:
+    found = environment.installed_package_dir("dispatchatlas")
+    assert found is not None
+    assert (found / "processes" / "calls.py").is_file()
+    assert environment.installed_package_dir("no_such_package_here") is None

@@ -30,6 +30,8 @@ The bibliography of the implemented methods, the packaged data, and the modules 
 
 ::: dispatchatlas.cli.campaign
 
+::: dispatchatlas.cli.processes
+
 ::: dispatchatlas.cli.analyze
 
 ::: dispatchatlas.cli.references

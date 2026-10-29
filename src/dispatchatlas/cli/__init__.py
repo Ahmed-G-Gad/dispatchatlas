@@ -16,6 +16,7 @@ arguments, calls the library, and prints the result. The commands::
         solve PROBLEM --solver ID [--set KEY=VALUE ...] [limits] [--seed N] [--output FILE]
         check PROBLEM [SCHEDULE]             validate a problem, and a schedule against it
         campaign validate | estimate | run | check | replay
+        processes launch | watch | list | end | rows-check | rows-repair
         analyze CAMPAIGN_DIR --output DIR [analysis options]
         references [KEY ...] [--format text|bibtex]
 
@@ -42,6 +43,7 @@ from dispatchatlas.cli import (
     campaign,
     catalogs,
     check,
+    processes,
     references,
     solve,
     solvers,
@@ -69,6 +71,7 @@ _COMMANDS = (
     solve,
     check,
     campaign,
+    processes,
     analyze,
     references,
 )

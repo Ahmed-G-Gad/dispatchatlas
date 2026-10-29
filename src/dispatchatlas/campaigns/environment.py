@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import Distribution, PackageNotFoundError, distribution, entry_points
 from pathlib import Path
@@ -37,6 +39,7 @@ from urllib.request import url2pathname
 
 from dispatchatlas.campaigns.config import THREAD_VARIABLES
 from dispatchatlas.campaigns.processors import affinity_cpus, available_cpus
+from dispatchatlas.processes.memory import total_memory_bytes
 
 __all__ = [
     "LIBRARY",
@@ -45,9 +48,12 @@ __all__ = [
     "PLUGIN_GROUPS",
     "UNTRACKED_BYTES",
     "UNTRACKED_HASHED",
+    "TreeComparison",
     "capture_environment",
+    "compare_trees",
     "distribution_state",
     "git_state",
+    "installed_package_dir",
     "plugin_states",
     "sample_load",
     "source_digest",
@@ -274,6 +280,90 @@ def source_digest(package: str | Path | None = None) -> str | None:
     return hasher.hexdigest()
 
 
+@dataclass(frozen=True)
+class TreeComparison:
+    """How the files of two directory trees compare, by relative path and SHA-256 digest.
+
+    Attributes:
+        matched: Files present in both trees with equal digests.
+        missing: Relative paths in the source tree but not in the installed one.
+        extra: Relative paths in the installed tree but not in the source one.
+        differing: Relative paths in both trees whose digests differ.
+    """
+
+    matched: int
+    missing: tuple[str, ...]
+    extra: tuple[str, ...]
+    differing: tuple[str, ...]
+
+    @property
+    def identical(self) -> bool:
+        """Whether both trees hold the same files with the same content."""
+        return not (self.missing or self.extra or self.differing)
+
+
+def compare_trees(
+    installed: str | Path, source: str | Path, *, normalize_newlines: bool = True
+) -> TreeComparison:
+    """Compare an installed copy of a package with the source tree it should match.
+
+    Every file under each directory is compared by its path relative to the
+    directory and the SHA-256 digest of its content; ``__pycache__``
+    folders and compiled bytecode are left out, as in
+    :func:`source_digest`.
+
+    Args:
+        installed: The installed package directory, for example from
+            :func:`installed_package_dir`.
+        source: The package directory of the source tree.
+        normalize_newlines: Read CRLF line endings as LF before hashing, so
+            a checkout with converted line endings matches a copy built from
+            the same commit. ``False`` compares bytes exactly.
+
+    Raises:
+        OSError: If a directory or a file cannot be read.
+    """
+    first = _tree_digests(Path(installed), normalize_newlines=normalize_newlines)
+    second = _tree_digests(Path(source), normalize_newlines=normalize_newlines)
+    common = first.keys() & second.keys()
+    differing = tuple(sorted(name for name in common if first[name] != second[name]))
+    return TreeComparison(
+        matched=len(common) - len(differing),
+        missing=tuple(sorted(second.keys() - first.keys())),
+        extra=tuple(sorted(first.keys() - second.keys())),
+        differing=differing,
+    )
+
+
+def installed_package_dir(name: str) -> Path | None:
+    """Return the directory the import system loads package ``name`` from, or ``None``.
+
+    The package is located without being imported.
+    """
+    try:
+        found = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        return None
+    if found is None or not found.submodule_search_locations:
+        return None
+    return Path(next(iter(found.submodule_search_locations))).resolve()
+
+
+def _tree_digests(root: Path, *, normalize_newlines: bool) -> dict[str, str]:
+    """Return the SHA-256 digest of every file under ``root`` by its relative path."""
+    if not root.is_dir():
+        raise NotADirectoryError(f"{root} is not a directory")
+    digests: dict[str, str] = {}
+    for path in root.rglob("*"):
+        if "__pycache__" in path.parts or path.suffix == ".pyc" or not path.is_file():
+            continue
+        content = path.read_bytes()
+        if normalize_newlines:
+            content = content.replace(b"\r\n", b"\n")
+        digests[path.relative_to(root).as_posix()] = hashlib.sha256(content).hexdigest()
+    return digests
+
+
 def _library_state(package: Path) -> dict[str, Any]:
     """Return the state of the DispatchAtlas distribution, as far as it describes ``package``.
 
@@ -371,13 +461,23 @@ def _package_versions() -> dict[str, str]:
 # ---------------------------------------------------------------------- git
 
 
-def git_state(directory: Path, *, exclude: Sequence[str | Path] = ()) -> dict[str, Any] | None:
+def git_state(
+    directory: Path,
+    *,
+    exclude: Sequence[str | Path] = (),
+    within: str | Path | None = None,
+) -> dict[str, Any] | None:
     """Return the commit of the git checkout holding ``directory``, and how it is modified.
 
     Args:
         directory: A directory in the checkout.
         exclude: Directories whose files are left out of the comparison
             with the commit. One outside the checkout changes nothing.
+        within: A folder of the checkout, absolute or relative to
+            ``directory``: only its files are compared with the commit, so
+            a change elsewhere in the checkout leaves ``dirty`` false. The
+            ``commit`` is the checkout's ``HEAD`` either way. A folder
+            outside the checkout returns ``None``.
 
     Returns:
         ``None`` when ``directory`` is not in a git checkout or git is not
@@ -405,7 +505,15 @@ def git_state(directory: Path, *, exclude: Sequence[str | Path] = ()) -> dict[st
         return None
     top, commit = Path(lines[0]), lines[1]
     unknown = {"commit": commit, "dirty": None, "untracked": None, "digest": None}
-    paths = ["--", ":(top)", *_excluded(top, exclude)]
+    scope = ":(top)"
+    if within is not None:
+        folder = Path(within) if Path(within).is_absolute() else Path(directory) / within
+        try:
+            relative = folder.resolve().relative_to(top.resolve()).as_posix()
+        except (ValueError, OSError):
+            return None
+        scope = ":(top)" if relative == "." else f":(top){relative}"
+    paths = ["--", scope, *_excluded(top, exclude)]
     status = _git(["status", "--porcelain", "-z", "--untracked-files=all", *paths], top)
     if status is None:
         return unknown
@@ -680,15 +788,15 @@ def _windows_topology() -> tuple[int | None, int | None]:  # pragma: no cover - 
 
 
 def _memory_bytes() -> int | None:
+    size: int | None = None
     if sys.platform == "darwin":
-        size = _sysctl("hw.memsize")
-        return int(size) if size and size.isdigit() else None
-    if sys.platform == "win32":
-        return _windows_memory()
-    try:
-        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
-    except (AttributeError, OSError, ValueError):
-        return None
+        text = _sysctl("hw.memsize")
+        size = int(text) if text and text.isdigit() else None
+    elif sys.platform == "win32":
+        size = _windows_memory()
+    else:
+        size = total_memory_bytes()
+    return size
 
 
 def _sysctl(name: str) -> str | None:
@@ -709,25 +817,4 @@ def _sysctl(name: str) -> str | None:
 
 def _windows_memory() -> int | None:  # pragma: no cover - Windows only
     """Return the physical memory size from ``GlobalMemoryStatusEx``."""
-    if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-
-        class _Status(ctypes.Structure):
-            _fields_ = [
-                ("length", ctypes.c_ulong),
-                ("load", ctypes.c_ulong),
-                ("total_physical", ctypes.c_ulonglong),
-                ("available_physical", ctypes.c_ulonglong),
-                ("total_page_file", ctypes.c_ulonglong),
-                ("available_page_file", ctypes.c_ulonglong),
-                ("total_virtual", ctypes.c_ulonglong),
-                ("available_virtual", ctypes.c_ulonglong),
-                ("available_extended_virtual", ctypes.c_ulonglong),
-            ]
-
-        status = _Status()
-        status.length = ctypes.sizeof(_Status)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return int(status.total_physical)
-        return None
-    return None
+    return total_memory_bytes() if sys.platform == "win32" else None

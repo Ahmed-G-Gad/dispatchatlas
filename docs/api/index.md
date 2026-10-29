@@ -10,6 +10,7 @@ each depending only on packages above it in this list:
 | [`dispatchatlas.references`](references.md) | the bibliography of the implemented methods |
 | [`dispatchatlas.benchmarks`](benchmarks.md) | benchmark families, published suites, file readers, catalogs, and instance features |
 | [`dispatchatlas.solvers`](solvers.md) | the solver registry, the search run-time, the schedule builder, and every solver |
+| [`dispatchatlas.processes`](processes.md) | pinned child processes for caller-defined calls, the rows file, process groups and snapshots, detached launch, and watching a run |
 | [`dispatchatlas.campaigns`](campaigns.md) | campaign files, planning, execution, records, the check of a campaign directory, and replay |
 | [`dispatchatlas.analysis`](analysis.md) | datasets, statistics, tables, figures, and bundles |
 | [`dispatchatlas.cli`](references.md#dispatchatlas.cli) | the command line, a thin layer over the others |

@@ -35,6 +35,12 @@ COMMANDS = (
     ("campaign", "run"),
     ("campaign", "check"),
     ("campaign", "replay"),
+    ("processes", "launch"),
+    ("processes", "watch"),
+    ("processes", "list"),
+    ("processes", "end"),
+    ("processes", "rows-check"),
+    ("processes", "rows-repair"),
     ("analyze",),
     ("references",),
 )

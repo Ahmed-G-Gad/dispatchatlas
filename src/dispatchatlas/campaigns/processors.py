@@ -37,6 +37,7 @@ import sys
 from collections.abc import Iterable, Iterator
 
 from dispatchatlas.core.errors import ConfigError
+from dispatchatlas.processes import affinity as _affinity
 
 __all__ = [
     "affinity_cpus",
@@ -47,9 +48,6 @@ __all__ = [
     "pin_process",
     "pinning_refusal",
 ]
-
-_PROCESS_SET_INFORMATION = 0x0200
-_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 def affinity_cpus() -> tuple[int, ...] | None:
@@ -197,70 +195,17 @@ def _set_cpus(pid: int, cpus: Iterable[int]) -> str | None:
     """Give a process its processors and return the error, if any.
 
     ``pid`` 0 is the caller: the whole calling process on Windows, the
-    calling thread elsewhere.
+    calling thread elsewhere. The primitive lives in
+    :mod:`dispatchatlas.processes.affinity`.
     """
-    error: str | None = None
-    if sys.platform == "win32":
-        mask = 0
-        for index in cpus:
-            mask |= 1 << index
-        error = _windows_set(pid or os.getpid(), mask)
-    else:
-        write = getattr(os, "sched_setaffinity", None)
-        if write is None:
-            error = "this platform has no call that confines a process to a processor"
-        else:
-            try:
-                write(pid, set(cpus))
-            except (OSError, ValueError) as failure:
-                error = str(failure)
-    return error
+    return _affinity._set_cpus(pid, cpus)
 
 
 def _windows_mask() -> int | None:
     """Return the affinity mask of this process, or ``None`` when no single mask describes it."""
-    mask: int | None = None
-    if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.GetActiveProcessorGroupCount.restype = ctypes.c_ushort
-        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
-        kernel32.GetProcessAffinityMask.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_size_t),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        kernel32.GetProcessAffinityMask.restype = ctypes.c_int
-        process, system = ctypes.c_size_t(), ctypes.c_size_t()
-        if kernel32.GetActiveProcessorGroupCount() == 1 and kernel32.GetProcessAffinityMask(
-            kernel32.GetCurrentProcess(), ctypes.byref(process), ctypes.byref(system)
-        ):
-            mask = int(process.value) or None
-    return mask
+    return _affinity._windows_mask()
 
 
 def _windows_set(pid: int, mask: int) -> str | None:
     """Set the affinity mask of a process; return the error, if any."""
-    error: str | None = "not a Windows system"
-    if sys.platform == "win32":
-        import ctypes  # noqa: PLC0415 - Windows only
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        kernel32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        kernel32.SetProcessAffinityMask.restype = ctypes.c_int
-        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-        kernel32.CloseHandle.restype = ctypes.c_int
-        access = _PROCESS_SET_INFORMATION | _PROCESS_QUERY_LIMITED_INFORMATION
-        handle = kernel32.OpenProcess(access, 0, pid)
-        if handle:
-            try:
-                done = kernel32.SetProcessAffinityMask(handle, mask)
-                error = None if done else ctypes.FormatError(ctypes.get_last_error()).strip()
-            finally:
-                kernel32.CloseHandle(handle)
-        else:
-            error = ctypes.FormatError(ctypes.get_last_error()).strip()
-    return error
+    return _affinity._windows_set(pid, mask)

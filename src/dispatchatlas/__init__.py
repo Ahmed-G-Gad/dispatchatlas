@@ -8,6 +8,8 @@ The package is organised in layers:
   suites, and file-format readers.
 - :mod:`dispatchatlas.solvers`: the solver registry and its heuristics,
   metaheuristics, exact methods, and learning methods.
+- :mod:`dispatchatlas.processes`: pinned child processes for caller-defined
+  calls, a resumable rows file, and process tools.
 - :mod:`dispatchatlas.campaigns`: reproducible, resumable experiments.
 - :mod:`dispatchatlas.analysis`: statistics, tables, figures, and reports.
 """
