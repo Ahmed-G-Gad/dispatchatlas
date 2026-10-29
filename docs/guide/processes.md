@@ -27,9 +27,13 @@ work is your function and the row is yours to define.
 from dispatchatlas.processes import Call, run_calls
 
 calls = [
-    Call(key=["sweep", size, seed], target="mystudy.measure:run_one",
-         arguments={"size": size, "seed": seed})
-    for size in (100, 200) for seed in range(10)
+    Call(
+        key=["sweep", size, seed],
+        target="mystudy.measure:run_one",
+        arguments={"size": size, "seed": seed},
+    )
+    for size in (100, 200)
+    for seed in range(10)
 ]
 report = run_calls(
     calls,
@@ -143,7 +147,10 @@ its `attempt` counted from the sidecar, unless `skip_failed=True`.
 
 Each row records `workers`, `workers_live_start` (busy slots once the runner
 had filled every slot it could when the call started) and `workers_live_min`
-(the least busy slots during the call's life). In the tail of a run, slots
+(the least busy slots during the call's life). The counts are of slots, not
+processes: a slot whose call ends and that the runner refills at once counts
+as busy throughout, although for a few milliseconds no process of it runs
+while the next child starts. In the tail of a run, slots
 fall idle and the last calls run on a quieter machine. `ballast=True` keeps
 every slot busy until the last real call ends, with repeats of the calls in
 a seeded order (or with the calls you pass as `ballast`); their rows are
@@ -208,13 +215,17 @@ Their results go into `stamp`, so every row carries them.
 
 ```python
 import sys
-from dispatchatlas.campaigns.environment import compare_trees, git_state, installed_package_dir
+from pathlib import Path
+
+from dispatchatlas.campaigns.environment import git_state
 from dispatchatlas.processes import Call, CallsStoppedError, interleaved, run_calls
 
-calls = [Call(key=[arm, seed], target="mystudy.measure:run_one",
-              arguments={"arm": arm, "seed": seed})
-         for arm in ("a", "b") for seed in range(50)]
-state = git_state(".", within="mystudy")
+calls = [
+    Call(key=[arm, seed], target="mystudy.measure:run_one", arguments={"arm": arm, "seed": seed})
+    for arm in ("a", "b")
+    for seed in range(50)
+]
+state = git_state(Path("."), within="mystudy")
 if state is None or state["dirty"]:
     sys.exit("commit the study's code first")
 try:

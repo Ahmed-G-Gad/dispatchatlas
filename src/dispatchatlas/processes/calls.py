@@ -1055,6 +1055,7 @@ def _attend(
             os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
+        group.forget(process.pid)  # before the reap, so a reused id is never signalled
         running.returncode = process.wait()
     else:
         running.returncode = process.wait()
