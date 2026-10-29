@@ -86,6 +86,7 @@ def test_every_call_writes_one_row_with_its_facts(tmp_path: Path) -> None:
         if PIN:
             assert run["cpu"] in CPUS
             assert run["affinity_mask"] == 1 << run["cpu"]
+            assert run["affinity_inherited"] == 1 << run["cpu"]  # created on its processor
     assert _errors(rows) == []
     stored = json.loads(rows.with_name("rows.report.json").read_text(encoding="utf-8"))
     assert stored["rows_written"] == 6
