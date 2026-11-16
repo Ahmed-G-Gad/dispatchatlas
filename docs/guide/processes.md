@@ -272,7 +272,11 @@ from dispatchatlas.campaigns.environment import git_state
 from dispatchatlas.processes import Call, CallsStoppedError, interleaved, run_calls
 
 calls = [
-    Call(key=[method, seed], target="mystudy.measure:run_one", arguments={"method": method, "seed": seed})
+    Call(
+        key=[method, seed],
+        target="mystudy.measure:run_one",
+        arguments={"method": method, "seed": seed},
+    )
     for method in ("a", "b")
     for seed in range(50)
 ]
