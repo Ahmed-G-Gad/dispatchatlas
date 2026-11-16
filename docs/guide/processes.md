@@ -259,6 +259,7 @@ Their results go into `stamp`, so every row carries them.
 | pinning and read-back | `SetProcessAffinityMask` (one processor group) | `sched_setaffinity` | refused; use `pin=False` |
 | process group | named kill-on-close job object | session, ended with the parent | session, ended with the parent |
 | snapshot | Toolhelp | `/proc` | empty |
+| whether a process runs | `GetExitCodeProcess` | `kill`, then the `/proc` state | `kill`, then the `sysctl` state |
 | peak memory | peak working set | `VmHWM` | `ru_maxrss` |
 | available memory | `GlobalMemoryStatusEx` | `MemAvailable` | `None` |
 

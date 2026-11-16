@@ -44,6 +44,9 @@ _ACCESS_DENIED = 5
 _STILL_ACTIVE = 259
 _FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
 _PYTHON = re.compile(r"^python[\w.]*?(\.exe)?$", re.IGNORECASE)
+_SYSCTL_PROC_PID = (1, 14, 1)  # CTL_KERN, KERN_PROC, KERN_PROC_PID: kern.proc.pid on macOS
+_ZOMBIE = 5  # SZOMB: on macOS, a process that has ended and awaits its parent's wait
+_KINFO_PROC_BUFFER = 1024  # room for one struct kinfo_proc, 648 bytes on 64-bit macOS
 
 
 @dataclass(frozen=True)
@@ -54,7 +57,9 @@ class ProcessInfo:
         pid: Process id.
         parent_pid: Id of the process that created it, ``None`` when unknown.
             The parent may have ended and its id been reused since.
-        name: Executable file name (Windows) or command name (Linux).
+        name: Executable file name (Windows) or command name (Linux). On
+            Linux, a script run through its ``#!`` line, such as a console
+            script, gives the script's name, not the interpreter's.
         executable: Full path of the executable, ``None`` when unreadable.
         affinity_mask: Processors the process may run on, ``None`` when
             unreadable.
@@ -124,8 +129,10 @@ def interpreters_on(
     """Return the Python interpreters whose affinity mask meets ``cpus``.
 
     An interpreter is a process named ``python``, ``python3``,
-    ``python3.13``, ``pythonw``, with or without ``.exe``. A process whose
-    mask cannot be read is left out.
+    ``python3.13``, ``pythonw``, with or without ``.exe``; on Linux, one
+    running a console script such as ``pytest`` through its ``#!`` line is
+    named after the script and is not found. A process whose mask cannot be
+    read is left out.
 
     Args:
         cpus: Processor indices.
@@ -150,7 +157,9 @@ def is_running(pid: int) -> bool:
 
     A process that has ended but whose parent has not reaped it yet (a POSIX
     zombie, or a Windows process whose handle is still open) is not
-    running. A process the caller may not query counts as running.
+    running. A zombie is told from ``/proc`` on Linux and from ``sysctl`` on
+    macOS; elsewhere it counts as running. A process the caller may not
+    query counts as running.
     """
     running = True
     if sys.platform == "win32":
@@ -174,9 +183,7 @@ def is_running(pid: int) -> bool:
         except PermissionError:
             running = True
         else:
-            with contextlib.suppress(OSError):
-                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-                running = stat.rpartition(")")[2].split()[:1] != ["Z"]
+            running = not _is_zombie(pid)
     return running
 
 
@@ -201,6 +208,23 @@ def end_process(pid: int) -> str | None:
         except OSError as failure:
             error = f"process {pid} could not be ended: {failure.strerror or failure}"
     return error
+
+
+def _is_zombie(pid: int) -> bool:
+    """Return whether process ``pid`` has ended and awaits its parent's wait (POSIX).
+
+    ``kill(pid, 0)`` succeeds on such a process, as POSIX asks; its state
+    tells it apart: ``Z`` in ``/proc/<pid>/stat`` on Linux, ``SZOMB`` from
+    ``sysctl`` on macOS. ``False`` where neither can be read.
+    """
+    zombie = False
+    if sys.platform == "darwin":
+        zombie = _darwin_zombie(pid)
+    else:
+        with contextlib.suppress(OSError):
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+            zombie = stat.rpartition(")")[2].split()[:1] == ["Z"]
+    return zombie
 
 
 # ------------------------------------------------------------------- Linux
@@ -260,6 +284,52 @@ def _proc_mask(status: Path) -> int | None:
             if line.startswith("Cpus_allowed:"):
                 return int(line.split(":", 1)[1].strip().replace(",", ""), 16)
     return None
+
+
+# ------------------------------------------------------------------- macOS
+
+
+def _darwin_zombie(pid: int) -> bool:  # pragma: no cover - macOS only
+    """Return whether process ``pid`` is a zombie, from its ``struct kinfo_proc``.
+
+    ``sysctl`` with ``kern.proc.pid.<pid>`` returns the structure of a
+    zombie too. Its first member, ``struct extern_proc`` of
+    ``<sys/proc.h>``, holds the state ``p_stat`` and the process id
+    ``p_pid``; a record that names another process is not trusted.
+    """
+    zombie = False
+    if sys.platform == "darwin":
+        import ctypes  # noqa: PLC0415 - macOS only
+
+        class Head(ctypes.Structure):
+            _fields_ = (
+                ("p_un", ctypes.c_byte * 16),  # two pointers, or a struct timeval
+                ("p_vmspace", ctypes.c_void_p),
+                ("p_sigacts", ctypes.c_void_p),
+                ("p_flag", ctypes.c_int),
+                ("p_stat", ctypes.c_ubyte),  # a char
+                ("p_pid", ctypes.c_int),
+            )
+
+        with contextlib.suppress(AttributeError, OSError):
+            library = ctypes.CDLL(None)
+            library.sysctl.argtypes = [
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.c_uint,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_size_t),
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+            ]
+            library.sysctl.restype = ctypes.c_int
+            name = (ctypes.c_int * 4)(*_SYSCTL_PROC_PID, pid)
+            record = ctypes.create_string_buffer(_KINFO_PROC_BUFFER)
+            size = ctypes.c_size_t(ctypes.sizeof(record))
+            read = library.sysctl(name, len(name), record, ctypes.byref(size), None, 0) == 0
+            if read and size.value >= ctypes.sizeof(Head):
+                head = Head.from_buffer_copy(record.raw)
+                zombie = head.p_pid == pid and head.p_stat == _ZOMBIE
+    return zombie
 
 
 # ----------------------------------------------------------------- Windows

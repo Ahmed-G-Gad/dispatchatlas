@@ -43,8 +43,13 @@ def test_the_snapshot_holds_this_process_and_its_tree(tmp_path: Path) -> None:
         listed = snapshot()
         mine = next(info for info in listed if info.pid == os.getpid())
         assert mine.parent_pid == os.getppid()
-        assert mine.name.lower().startswith("python")
         assert mine.started_utc is not None
+        # Started through a console script (uv run pytest), this process has the
+        # script's name on Linux, but its executable is the interpreter.
+        assert mine.executable is not None
+        assert Path(mine.executable).name.lower().startswith("python")
+        started = next(info for info in listed if info.pid == interpreter)
+        assert started.name.lower().startswith("python")  # started from the interpreter itself
         tree = {info.pid for info in descendants(os.getpid(), listed)}
         assert {child.pid, interpreter, grandchild} <= tree
         assert unrelated.pid in tree  # a child of this process too
@@ -86,6 +91,12 @@ def test_end_process_ends_a_process_and_reports_what_it_cannot_end() -> None:
     assert gone(process.pid)
     assert not is_running(process.pid)
     assert end_process(process.pid) is not None
+
+
+def test_a_child_that_has_ended_is_not_running_before_it_is_reaped() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+    assert gone(process.pid)  # ended, and not yet waited for by this process
+    assert process.wait(30) == 3  # the check left the exit status to the parent
 
 
 def test_memory_is_read_where_the_platform_tells() -> None:
