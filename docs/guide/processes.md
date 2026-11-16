@@ -272,8 +272,8 @@ from dispatchatlas.campaigns.environment import git_state
 from dispatchatlas.processes import Call, CallsStoppedError, interleaved, run_calls
 
 calls = [
-    Call(key=[arm, seed], target="mystudy.measure:run_one", arguments={"arm": arm, "seed": seed})
-    for arm in ("a", "b")
+    Call(key=[method, seed], target="mystudy.measure:run_one", arguments={"method": method, "seed": seed})
+    for method in ("a", "b")
     for seed in range(50)
 ]
 state = git_state(Path("."), within="mystudy")
@@ -283,7 +283,7 @@ try:
     report = run_calls(
         interleaved(calls, seed=1),
         "results/rows.jsonl",
-        key_of=lambda row: [row["arm"], row["seed"]],
+        key_of=lambda row: [row["method"], row["seed"]],
         cpus="0xF0",
         stamp={"revision": state["commit"]},
         max_failures=3,
