@@ -211,9 +211,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkout, `compare_trees` tells whether an installed package holds the
   same files with the same SHA-256 digests as a source tree (CRLF read as LF
   unless `normalize_newlines=False`, and the result records which), and
-  `peak_memory_bytes` and `available_memory_bytes` read the peak working set
-  of the process and the available memory of the machine on Linux and
-  Windows.
+  `peak_memory_bytes` reads the peak memory of the process (the peak working
+  set on Windows, `VmHWM` on Linux, `ru_maxrss` on macOS), and
+  `available_memory_bytes` reads the available memory of the machine on
+  Windows and Linux and returns `None` on macOS.
 - Analysis of campaigns: rank tests, post-hoc tests, corrections, effect sizes
   with bootstrap intervals, Bayesian tests, power, relative deviation, and
   multi-objective indicators; tables in Markdown, CSV, and LaTeX; figures in
