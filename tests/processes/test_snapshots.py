@@ -21,7 +21,14 @@ from dispatchatlas.processes.snapshots import (
     is_running,
     snapshot,
 )
-from tests.processes.helpers import gone, needs_pinning, sleeper, wait_for
+from tests.processes.helpers import (
+    console_script,
+    gone,
+    needs_pinning,
+    needs_proc,
+    sleeper,
+    wait_for,
+)
 
 SUPPORTED = sys.platform == "win32" or Path("/proc/self/stat").exists()
 needs_snapshot = pytest.mark.skipif(not SUPPORTED, reason="no process snapshot here")
@@ -81,6 +88,39 @@ def test_interpreters_on_given_processors_are_found() -> None:
     finally:
         pinned.kill()
         pinned.wait(30)
+
+
+def test_an_interpreter_is_told_by_its_name_or_its_executable() -> None:
+    def record(pid: int, name: str, executable: str | None) -> ProcessInfo:
+        return ProcessInfo(pid, 1, name, executable, 0b1, None)
+
+    listed = [
+        record(10, "python3.13", None),
+        record(11, "pytest", "/srv/venv/bin/python3.13"),  # a console script on Linux
+        record(12, "dispatchatlas", "/opt/python/bin/python3.13 (deleted)"),  # replaced since
+        record(13, "pythonw.exe", r"C:\Python313\pythonw.exe"),
+        record(14, "pytest.exe", r"C:\venv\Scripts\pytest.exe"),  # its child is the interpreter
+        record(15, "unattended-upgr", None),  # another user's script on Linux
+        record(16, "bash", "/usr/bin/bash"),
+    ]
+    assert [info.pid for info in interpreters_on([0], listed)] == [10, 11, 12, 13]
+
+
+@needs_proc
+def test_an_interpreter_run_through_its_script_line_is_found(tmp_path: Path) -> None:
+    script = console_script(tmp_path)
+    process = subprocess.Popen([str(script)], stdin=subprocess.DEVNULL)
+    try:
+        assert int(wait_for(Path(f"{script}.pid"))) == process.pid
+        listed = snapshot()
+        started = next(info for info in listed if info.pid == process.pid)
+        assert started.name == script.name  # Linux names the process after the script
+        assert started.executable is not None
+        assert Path(started.executable).name.lower().startswith("python")
+        assert process.pid in {info.pid for info in interpreters_on(allowed_cpus(), listed)}
+    finally:
+        process.kill()
+        process.wait(30)
 
 
 def test_end_process_ends_a_process_and_reports_what_it_cannot_end() -> None:

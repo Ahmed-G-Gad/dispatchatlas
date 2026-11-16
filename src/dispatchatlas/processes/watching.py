@@ -34,8 +34,8 @@ from dispatchatlas.processes.affinity import parse_cpus
 from dispatchatlas.processes.memory import available_memory_bytes
 from dispatchatlas.processes.rows import count_lines
 from dispatchatlas.processes.snapshots import (
-    _PYTHON,
     ProcessInfo,
+    _is_interpreter,
     descendants,
     interpreters_on,
     is_running,
@@ -55,11 +55,14 @@ class Status:
         live_children: Processes the runner started, at any depth, running:
             every launcher, interpreter, helper, and console host, so about
             two per busy slot with a Windows virtual-environment launcher.
-        live_interpreters: Those of them named like a Python interpreter
+        live_interpreters: Those of them that are Python interpreters, by
+            name or executable as for
+            :func:`~dispatchatlas.processes.snapshots.interpreters_on`
             (launchers included).
         foreign_interpreters: Python interpreters on the watched processors
             that are neither the runner, its descendants, the watcher, nor
-            an interpreter-named launcher above the runner or the watcher.
+            one of the interpreters in an unbroken line above the runner or
+            the watcher, such as a virtual environment's launcher.
         foreign_pids: Their process ids.
         rows_lines: Complete lines of the rows file.
         rows_bytes: Size of the rows file.
@@ -124,7 +127,7 @@ def watch(
             time_utc=datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
             runner_alive=alive,
             live_children=len(children),
-            live_interpreters=sum(1 for info in children if _PYTHON.match(info.name)),
+            live_interpreters=sum(1 for info in children if _is_interpreter(info)),
             foreign_interpreters=len(foreign),
             foreign_pids=tuple(info.pid for info in foreign),
             rows_lines=lines,
@@ -142,7 +145,9 @@ def _interpreter_ancestors(pid: int, listed: Sequence[ProcessInfo]) -> set[int]:
 
     With a virtual environment's launcher executable on Windows, the parent
     of an interpreter is a launcher named like an interpreter, which shares
-    its mask; it is part of the process watched, not a foreign one.
+    its mask; it is part of the process watched, not a foreign one. An
+    interpreter is told by its name or its executable, as in
+    :func:`~dispatchatlas.processes.snapshots.interpreters_on`.
     """
     by_pid = {info.pid: info for info in listed}
     found: set[int] = set()
@@ -153,7 +158,7 @@ def _interpreter_ancestors(pid: int, listed: Sequence[ProcessInfo]) -> set[int]:
             parent is None
             or parent.pid in found
             or parent.pid == pid
-            or not _PYTHON.match(parent.name)
+            or not _is_interpreter(parent)
             or (
                 parent.started_utc
                 and current.started_utc

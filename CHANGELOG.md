@@ -197,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Process tools without extra dependencies: a process snapshot with parent,
   executable, affinity mask, and start time (Toolhelp on Windows, `/proc` on
   Linux), the descendants of a process, the Python interpreters running on
-  given processors, `is_running`, `end_process`, `launch_detached` for a
+  given processors (told by name or executable, so that a console script
+  counts on Linux), `is_running`, `end_process`, `launch_detached` for a
   command that must outlive its shell (no window, its own process group, out
   of the caller's job where allowed), and `watch`, which reports once per
   interval whether a runner is alive, its live children, other interpreters

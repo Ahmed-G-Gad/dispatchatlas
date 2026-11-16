@@ -75,7 +75,9 @@ def register(commands: Commands) -> None:
     )
     listing.add_argument("--children-of", type=int, metavar="PID", help="only this process's tree")
     listing.add_argument(
-        "--interpreters-on", metavar="CPUS", help="only Python interpreters on these processors"
+        "--interpreters-on",
+        metavar="CPUS",
+        help="only Python interpreters, by name or executable, on these processors",
     )
 
     end = add_command(group, "end", _end, "End processes at once, on request.")

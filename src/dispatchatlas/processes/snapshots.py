@@ -44,6 +44,7 @@ _ACCESS_DENIED = 5
 _STILL_ACTIVE = 259
 _FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
 _PYTHON = re.compile(r"^python[\w.]*?(\.exe)?$", re.IGNORECASE)
+_DELETED = " (deleted)"  # what Linux appends to /proc/<pid>/exe once the file is gone
 _SYSCTL_PROC_PID = (1, 14, 1)  # CTL_KERN, KERN_PROC, KERN_PROC_PID: kern.proc.pid on macOS
 _ZOMBIE = 5  # SZOMB: on macOS, a process that has ended and awaits its parent's wait
 _KINFO_PROC_BUFFER = 1024  # room for one struct kinfo_proc, 648 bytes on 64-bit macOS
@@ -60,7 +61,8 @@ class ProcessInfo:
         name: Executable file name (Windows) or command name (Linux). On
             Linux, a script run through its ``#!`` line, such as a console
             script, gives the script's name, not the interpreter's.
-        executable: Full path of the executable, ``None`` when unreadable.
+        executable: Full path of the executable (for such a script, the
+            interpreter), ``None`` when unreadable.
         affinity_mask: Processors the process may run on, ``None`` when
             unreadable.
         started_utc: Creation time, ISO 8601 in UTC, ``None`` when unreadable.
@@ -128,11 +130,13 @@ def interpreters_on(
 ) -> tuple[ProcessInfo, ...]:
     """Return the Python interpreters whose affinity mask meets ``cpus``.
 
-    An interpreter is a process named ``python``, ``python3``,
-    ``python3.13``, ``pythonw``, with or without ``.exe``; on Linux, one
-    running a console script such as ``pytest`` through its ``#!`` line is
-    named after the script and is not found. A process whose mask cannot be
-    read is left out.
+    An interpreter is a process whose name or executable file name is an
+    interpreter's, such as ``python``, ``python3``, ``python3.13``, or
+    ``pythonw``, with or without ``.exe``. The executable finds, on Linux, a
+    console script such as ``pytest`` run through its ``#!`` line, which is
+    named after the script; such a script of another user is found only by a
+    caller allowed to read its executable, such as root. A process whose mask
+    cannot be read is left out.
 
     Args:
         cpus: Processor indices.
@@ -146,7 +150,7 @@ def interpreters_on(
         info
         for info in listed
         if info.pid not in left_out
-        and _PYTHON.match(info.name)
+        and _is_interpreter(info)
         and info.affinity_mask is not None
         and info.affinity_mask & wanted
     )
@@ -208,6 +212,17 @@ def end_process(pid: int) -> str | None:
         except OSError as failure:
             error = f"process {pid} could not be ended: {failure.strerror or failure}"
     return error
+
+
+def _is_interpreter(info: ProcessInfo) -> bool:
+    """Return whether a process is a Python interpreter, by its name or its executable's.
+
+    The executable's file name is taken after either separator, since a
+    record may come from another system, and without the ``(deleted)``
+    suffix Linux adds once the file has been replaced or removed.
+    """
+    file_name = (info.executable or "").replace("\\", "/").rpartition("/")[2]
+    return any(_PYTHON.match(name) for name in (info.name, file_name.removesuffix(_DELETED)))
 
 
 def _is_zombie(pid: int) -> bool:

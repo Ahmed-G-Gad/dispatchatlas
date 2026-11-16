@@ -4,7 +4,10 @@ import os
 import sys
 from pathlib import Path
 
-from dispatchatlas.processes.snapshots import end_process
+import pytest
+
+from dispatchatlas.cli import processes
+from dispatchatlas.processes.snapshots import ProcessInfo, end_process
 from tests.cli.runner import Cli
 from tests.processes.helpers import sleeper, wait_for
 
@@ -44,6 +47,21 @@ def test_list_shows_the_children_of_a_process(cli: Cli) -> None:
     finally:
         child.kill()
         child.wait(30)
+
+
+def test_list_shows_interpreters_by_name_or_executable(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = "/usr/bin/python3.13"
+    listed = (
+        ProcessInfo(10, 1, "python3", python, 0b1, None),
+        ProcessInfo(11, 1, "pytest", python, 0b1, None),  # a console script on Linux
+        ProcessInfo(12, 1, "bash", "/usr/bin/bash", 0b1, None),
+        ProcessInfo(13, 1, "python3", python, 0b10, None),  # on another processor
+    )
+    monkeypatch.setattr(processes, "snapshot", lambda: listed)
+    result = cli("processes", "list", "--interpreters-on", "0", "--json")
+    assert [item["pid"] for item in result.json()] == [10, 11]
 
 
 def test_end_ends_a_process_on_request(cli: Cli) -> None:

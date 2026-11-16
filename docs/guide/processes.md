@@ -227,15 +227,23 @@ from the child, and give either pid to `watch`.
 `watch` prints one line per interval: whether the runner is alive
 (`RUNNER-DEAD` first when it is not), its live descendants (`children`, every
 process at any depth: about two per busy slot with a Windows launcher, plus
-console hosts), how many of them are named like an interpreter
-(`interpreters`), the other Python interpreters whose masks meet the run's
-processors (with their ids), the rows file's line count and size, and the
-available memory. Interpreter-named launchers above the watched process and
-above the watcher itself are not counted as other interpreters. It never
-starts, restarts, or ends anything. `dispatchatlas processes list` shows processes
-with parent, mask, and start time (`--children-of PID`,
-`--interpreters-on CPUS`), and `dispatchatlas processes end PID` ends a
-process on request.
+console hosts), how many of them are Python interpreters (`interpreters`),
+the other Python interpreters whose masks meet the run's processors (with
+their ids), the rows file's line count and size, and the available memory.
+The interpreters in an unbroken line above the watched process and above the
+watcher itself, such as a Windows launcher, are not counted as other
+interpreters. It never starts, restarts, or ends anything.
+`dispatchatlas processes list` shows processes with parent, mask, and start
+time (`--children-of PID`, `--interpreters-on CPUS`), and
+`dispatchatlas processes end PID` ends a process on request.
+
+A process is a Python interpreter when its name or the file name of its
+executable is an interpreter's, such as `python`, `python3`, `python3.13`,
+or `pythonw`, with or without `.exe`. On Linux, a script run through its
+`#!` line, such as the console script `pytest` or `dispatchatlas`, is named
+after the script, and its executable, the interpreter, tells. Linux shows
+the executable of another user's process only to a privileged caller such as
+root; to any other caller, such a script of another user is not counted.
 
 ## Provenance
 

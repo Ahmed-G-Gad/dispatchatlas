@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,9 @@ windows_only = pytest.mark.skipif(
     sys.platform != "win32", reason="job objects are a Windows facility"
 )
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="sessions are a POSIX facility")
+needs_proc = pytest.mark.skipif(
+    not Path("/proc/self/stat").exists(), reason="the /proc snapshot is a Linux facility"
+)
 
 
 def slot_cpus(count: int = 2) -> list[int]:
@@ -57,3 +61,46 @@ def sleeper(seconds: float = 60.0) -> subprocess.Popen[bytes]:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def console_script(directory: Path, name: str = "straytest") -> Path:
+    """Write a script whose ``#!`` line names this interpreter, as a console script's does.
+
+    Started by its own path (POSIX), the script writes its process id to the
+    file of its name with ``.pid`` added, then sleeps for a minute.
+    """
+    if any(character.isspace() for character in sys.executable):
+        pytest.skip("a #! line cannot name an interpreter whose path holds a space")
+    script = directory / name
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        "open(sys.argv[0] + '.pid', 'w').write(str(os.getpid()))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def orphan(command: Sequence[str]) -> int:
+    """Start ``command`` from a process that ends at once, and return its process id.
+
+    The command's process is then no descendant of this one, as a run
+    started from another shell would not be.
+    """
+    started = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys; print(subprocess.Popen(sys.argv[1:], "
+            "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+            "stderr=subprocess.DEVNULL).pid)",
+            *command,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    return int(started.stdout.split()[-1])
