@@ -21,3 +21,8 @@ updates:
         versions: [">=4"]
       - dependency-name: highspy
         versions: [">=1.14"]
+      # No CI job installs the gurobi extra, and Gurobi 14 refuses a licence issued for
+      # version 13; taking it waits for a run of the Gurobi backend's tests under a
+      # version 14 licence.
+      - dependency-name: gurobipy
+        versions: [">=14"]
