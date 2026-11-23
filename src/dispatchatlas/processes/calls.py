@@ -35,13 +35,20 @@ Next to the rows file the runner writes ``<stem>.errors.jsonl``,
 ``<stem>.ballast.jsonl`` (with ``ballast``), ``<stem>.children.log`` (the
 children's standard output and error, tracebacks included),
 ``<stem>.runs.jsonl`` (one line per invocation: its stamp, workers, and
-processors), ``<stem>.lock`` (held while a runner uses the file), and
-``<stem>.report.json``.
+processors), ``<stem>.lock`` (the operating system's lock, held while a runner
+uses the file), and ``<stem>.report.json``. On a file system that does not
+implement the lock call, such as Lustre mounted without flock, the lock is
+``<stem>.lock.excl`` instead: created exclusively with the host, process id,
+and time of the runner, and removed when the runner leaves. A runner that was
+killed leaves it behind; the next run reports it as stale when it names a
+process of this host that no longer exists, and never removes it.
 """
 
 from __future__ import annotations
 
 import contextlib
+import enum
+import errno
 import itertools
 import json
 import logging
@@ -50,6 +57,7 @@ import queue
 import random
 import select
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -600,57 +608,250 @@ def _resume(
 _LOCK_OFFSET = 1 << 30
 """Where the Windows lock byte of a lock file sits, past the holder's text."""
 
+_EXCLUSIVE_SUFFIX = ".excl"
+"""What the name of the exclusive-create lock file adds to the name of the lock file."""
+
+_UNSUPPORTED = frozenset({errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})
+"""The errno values of a lock call that the file system does not implement."""
+
+# Windows: the exit code that a running process reports, the access right that reads it, and
+# the error of OpenProcess for a process id that no process has.
+_STILL_ACTIVE = 259
+_QUERY_LIMITED_INFORMATION = 0x1000
+_NO_SUCH_PROCESS = 87
+
+
+class _Lock(enum.Enum):
+    """What an attempt to take the operating system's lock on the lock file came to."""
+
+    TAKEN = enum.auto()
+    HELD = enum.auto()
+    UNSUPPORTED = enum.auto()
+
 
 @contextlib.contextmanager
 def _held(path: Path, rows: Path) -> Iterator[None]:
-    """Hold the lock file of a rows file for the context, or raise :class:`ConfigError`.
+    """Hold the lock of a rows file for the context, or raise :class:`ConfigError`.
 
-    The lock is the operating system's (``msvcrt.locking`` on Windows,
-    ``flock`` elsewhere), so it ends with the process that holds it and a
-    killed runner leaves no stale lock; the file's text only says who holds it.
+    The lock is the operating system's on ``<rows stem>.lock`` (``msvcrt.locking`` on
+    Windows, ``flock`` elsewhere), so it ends with the process that holds it and a killed
+    runner leaves no stale lock; the file's text only says who holds it. A file system
+    that does not implement the call, such as Lustre mounted without flock, answers it
+    with ``ENOSYS``, ``ENOTSUP`` or ``EOPNOTSUPP``, and the lock is then the file
+    ``<rows stem>.lock.excl``, created exclusively (``O_CREAT | O_EXCL``) with the host
+    name, the process id and the UTC time of the runner, which removes it when it leaves.
+    Any other failure of the call, such as ``EWOULDBLOCK`` or ``EACCES``, means that
+    another process holds the lock. The two locks are independent: runners that take
+    different ones of one rows file do not exclude each other.
+
+    A runner that is killed leaves ``.lock.excl`` behind. A run that finds it written on
+    this host by a process that no longer exists refuses to start and names the file; the
+    library never removes it, whoever runs the calls does, after checking that no runner
+    works on the rows. A file written on another host, or one that holds no readable
+    owner, counts as held, because this host cannot tell.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     stream = path.open("a+b")
     try:
-        if not _try_lock(stream):
+        outcome = _try_lock(stream)
+        if outcome is _Lock.HELD:
             stream.seek(0)
             holder = stream.read(400).decode("utf-8", errors="replace").strip()
             raise ConfigError(
                 f"{rows} is in use by another runner ({holder or 'holder unknown'}); "
                 "a rows file has one runner at a time"
             )
-        stream.truncate(0)
-        stream.write(f"pid {os.getpid()} since {_utc_now()}\n".encode())
-        stream.flush()
-        yield
+        if outcome is _Lock.UNSUPPORTED:
+            with _exclusive_file(path.with_name(path.name + _EXCLUSIVE_SUFFIX), rows):
+                yield
+        else:
+            stream.truncate(0)
+            stream.write(f"pid {os.getpid()} since {_utc_now()}\n".encode())
+            stream.flush()
+            yield
     finally:
         stream.close()  # releases the lock
 
 
-def _try_lock(stream: IO[bytes]) -> bool:
-    """Take an exclusive lock on an open file without waiting; return whether it was taken.
+def _try_lock(stream: IO[bytes]) -> _Lock:
+    """Try to take the operating system's exclusive lock on an open file without waiting.
 
-    Windows locks are mandatory, so the locked byte lies far past the text,
-    which other processes may then still read.
+    The call is ``msvcrt.locking`` on Windows and ``flock`` elsewhere. The errno of a
+    failed call tells whether another process holds the lock or the file system cannot
+    lock at all. The names below are those of the :mod:`errno` module, the same on every
+    platform though their numbers differ:
+
+    - **Another holder**, :attr:`_Lock.HELD`: ``EWOULDBLOCK`` or ``EAGAIN`` (11 on Linux)
+      and ``EACCES`` (13). On Linux, ``flock`` fails with ``EWOULDBLOCK`` while another
+      open file description holds the lock. On Windows, ``msvcrt.locking`` fails with
+      ``EACCES`` while another handle holds the byte, which lies far past the text of the
+      file (:data:`_LOCK_OFFSET`) because Windows locks are mandatory and other processes
+      may still read the text.
+    - **Unsupported**, :attr:`_Lock.UNSUPPORTED`: ``ENOSYS``, "function not implemented"
+      (38 on Linux, 40 on Windows), ``ENOTSUP`` and ``EOPNOTSUPP``, "operation not
+      supported" (95 for both on Linux, 129 and 10045 on Windows). A file system that
+      lacks the call answers with one of them, as Lustre mounted without flock does. No
+      lock can be taken there, so the failure says nothing about other holders.
+    - **Any other errno**, such as ``EINVAL`` or ``ENOLCK``, or none, is taken as a
+      holder too, as every failure was: a runner never starts without a lock because of
+      an error it does not understand.
+
+    Returns:
+        :attr:`_Lock.TAKEN` when the lock is held now, :attr:`_Lock.HELD` when the call
+        failed for another holder or for an errno that is neither case, and
+        :attr:`_Lock.UNSUPPORTED` when the file system cannot lock.
     """
-    locked = True
-    if sys.platform == "win32":
-        import msvcrt  # noqa: PLC0415 - Windows only
+    try:
+        if sys.platform == "win32":
+            import msvcrt  # noqa: PLC0415 - Windows only
 
-        stream.seek(_LOCK_OFFSET)
-        try:
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            locked = False
-        stream.seek(0)
-    else:
-        import fcntl  # noqa: PLC0415 - POSIX only
+            stream.seek(_LOCK_OFFSET)
+            try:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            finally:
+                stream.seek(0)
+        else:
+            import fcntl  # noqa: PLC0415 - POSIX only
 
-        try:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        return _Lock.UNSUPPORTED if error.errno in _UNSUPPORTED else _Lock.HELD
+    return _Lock.TAKEN
+
+
+@contextlib.contextmanager
+def _exclusive_file(path: Path, rows: Path) -> Iterator[None]:
+    """Hold the exclusive-create lock file of a rows file for the context.
+
+    The file is created with ``O_CREAT | O_EXCL``, which fails when it exists, and holds
+    the host name, the process id and the UTC time of this process. The context removes
+    it when it ends, unless it no longer holds that text: another process wrote it, and
+    it stays.
+
+    Raises:
+        ConfigError: If the file exists. The message says who holds it, or that the file
+            is stale, and names the file.
+    """
+    owner = _owner_text()
+    try:
+        stream = path.open("xb")
+    except FileExistsError:
+        raise ConfigError(_refusal(rows, path)) from None
+    try:
+        with stream:
+            stream.write(owner)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    try:
+        yield
+    finally:
+        _release(path, owner)
+
+
+def _owner_text() -> bytes:
+    """Return the text of this process's lock file: its host name, process id and time."""
+    owner = {"host": socket.gethostname(), "pid": os.getpid(), "time": _utc_now()}
+    return (json.dumps(owner, sort_keys=True) + "\n").encode("ascii")
+
+
+def _owner(path: Path) -> tuple[str, int, str] | None:
+    """Return the host name, process id and time that a lock file holds, or ``None``.
+
+    A file that is empty, as one is between its creation and its first write, or does not
+    hold all three as a string, a positive integer and a string, holds no owner.
+    """
+    try:
+        document = json.loads(path.read_bytes())
+        host, pid, since = document["host"], document["pid"], document["time"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if (
+        isinstance(host, str)
+        and isinstance(since, str)
+        and isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+    ):
+        return host, pid, since
+    return None
+
+
+def _refusal(rows: Path, path: Path) -> str:
+    """Return why the lock file ``path`` keeps a runner out of the rows file ``rows``.
+
+    The file is stale when it was written on this host by a process that no longer
+    exists. A file written on another host is never called stale, because that host's
+    processes cannot be asked, and neither is one that holds no readable owner.
+    """
+    owner = _owner(path)
+    if owner is None:
+        return (
+            f"{rows} is in use by another runner: its lock file {path} holds no readable "
+            "owner. If no runner works on the rows file, remove the lock file"
+        )
+    host, pid, since = owner
+    who = f"process {pid} on {host}, since {since}"
+    if host != socket.gethostname():
+        return (
+            f"{rows} is in use by another runner ({who}); this host cannot tell whether it "
+            f"still runs. If it is gone, remove the lock file {path}"
+        )
+    if _alive(pid):
+        return f"{rows} is in use by another runner ({who}); a rows file has one runner at a time"
+    return (
+        f"the lock file {path} is stale: it was taken by {who}, and that process no longer "
+        "runs. Remove the file and run again"
+    )
+
+
+def _release(path: Path, owner: bytes) -> None:
+    """Remove the lock file ``path`` if it still holds ``owner``, the text this process wrote."""
+    try:
+        if path.read_bytes() != owner:
+            _LOG.warning("the lock file %s was replaced while the run went on; it stays", path)
+            return
+        path.unlink()
+    except OSError as error:
+        _LOG.warning("the lock file %s could not be removed: %s", path, error)
+
+
+def _alive(pid: int) -> bool:
+    """Return whether a process with this id exists on this host.
+
+    A process counts as gone only when the system says that no process has the id, so a
+    lock file is never called stale on a guess: a process of another user, which the
+    caller may not signal, still exists.
+    """
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 - Windows only
+        from ctypes import wintypes  # noqa: PLC0415 - Windows only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            try:
+                code = wintypes.DWORD()
+                read = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+                alive = not read or code.value == _STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            alive = ctypes.get_last_error() != _NO_SUCH_PROCESS
+    else:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
         except OSError:
-            locked = False
-    return locked
+            alive = True
+    return alive
 
 
 def _check_rows(rows: Path, key_of: Callable[[Mapping[str, Any]], Any]) -> None:

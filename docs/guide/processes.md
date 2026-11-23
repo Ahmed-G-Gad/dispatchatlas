@@ -69,8 +69,17 @@ operating-system lock on `<rows stem>.lock` (whose text names the holder's
 process id and start time); a second `run_calls` on the same file, in this
 process or another, raises `ConfigError` before it starts anything. The lock
 ends with the process that holds it, so a killed runner leaves none behind. A
-rows file that holds one key twice is refused too (`duplicate_keys` lists
-the keys): move the extra rows aside before resuming.
+file system that does not implement the lock call (Lustre mounted without
+flock answers `ENOSYS`, `ENOTSUP` or `EOPNOTSUPP`) gets the file
+`<rows stem>.lock.excl` instead, created exclusively with the host, process id
+and time of the runner and removed when it leaves; any other failure of the
+call still reads as another holder. A killed runner leaves that file behind:
+the next run reports it as stale when it names a process of this host that no
+longer exists, and names the file, which only you remove, once you have
+checked that no runner works on the rows. A file of another host, or one with
+no readable owner, counts as held. A rows file that holds one key twice is
+refused too (`duplicate_keys` lists the keys): move the extra rows aside before
+resuming.
 
 Each invocation appends a line to `<rows stem>.runs.jsonl`: when it started,
 its `stamp`, its number of workers, and its processors. A resume whose stamp,
