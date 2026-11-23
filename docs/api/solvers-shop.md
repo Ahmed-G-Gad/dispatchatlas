@@ -34,3 +34,5 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
 ::: dispatchatlas.solvers.shop.rules
 
 ::: dispatchatlas.solvers.shop.insertion
+
+::: dispatchatlas.solvers.shop.tabu

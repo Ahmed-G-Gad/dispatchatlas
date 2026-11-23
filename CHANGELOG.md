@@ -431,3 +431,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zeros the interval lies inside a margin exactly when `tost_signed_rank`
   finds equivalence, except at a margin equal to an endpoint. The
   bibliography gains Hodges and Lehmann (1963).
+- A job-shop tabu search (`shop-tabu-search`) over machine orders: N5 swaps at
+  the ends of critical blocks priced by a head-and-tail estimate, N7
+  insertions scored exactly, a tabu list of reversed arcs with aspiration,
+  and restarts; `critical_block_descent` gives the same neighbourhood as a
+  local search for other methods.

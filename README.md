@@ -122,7 +122,7 @@ explains its options with `--help`.
   DAX formats, and a streaming reader for the batch jobs of the Alibaba 2018
   cluster trace; instance catalogs written to disk with SHA-256 manifests;
   descriptive features of every instance.
-- **79 solvers**: dispatching rules and list heuristics such as HEFT;
+- **80 solvers**: dispatching rules and list heuristics such as HEFT;
   constructive heuristics such as NEH and beam search; local search from hill
   climbing and simulated annealing to tabu search, iterated greedy, and ALNS;
   genetic, memetic, and ant colony algorithms, BRKGA, differential evolution,

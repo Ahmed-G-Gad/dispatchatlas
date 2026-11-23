@@ -23,6 +23,7 @@ from dispatchatlas.solvers.shop.insertion import WernerWinklerInsertion
 from dispatchatlas.solvers.shop.rules import GtMostWorkRemaining, GtShortestProcessingTime
 from dispatchatlas.solvers.shop.sampling import ShopRandomSampling
 from dispatchatlas.solvers.shop.swarm import ShopParticleSwarm
+from dispatchatlas.solvers.shop.tabu import ShopTabuSearch
 
 __all__ = ["register"]
 
@@ -35,6 +36,7 @@ _SOLVERS: tuple[Callable[..., Solver], ...] = (
     GtShortestProcessingTime,
     GtMostWorkRemaining,
     WernerWinklerInsertion,
+    ShopTabuSearch,
 )
 
 
