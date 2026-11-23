@@ -20,6 +20,7 @@ from dispatchatlas.solvers.registry import SolverRegistry
 from dispatchatlas.solvers.shop.annealing import ShopAnnealing
 from dispatchatlas.solvers.shop.genetic import ShopSteadyStateGa
 from dispatchatlas.solvers.shop.sampling import ShopRandomSampling
+from dispatchatlas.solvers.shop.swarm import ShopParticleSwarm
 
 __all__ = ["register"]
 
@@ -28,6 +29,7 @@ _SOLVERS: tuple[Callable[..., Solver], ...] = (
     ShopRandomSampling,
     ShopAnnealing,
     ShopSteadyStateGa,
+    ShopParticleSwarm,
 )
 
 

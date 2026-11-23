@@ -403,3 +403,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   solver whose control logic runs unchanged on random keys or job sequences,
   with one builder: parents by tournament, the fitter first, and a child that
   replaces the worst member when it is no worse than it.
+- A job-shop particle swarm (`shop-particle-swarm`): one swarm whose size,
+  topology (global or a ring), memory of personal and leader bests, loop and
+  stop are the same code on random keys and job sequences. Its update rule
+  differs by necessity, a constriction swarm reflected into [0, 1] on keys and
+  the discrete swarm of Pan, Tasgetiren and Liang (2007) on job sequences, so
+  the pair is a weaker match than the other families.
