@@ -12,6 +12,8 @@ The package is organised in layers:
   calls, a resumable rows file, and process tools.
 - :mod:`dispatchatlas.campaigns`: reproducible, resumable experiments.
 - :mod:`dispatchatlas.analysis`: statistics, tables, figures, and reports.
+- :mod:`dispatchatlas.tuning`: parameter spaces, racing, and iterated racing, which
+  configure a solver's parameters on a set of instances.
 """
 
 from importlib.metadata import PackageNotFoundError, version
