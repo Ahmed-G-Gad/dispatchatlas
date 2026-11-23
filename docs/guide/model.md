@@ -261,7 +261,12 @@ so small problems stay readable:
 
 A schedule document lists `[task, mode, start, end]` rows. A result document
 holds every field of a solver result, with its schedules as schedule documents
-and its trace as rows.
+and its trace as rows. A result that has bounds over time (see
+[Results](solvers.md#results)) also holds them under `bounds`, one
+`[elapsed, value]` row for each improvement of the proven bound, such as
+`[[0.07, 361.0]]`. A result without them has no `bounds` key, so the documents
+of the solvers that report none are as they were. A run record of a campaign
+holds them the same way (see [Campaigns](campaigns.md#storage-layout)).
 
 `canonical_json` writes JSON with sorted keys, no spaces, and ASCII text, and
 `digest` is the SHA-256 of it. `problem_digest(problem)` therefore identifies

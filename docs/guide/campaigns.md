@@ -83,7 +83,27 @@ one, so a run that reaches it stops for its time limit, and its record states
 the cap. The process backend also kills a run that does not stop
 `timeout_factor * cap + grace` seconds after its solve begins, as for any
 time limit. A cap must name a protocol and a problem of the campaign, and a
-run without an entry has no cap.
+run without an entry has no cap. With the protocol `evaluations-300` and the
+problem `ta01`, this caps the runs of tabu search on `ta01` under that protocol
+at 20 seconds, and no other run:
+
+```toml
+[[solvers]]
+id = "shop-tabu-search"
+time_caps = { evaluations-300 = { ta01 = 20.0 } }
+```
+
+A run that stops for its cap is **censored**: it completed, and its record
+keeps its status and its outcome, but its search is shorter than the protocol
+asked for, so what it reached is a lower bound on that search. `Run.censored`
+of `dispatchatlas.analysis` is true for a run whose record states a cap
+(`time_cap` in its provenance) and whose solver stopped for its time limit. A
+run that reaches its evaluation limit before its cap is not censored, and its
+outcome states the `evaluations` and the `stop_reason` that its protocol sets,
+so a check can require both of every uncensored run. A cap is the time limit of
+its run for the hard limit, for `campaign estimate`, and for the deadline of a
+session (see [Resuming](#resuming)), and a capped run that reached it cannot
+be replayed, as no run stopped by a time limit can.
 
 A protocol has a `name` and a `stop` table with the fields of `StopCriteria`:
 `time_limit`, `max_evaluations`, `max_iterations`, `target`, `patience`, and
@@ -500,6 +520,8 @@ it. A file written on another host, or one that names no owner, counts as held.
 - A **run record** (`dispatchatlas.run/1`) names the run, its campaign and
   config hash, problem id and digest, solver, protocol, replicate, and seed;
   holds the outcome, with the status, stop reason, objective values, bound,
+  the bounds over time (`bounds`, one `[elapsed, value]` row for each
+  improvement of the bound, written only when the solver reported some),
   feasibility and violation codes as checked, evaluations, iterations,
   elapsed time, trace, and front; the best schedule as `[task, mode, start,
   end]` rows, unless `record_schedules` is false; and the provenance of the
@@ -526,10 +548,11 @@ it. A file written on another host, or one that names no owner, counts as held.
   provenance is the engine's own measurement from the same instant until
   the solver returned.
 - Its **result hash** is the SHA-256 of the outcome without the fields that
-  measure wall time, and without the solver-specific extras. Nothing about the
-  machine or the session enters it, so a replay on any machine compares
-  results directly, and a record edited after it was written fails the
-  comparison with its hash.
+  measure wall time, and without the solver-specific extras. The bounds over
+  time enter it by their values, not their times, and an outcome without them
+  hashes as it always did. Nothing about the machine or the session enters it,
+  so a replay on any machine compares results directly, and a record edited
+  after it was written fails the comparison with its hash.
 - Its **identity hash** (`identity_hash`) is the SHA-256 of what names the
   run: the digest of the problem, the id and the parameters of the solver,
   the protocol with its stop criteria, the replicate, and the seed. A
@@ -696,13 +719,18 @@ therefore loses at most the runs that were in progress.
   plugins, and the git states), or `machine` (the rest of the
   environment). A value the earlier record does not state is not compared.
   With the execution key `on_changed_code = "refuse"`, a session whose
-  code differs is refused before it writes anything; the default `"warn"`
-  resumes. A difference of execution settings or of the machine is never
-  refused. The directory of the campaign itself is left out of every git
-  state, so it may lie inside the working directory, the library's
-  checkout, or the checkout of an editable plugin. Keep other files that
-  change between sessions, such as the results of other campaigns, out of
-  those states, by an ignore rule or a place outside the checkouts.
+  code differs is refused before it writes anything, with a `ConfigError`
+  that names each difference and offers three ways on: run on the code of the
+  earlier session, set the key to `"warn"` to resume on this code, or give the
+  campaign another id. The default `"warn"` resumes. A difference of
+  execution settings or of the machine is never refused. A study that must
+  run on one revision sets `"refuse"` and keeps its results outside the
+  checkouts of the code it runs. The directory of the campaign itself is left
+  out of every git state, so it may lie inside the working directory, the
+  library's checkout, or the checkout of an editable plugin, but any other
+  file that changes between sessions, such as the results of other campaigns,
+  counts as a change of code unless git ignores it or it lies outside the
+  checkouts.
 - A worker process that starts after a source file of the library changed
   runs on other code than the session recorded. The runner warns about
   such a worker, and every run it completes carries a note with both
