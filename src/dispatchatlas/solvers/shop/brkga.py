@@ -58,7 +58,6 @@ job sequence, which the run evaluates once before it stops.
 from __future__ import annotations
 
 import heapq
-import importlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
@@ -316,16 +315,6 @@ class ShopBrkga:
             _share(self.elite_count, self.elite_fraction, size),
             _share(self.mutant_count, self.mutant_fraction, size),
         )
-
-    def warm_up(self) -> None:
-        """Import ``numpy.ma``, which the run's observer loads on first use.
-
-        When a run finishes, its observer takes the median of the distances of the moves it
-        saw, and ``numpy.median`` imports ``numpy.ma`` the first time it is called in a
-        process. A campaign calls this method before the clock of a run starts, so that the
-        import is not charged to the first run of the process.
-        """
-        importlib.import_module("numpy.ma")
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         """Evolve the chromosomes, generation after generation, until a stop criterion fires."""

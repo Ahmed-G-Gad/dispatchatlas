@@ -160,7 +160,14 @@ class TrajectoryObserver:
         if self.distances:
             values = np.asarray(self.distances, dtype=np.float64)
             measures["phenotype_distance_mean"] = float(values.mean())
-            measures["phenotype_distance_median"] = float(np.median(values))
+            # The median of the sorted values: np.median imports numpy.ma on its first call in a
+            # process, which would charge that import to the run that first finishes.
+            ordered = np.sort(values)
+            half = ordered.size // 2
+            middle = (
+                ordered[half] if ordered.size % 2 else (ordered[half - 1] + ordered[half]) / 2.0
+            )
+            measures["phenotype_distance_median"] = float(middle)
         return measures
 
     def _ranks(self, decoded: Decoded) -> NDArray[np.intp]:
