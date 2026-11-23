@@ -120,6 +120,13 @@ title = "A sharper Bonferroni procedure for multiple tests of significance"
 venue = "Biometrika 75(4):800-802"
 doi = "10.1093/biomet/75.4.800"
 
+[hodges1963estimates]
+authors = "J. L. Hodges and E. L. Lehmann"
+year = 1963
+title = "Estimates of location based on rank tests"
+venue = "The Annals of Mathematical Statistics 34(2):598-611"
+doi = "10.1214/aoms/1177704172"
+
 [holm1979simple]
 authors = "S. Holm"
 year = 1979
