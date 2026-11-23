@@ -326,3 +326,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   show the same lines with and without the file. A worker hands its
   records over without waiting, the file is buffered and limited in size,
   and dropped records are counted in it.
+- A solver can require a structural shape of its problems. `Problem.shapes`
+  lists the shapes a problem has, named in `SHAPES`: `"job-shop"` when its
+  dependencies join the tasks into disjoint chains and every task has one
+  mode that holds one machine whole. `SolverInfo.shape` names the shape a
+  solver requires, and `Search` and a campaign's exclusions refuse a problem
+  without it as they refuse a feature the solver does not model.
+  `Search.assess_built` counts and scores a schedule the solver builds
+  itself, after the budget check, so a run at its evaluation limit never
+  builds a schedule it cannot count, and `Decoder.repairs` counts the decodes
+  that pass an order through the precedence repair. The new built-in module
+  `dispatchatlas.solvers.shop` holds the job-shop solvers, and the
+  bibliography gains their sources and those of iterated racing and of
+  equivalence testing.
