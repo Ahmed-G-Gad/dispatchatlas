@@ -127,6 +127,7 @@ nav:
       - Job shop methods: api/solvers-shop.md
       - Processes: api/processes.md
       - Campaigns: api/campaigns.md
+      - Tuning: api/tuning.md
       - Analysis: api/analysis.md
       - Statistics: api/analysis-stats.md
       - Figures: api/analysis-figures.md

@@ -393,3 +393,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the evaluation clock, between temperatures that target acceptance
   probabilities on moves of random solutions; `dispatchatlas.solvers.shop.family`
   names, builds and checks the representations.
+- `dispatchatlas.tuning`: parameter spaces (`Real`, `Integer`, `Ordinal`,
+  `Categorical`, `ParameterSpace`); `race`, which eliminates configurations by
+  the Friedman test and Conover's comparisons with the best; and
+  `IteratedRacing(space, budget, seed=).tune(instances, run_batch)`, elitist
+  iterated racing with its budget counted in runs and its published defaults,
+  which returns every experiment as a record.
