@@ -453,3 +453,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that the semi-active builder rebuilds that schedule exactly. A chromosome's
   value is its improved schedule's, since the active builder may rebuild a
   longer one.
+- `solvers list`, `solvers show` with its JSON document, and the solver
+  catalogue state the shape that a solver requires (`SolverInfo.shape`), such as
+  `job-shop`, when it has one. A solver without a shape is listed as it was.

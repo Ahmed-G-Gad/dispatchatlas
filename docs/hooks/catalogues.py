@@ -38,7 +38,7 @@ from dispatchatlas.benchmarks.characterize import DEFINITIONS
 from dispatchatlas.benchmarks.formats import EXTENSIONS, FORMATS
 from dispatchatlas.campaigns.checking import CODES
 from dispatchatlas.cli import build_parser
-from dispatchatlas.core import FEATURES, SOLVER_FAMILIES, registered_objectives
+from dispatchatlas.core import FEATURES, SHAPES, SOLVER_FAMILIES, registered_objectives
 from dispatchatlas.references import Reference, bibliography
 from dispatchatlas.solvers import default_registry as default_solvers
 
@@ -177,6 +177,8 @@ def _solver(info: Any, registry: Any, page: str) -> list[str]:
         f"- **Parameters**: {parameters or 'none'}",
         f"- **Does not model**: {', '.join(missing)}" if missing else "- **Models**: every feature",
     ]
+    if info.shape is not None:
+        items.append(f"- **Shape**: `{info.shape}`. {SHAPES[info.shape]}")
     if info.requires:
         items.append(f"- **Needs**: the {', '.join(f'`{extra}`' for extra in info.requires)} extra")
     items.append(f"- **Sources**: {_sources(info.references, page)}")

@@ -17,7 +17,7 @@ from dispatchatlas.cli._common import (
     parameter_lines,
 )
 from dispatchatlas.core.errors import ConfigError
-from dispatchatlas.core.model import FEATURES
+from dispatchatlas.core.model import FEATURES, SHAPES
 from dispatchatlas.core.solver import SOLVER_FAMILIES, SolverInfo
 from dispatchatlas.references import cite
 from dispatchatlas.solvers import default_registry
@@ -53,8 +53,12 @@ def register(commands: Commands) -> None:
 
 
 def _describe(info: SolverInfo) -> dict[str, Any]:
-    """Return a solver's metadata as a JSON-ready dictionary, with citations resolved."""
-    return {
+    """Return a solver's metadata as a JSON-ready dictionary, with citations resolved.
+
+    The keys ``shape`` and ``shape_description`` are present only for a solver that
+    requires a problem shape.
+    """
+    document: dict[str, Any] = {
         "id": info.id,
         "name": info.name,
         "family": info.family,
@@ -70,6 +74,10 @@ def _describe(info: SolverInfo) -> dict[str, Any]:
         "references": list(info.references),
         "citations": [cite(source) for source in info.references],
     }
+    if info.shape is not None:
+        document["shape"] = info.shape
+        document["shape_description"] = SHAPES[info.shape]
+    return document
 
 
 def _list(arguments: argparse.Namespace) -> int:
@@ -115,6 +123,11 @@ def _show(arguments: argparse.Namespace) -> int:
             ("parameters", parameter_lines(info.parameters) or "none"),
             ("models", ", ".join(document["supports"]) or "none of the optional features"),
             ("does not model", ", ".join(document["unsupported"]) or "-"),
+            *(
+                [("shape", f"{info.shape}: {document['shape_description']}")]
+                if info.shape is not None
+                else []
+            ),
             ("references", "\n".join(document["citations"]) or "-"),
         ]
     )
@@ -127,5 +140,7 @@ def _traits(info: SolverInfo) -> str:
         traits.append("iterative")
     if info.multi_objective:
         traits.append("multi-objective")
+    if info.shape is not None:
+        traits.append(f"needs the {info.shape} shape")
     traits.extend(f"needs [{extra}]" for extra in info.requires)
     return ", ".join(traits)

@@ -8,6 +8,7 @@ import pytest
 
 from dispatchatlas.benchmarks.catalog import load_directory
 from dispatchatlas.benchmarks.registry import default_registry as default_families
+from dispatchatlas.core import SHAPES
 from dispatchatlas.core.serialization import load_problem, loads_problem, problem_to_dict
 from dispatchatlas.references import bibliography, to_bibtex
 from dispatchatlas.solvers import default_registry
@@ -52,6 +53,36 @@ def test_solvers_show_names_the_extra_a_solver_needs(cli: Cli) -> None:
     result = cli("solvers", "show", "cp-sat")
     assert result.code == 0
     assert "the exact extra" in result.out
+
+
+def test_solvers_list_shows_the_shape_a_solver_requires(cli: Cli) -> None:
+    rows = {line.split()[0]: line for line in cli("solvers", "list").out.splitlines()[1:]}
+    assert rows["shop-tabu-search"].endswith("stochastic, iterative, needs the job-shop shape")
+    assert rows["tabu-search"].endswith("stochastic, iterative")
+    shaped = {info.id for info in default_registry().infos() if info.shape is not None}
+    assert {"shop-random-sampling", "shop-brkga", "gt-most-work-remaining"} <= shaped
+    assert {name for name, line in rows.items() if "job-shop shape" in line} == shaped
+    documents = {item["id"]: item for item in cli("solvers", "list", "--json").json()}
+    assert documents["shop-tabu-search"]["shape"] == "job-shop"
+    assert documents["shop-tabu-search"]["shape_description"] == SHAPES["job-shop"]
+    assert {name for name, item in documents.items() if "shape" in item} == shaped
+
+
+def test_solvers_show_names_the_shape_a_solver_requires(cli: Cli) -> None:
+    result = cli("solvers", "show", "shop-random-sampling")
+    assert result.code == 0
+    assert f"shape            job-shop: {SHAPES['job-shop']}" in result.out
+    labels = [line.split("  ")[0] for line in result.out.splitlines()]
+    assert labels.index("does not model") < labels.index("shape") < labels.index("references")
+    document = cli("solvers", "show", "shop-random-sampling", "--json").json()
+    assert (document["shape"], document["shape_description"]) == ("job-shop", SHAPES["job-shop"])
+
+
+def test_a_solver_without_a_shape_is_listed_as_it_was(cli: Cli) -> None:
+    result = cli("solvers", "show", "tabu-search")
+    assert not any(line.startswith("shape ") for line in result.out.splitlines())
+    document = cli("solvers", "show", "tabu-search", "--json").json()
+    assert not {"shape", "shape_description"} & set(document)
 
 
 # --------------------------------------------------------------- benchmarks
