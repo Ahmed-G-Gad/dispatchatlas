@@ -366,3 +366,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `first_fitting`, the first of a sequence of candidate configurations whose
   projected cost fits a limit, and `largest_budget`; and `estimate(costs=)`,
   which gives `projected_seconds`.
+- Random keys and job sequences as the two representations of a job-shop
+  search family. Both draw the same random solutions, and every move changes
+  the genotype: one redrawn key answers an insert, and two perturbed keys
+  answer a swap by a step that `calibrate_step` sets within (0, 1].
+  Recombination takes each gene or key from the first parent with probability
+  `inheritance`, by the precedence preservative crossover (or the job-based
+  order crossover) and the parameterised uniform crossover; a job sequence can
+  be written back into keys. `ShopRun` decodes through `Search.assess_built`
+  with one builder, holds control and operator streams derived from the run's
+  seed, refuses a run that repaired an order, and records the first
+  schedule's digest and the decode, observer and calibration times;
+  `TrajectoryObserver` measures revisited schedules, unchanged moves and the
+  Kendall tau distance of machine orders per move.

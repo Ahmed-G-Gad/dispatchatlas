@@ -12,3 +12,11 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
 ::: dispatchatlas.solvers.shop.decoding
 
 ::: dispatchatlas.solvers.shop.graph
+
+::: dispatchatlas.solvers.shop.representation
+
+::: dispatchatlas.solvers.shop.distance
+
+::: dispatchatlas.solvers.shop.run
+
+::: dispatchatlas.solvers.shop.observers
