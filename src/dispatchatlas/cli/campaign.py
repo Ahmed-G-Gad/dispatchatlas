@@ -49,6 +49,7 @@ from dispatchatlas.cli._common import (
     non_negative_integer,
     non_negative_number,
     positive_integer,
+    positive_number,
     seconds,
     text,
     workers,
@@ -140,6 +141,16 @@ def register(commands: Commands) -> None:
         type=non_negative_integer,
         metavar="N",
         help="attempt at most N runs in this session",
+    )
+    running.add_argument(
+        "--deadline-seconds",
+        type=positive_number,
+        metavar="SECONDS",
+        help="start no run that cannot end within SECONDS wall seconds of the session's "
+        "start: a run with a time limit (the protocol's or its solver's cap) starts only if "
+        "the limit ends before the deadline, a run without one only while the deadline has "
+        "not passed; the runs held back stay pending for the next session. The limit alone "
+        "is counted, so leave a margin for start-up and overshoot",
     )
     checked = add_command(
         group,
@@ -429,29 +440,35 @@ def _run(arguments: argparse.Namespace) -> int:
         fresh=arguments.fresh,
         retry_failed=arguments.retry_failed,
         max_runs=arguments.max_runs,
+        deadline_seconds=arguments.deadline_seconds,
         backend=arguments.backend,
         workers=arguments.workers,
         affinity=arguments.affinity,
     )
+    deadline = arguments.deadline_seconds is not None
     if arguments.json:
-        emit_json(_run_document(summary))
+        document = _run_document(summary)
+        if deadline:
+            document["held_back"] = summary.held_back
+        emit_json(document)
     else:
-        emit_fields(
-            [
-                ("campaign", f"{summary.campaign}, session {summary.session}"),
-                ("directory", summary.directory),
-                (
-                    "runs",
-                    f"{summary.planned} planned: {summary.completed} completed, "
-                    f"{summary.failed} failed, {summary.pending} pending",
-                ),
-                (
-                    "session",
-                    f"{summary.attempted} attempts: {summary.succeeded} succeeded, "
-                    f"{summary.errors} failed, in {seconds(summary.elapsed)}",
-                ),
-            ]
-        )
+        fields: list[tuple[str, object]] = [
+            ("campaign", f"{summary.campaign}, session {summary.session}"),
+            ("directory", summary.directory),
+            (
+                "runs",
+                f"{summary.planned} planned: {summary.completed} completed, "
+                f"{summary.failed} failed, {summary.pending} pending",
+            ),
+            (
+                "session",
+                f"{summary.attempted} attempts: {summary.succeeded} succeeded, "
+                f"{summary.errors} failed, in {seconds(summary.elapsed)}",
+            ),
+        ]
+        if deadline:
+            fields.append(("deadline", f"{summary.held_back} runs held back, which stay pending"))
+        emit_fields(fields)
     if summary.failed:
         raise CommandError(
             f"{summary.failed} of {summary.planned} runs failed; their records are under "

@@ -4,6 +4,9 @@ Both backends take :class:`~dispatchatlas.campaigns.execution.Task` items from
 a queue that the runner may extend while results arrive (a retry goes to its
 end), and yield each :class:`~dispatchatlas.campaigns.execution.Completion`
 or :class:`~dispatchatlas.campaigns.execution.Failure` as soon as it exists.
+A caller may pass ``admit``, a function that is asked about each task at the instant
+the backend would start it and answers whether it may start. A task it refuses is
+dropped from the queue, with no attempt and no record, so its run stays pending.
 
 - :class:`SequentialBackend` runs one attempt after another in the calling
   process. Solvers must honour their own time limits, and a crash in native
@@ -156,8 +159,14 @@ class Backend(Protocol):
     workers: int
     """Attempts that run at once."""
 
-    def run(self, queue: deque[Task]) -> Generator[Result]:
-        """Execute tasks from ``queue`` until it is empty, yielding each result."""
+    def run(
+        self, queue: deque[Task], admit: Callable[[Task], bool] | None = None
+    ) -> Generator[Result]:
+        """Execute tasks from ``queue`` until it is empty, yielding each result.
+
+        ``admit`` is asked about each task as it is about to start, and a task it
+        refuses is dropped from the queue without an attempt.
+        """
         ...
 
 
@@ -167,10 +176,17 @@ class SequentialBackend:
     name = "sequential"
     workers = 1
 
-    def run(self, queue: deque[Task]) -> Generator[Result]:
-        """Execute tasks from ``queue`` until it is empty, yielding each result."""
+    def run(
+        self, queue: deque[Task], admit: Callable[[Task], bool] | None = None
+    ) -> Generator[Result]:
+        """Execute tasks from ``queue`` until it is empty, yielding each result.
+
+        A task that ``admit`` refuses when its turn comes is dropped without an attempt.
+        """
         while queue:
-            yield _stamped(attempt(queue.popleft(), "main"), None, 1)
+            task = queue.popleft()
+            if admit is None or admit(task):
+                yield _stamped(attempt(task, "main"), None, 1)
 
 
 class ProcessBackend:
@@ -234,8 +250,14 @@ class ProcessBackend:
         self.log = log
         self.log_level = log_level
 
-    def run(self, queue: deque[Task]) -> Generator[Result]:
+    def run(
+        self, queue: deque[Task], admit: Callable[[Task], bool] | None = None
+    ) -> Generator[Result]:
         """Execute tasks from ``queue`` until it is empty, yielding each result.
+
+        ``admit`` is asked about a task at its hand-over to a worker, the instant the
+        run would start, and a task it refuses is dropped without an attempt; no
+        worker is started for it.
 
         Closing the iterator early, or an exception in the caller, kills the
         workers.
@@ -272,7 +294,7 @@ class ProcessBackend:
             if self.cpus is not None:
                 _start_helpers()
             while True:
-                yield from _hand_over(slots, queue, documents)
+                yield from _hand_over(slots, queue, documents, admit)
                 busy = [slot for slot in slots if slot.task is not None]
                 if not busy:
                     if queue:
@@ -770,17 +792,26 @@ def _exported(values: Mapping[str, str]) -> Iterator[None]:
                 os.environ[name] = value
 
 
-def _hand_over(slots: list[_Slot], queue: deque[Task], documents: _Documents) -> list[Failure]:
+def _hand_over(
+    slots: list[_Slot],
+    queue: deque[Task],
+    documents: _Documents,
+    admit: Callable[[Task], bool] | None = None,
+) -> list[Failure]:
     """Give every idle slot a task from the queue; return the failures of tasks not sent.
 
     Every task handed over in one call gets the same ``concurrent``: the
-    tasks executing once the call has handed out its tasks.
+    tasks executing once the call has handed out its tasks. A task that ``admit``
+    refuses is dropped from the queue, and the slot takes the next one.
     """
     refused: list[Failure] = []
     handed: list[_Slot] = []
     for slot in slots:
         while slot.task is None and queue:
-            failure = slot.hand(queue.popleft(), documents)
+            task = queue.popleft()
+            if admit is not None and not admit(task):
+                continue
+            failure = slot.hand(task, documents)
             if failure is None:
                 handed.append(slot)
             else:

@@ -664,6 +664,22 @@ therefore loses at most the runs that were in progress.
 
 - `--retry-failed` gives every run that failures settled one more attempt.
 - `--max-runs N` attempts at most `N` runs in this session.
+- `--deadline-seconds S` (`deadline_seconds=S` in `run`) gives the session a
+  deadline `S` wall seconds after it starts, for a job that has a wall time to
+  keep. A run starts only if it can end before the deadline. A run whose stop
+  criteria set a time limit, the protocol's or the cap of its solver, starts
+  only if the time elapsed plus that limit is at most `S`. A run without one,
+  which stops on evaluations or iterations alone, has no known end and starts
+  only while `S` has not passed. The test is made when the run would start, a
+  retry included, so a long run that fits at the start stops fitting as the
+  deadline nears while shorter runs go on. A run that does not start has no
+  attempt and no record: it stays pending, the next session makes it, and the
+  session log and the command's output say how many the deadline held back.
+  Only the time limit is counted, not a worker's start-up, a solver's overshoot
+  of its limit, or the hard limit that kills a run that ignores it, so give the
+  deadline with that margin taken off the job's wall time. The deadline is not
+  an execution setting: no record, hash or session document holds it, and two
+  sessions with different deadlines are not a difference between them.
 - `--workers`, `--backend`, and `--affinity` override the file's execution
   settings; they do not change the config hash. `--affinity` takes
   `inherit`, `pin`, or processor indices such as `0,2,4`. `--backend

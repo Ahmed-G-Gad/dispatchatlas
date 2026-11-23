@@ -27,6 +27,11 @@ is until the new record is written, and is then moved under ``superseded/``;
 a record kept there that is the valid record of a planned run again, because
 its problem was restored, is moved back when a session starts.
 
+A session may be given a deadline, in wall seconds from its start, with the
+argument ``deadline_seconds``: no run starts that cannot end before it, a run
+without a time limit starts only while the deadline has not passed, and the runs
+that do not start stay pending for the next session.
+
 Each session also writes ``logs/session-<n>.log``, each line with the UTC
 time of its record. The log holds what the engine itself logs while
 :func:`run` works, from the level ``INFO``, and what the other loggers of the
@@ -46,6 +51,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 from collections import deque
@@ -134,6 +140,8 @@ class RunSummary:
         succeeded: Attempts this session that completed a run.
         errors: Attempts this session that failed.
         elapsed: Wall-clock seconds of the session.
+        held_back: Runs the session's deadline kept from starting, which stay
+            pending; 0 without a deadline.
     """
 
     campaign: str
@@ -148,6 +156,7 @@ class RunSummary:
     succeeded: int
     errors: int
     elapsed: float
+    held_back: int = 0
 
     @property
     def done(self) -> bool:
@@ -164,6 +173,7 @@ def run(
     fresh: bool = False,
     retry_failed: bool = False,
     max_runs: int | None = None,
+    deadline_seconds: float | None = None,
     backend: str | None = None,
     workers: int | str | None = None,
     affinity: str | Sequence[int] | None = None,
@@ -179,6 +189,20 @@ def run(
         fresh: Discard every result in the campaign directory first.
         retry_failed: Give every run that failures settled one more attempt.
         max_runs: Attempt at most this many pending runs in this session.
+        deadline_seconds: Wall seconds from the start of this call after which no run
+            starts; ``None``, the default, sets none. A run whose stop criteria set a
+            time limit (its protocol's, or the cap of its solver) starts only if the
+            time elapsed plus that limit is at most the deadline. A run without one,
+            which stops on evaluations or iterations alone, has no known end and starts
+            only while the deadline has not passed. The test is made when the run would
+            start, for a retry as for a first attempt. A run that does not start has no
+            attempt and no record, so it stays pending for the next session, and the
+            session log says how many the deadline held back. The bound is the time
+            limit alone: it leaves out a worker's start-up, a solver's overshoot, and
+            the hard limit that kills a run which ignores its limit, so a caller who
+            must end by a wall time takes that margin off the deadline. The deadline
+            belongs to the session: no execution setting, configuration hash, or
+            record holds it.
         backend: Override of the campaign's execution backend.
         workers: Override of the campaign's worker count, or ``"auto"``.
         affinity: Override of the campaign's ``affinity``: ``"inherit"``,
@@ -188,7 +212,8 @@ def run(
         The summary of the session.
 
     Raises:
-        ConfigError: If the campaign cannot be planned, its directory holds
+        ConfigError: If ``deadline_seconds`` is not a positive finite number, the
+            campaign cannot be planned, its directory holds
             results of another configuration, another runner is using it, or
             runs are pending and its workers cannot be pinned as ``affinity``
             asks: the platform cannot pin a process, the workers outnumber
@@ -207,6 +232,8 @@ def run(
         KeyboardInterrupt: When interrupted. Records written so far are kept
             and the session is marked interrupted.
     """
+    begun = time.perf_counter()
+    deadline = None if deadline_seconds is None else _Deadline(begun, deadline_seconds)
     execution = overridden(campaign.execution, backend, workers, affinity)
     # The engine's loggers record from INFO for the session log. The other loggers
     # of the library keep their levels unless the campaign asks for a lower one.
@@ -291,13 +318,25 @@ def run(
                 chosen.name,
                 count,
             )
+            if deadline is not None:
+                _LOG.info(
+                    "campaign %s, session %d: deadline of %g s from the start of the session; "
+                    "a run with a time limit starts only if the limit ends before it, a run "
+                    "without one only while it has not passed",
+                    campaign.id,
+                    record.session,
+                    deadline.seconds,
+                )
             books = _Books(prepared, store, execution, record.session, ledger.completed)
             for run_id, failures in ledger.failures.items():
                 books.failures[run_id] = list(failures)
             queue = deque(tasks_for(prepared, pending, execution, ledger.next_attempt))
             status = SessionStatus.FAILED
             try:
-                with contextlib.closing(chosen.run(queue)) as results:
+                executing = (
+                    chosen.run(queue) if deadline is None else chosen.run(queue, deadline.admits)
+                )
+                with contextlib.closing(executing) as results:
                     for result in results:
                         retry = books.record(result)
                         if retry is not None:
@@ -314,6 +353,14 @@ def run(
                 store.write_session(
                     replace(record, finished=utc_now(), status=status, counts=counts, load=load)
                 )
+                if deadline is not None:
+                    _LOG.info(
+                        "campaign %s, session %d: the deadline held back %d run(s), which "
+                        "stay pending",
+                        campaign.id,
+                        record.session,
+                        len(deadline.held),
+                    )
                 _LOG.info(
                     "campaign %s, session %d %s: %d completed, %d failed, %d pending",
                     campaign.id,
@@ -336,6 +383,7 @@ def run(
         succeeded=counts["succeeded"],
         errors=counts["errors"],
         elapsed=time.perf_counter() - clock,
+        held_back=0 if deadline is None else len(deadline.held),
     )
 
 
@@ -473,6 +521,50 @@ def overridden(
 
 
 # ------------------------------------------------------------------- helpers
+
+
+class _Deadline:
+    """The deadline of a session: a run starts only if it can end before it.
+
+    The backend asks :meth:`admits` about each task at the instant it would start. A task
+    whose stop criteria set a time limit, the protocol's or the cap of its solver, may
+    start when the time elapsed plus that limit is at most the deadline. A task without a
+    time limit has no known end and may start while the deadline has not passed. A time
+    that no longer fits never fits later, so a refused task is dropped from the queue
+    for good, and its run id is kept in :attr:`held`.
+
+    Args:
+        begun: The reading of ``clock`` at the start of the session.
+        seconds: Seconds from ``begun`` to the deadline, positive and finite.
+        clock: The clock, in seconds; the monotonic performance counter by default.
+
+    Raises:
+        ConfigError: If ``seconds`` is not a positive finite number.
+    """
+
+    def __init__(
+        self, begun: float, seconds: float, clock: Callable[[], float] = time.perf_counter
+    ) -> None:
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, int | float)
+            or not math.isfinite(seconds)
+            or seconds <= 0.0
+        ):
+            raise ConfigError(f"deadline_seconds is a positive finite number, not {seconds!r}")
+        self.seconds = float(seconds)
+        self.held: set[str] = set()
+        self._at = begun + self.seconds
+        self._clock = clock
+
+    def admits(self, task: Task) -> bool:
+        """Return whether ``task`` may start now; a task that may not is counted as held back."""
+        now = self._clock()
+        limit = task.stop.time_limit
+        fits = now < self._at if limit is None else now + limit <= self._at
+        if not fits:
+            self.held.add(task.run_id)
+        return fits
 
 
 class _Books:

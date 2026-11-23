@@ -162,6 +162,39 @@ def test_run_attempts_at_most_max_runs(cli: Cli, tmp_path: Path) -> None:
     assert "6 planned: 6 completed, 0 failed, 0 pending" in text.out
 
 
+def test_run_holds_back_the_runs_that_a_deadline_forbids(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path)
+    output = tmp_path / "runs"
+    # Runs without a time limit start only while the deadline has not passed.
+    held = cli("campaign", "run", config, "--output", output, "--deadline-seconds", "1e-9")
+    assert held.code == 0
+    assert "0 attempts: 0 succeeded, 0 failed" in held.out
+    assert "6 planned: 0 completed, 0 failed, 6 pending" in held.out
+    assert "deadline   6 runs held back, which stay pending" in held.out
+    # A deadline that holds nothing back changes nothing but the line that says so.
+    json_held = cli(
+        "campaign", "run", config, "--output", output, "--deadline-seconds", "1e6", "--json"
+    )
+    assert json_held.code == 0
+    document = json_held.json()
+    assert (document["attempted"], document["pending"], document["held_back"]) == (6, 0, 0)
+    # Without the option the output has never named a deadline.
+    again = cli("campaign", "run", config, "--output", output, "--json")
+    assert "held_back" not in again.json()
+    assert "deadline" not in cli("campaign", "run", config, "--output", output).out
+
+
+def test_the_deadline_option_takes_a_positive_number_of_seconds(cli: Cli, tmp_path: Path) -> None:
+    config = campaign_file(tmp_path)
+    for value in ("0", "-5", "nan", "inf", "soon"):
+        refused = cli(
+            "campaign", "run", config, "--output", tmp_path / "runs", "--deadline-seconds", value
+        )
+        assert (refused.code, refused.out) == (2, "")
+        assert "argument --deadline-seconds: must be" in refused.err
+    assert not (tmp_path / "runs").exists()
+
+
 def test_run_exits_with_1_when_runs_fail(cli: Cli, tmp_path: Path) -> None:
     solvers = (
         'id = "input-order"\n\n[[solvers]]\nid = "enumeration"\nparameters = { max_tasks = 2 }'
