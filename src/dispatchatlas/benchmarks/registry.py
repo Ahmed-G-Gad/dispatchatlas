@@ -44,6 +44,7 @@ PLUGIN_GROUP = "dispatchatlas.benchmarks"
 
 BUILT_IN_MODULES: tuple[str, ...] = (
     "dispatchatlas.benchmarks.shop",
+    "dispatchatlas.benchmarks.taillard",
     "dispatchatlas.benchmarks.machines",
     "dispatchatlas.benchmarks.project",
     "dispatchatlas.benchmarks.workflow",

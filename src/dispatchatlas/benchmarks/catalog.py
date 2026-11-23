@@ -154,6 +154,7 @@ _SMOKE = Catalog(
             ("continuum-offloading", {"applications": 6, "devices": 2}),
             ("continuum-workflow", {"applications": 2, "tasks": 5, "devices": 2}),
             ("continuum-pipeline", {"streams": 2, "frames": 2, "stages": 2, "devices": 2}),
+            ("taillard-job-shop-seeded", {"jobs": 3, "machines": 3}),
         )
     ),
 )

@@ -350,3 +350,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and keeps every two-sided result as it was; `tost_paired_t`,
   `tost_signed_rank` and `equivalence_report` test equivalence within a
   margin by two one-sided tests.
+- The reference bounds of Taillard's job shops ta01 to ta50, each with the
+  values that two published tables print and where (`load_bounds`,
+  `reference_values`, `Bound.upper_sources` and `Bound.lower_sources`); and
+  `taillard_job_shop_seeded` with the family `taillard-job-shop-seeded`, job
+  shops drawn by Taillard's generator from derived seeds that are never a
+  published pair.

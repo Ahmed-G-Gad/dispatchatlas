@@ -109,8 +109,9 @@ explains its options with `--help`.
   setup times; problems can require a permutation schedule. Every problem is
   validated when it is built, and `check_schedule` checks any schedule
   against every constraint, independently of the solvers.
-- **12 benchmark families**: flow, job, open, flexible job, and hybrid flow
-  shops; unrelated parallel machines with setups; single-mode and multi-mode
+- **13 benchmark families**: flow, job, open, flexible job, and hybrid flow
+  shops, and job shops drawn by Taillard's generator from seeds he did not
+  publish; unrelated parallel machines with setups; single-mode and multi-mode
   resource-constrained projects; random task graphs on heterogeneous
   processors; and request offloading, workflows, and stream pipelines on an
   edge-fog-cloud continuum.

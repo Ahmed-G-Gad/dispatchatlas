@@ -167,13 +167,13 @@ def test_catalogs_build_writes_a_verified_directory(cli: Cli, tmp_path: Path) ->
     document = report.json()
     problems = load_directory(target)
     assert [problem.id for problem in problems] == document["problems"]
-    assert len(problems) == 24
+    assert len(problems) == 26
     again = cli("catalogs", "build", "smoke", "--output", target)
     assert again.code == 1
     assert "hint: pass --overwrite" in again.err
     replaced = cli("catalogs", "build", "smoke", "--output", target, "--overwrite")
     assert replaced.code == 0
-    assert "wrote 24 problems of catalog smoke (seed 0)" in replaced.out
+    assert "wrote 26 problems of catalog smoke (seed 0)" in replaced.out
 
 
 # --------------------------------------------------------------- references

@@ -30,6 +30,8 @@ Benchmark families, published suites, instance-file readers, catalogs, and insta
 
 ::: dispatchatlas.benchmarks.suites
 
+::: dispatchatlas.benchmarks.bounds
+
 ::: dispatchatlas.benchmarks.formats
     options:
       members:
