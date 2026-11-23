@@ -425,3 +425,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library, and `check_taillard_job_shop` checks a rebuilt instance against
   them, so a study can confirm from an installed wheel that it rebuilds the
   instances the library was tested on.
+- The Hodges-Lehmann shift and its exact signed-rank interval
+  (`hodges_lehmann_shift`, `signed_rank_interval`): the shifts that neither
+  one-sided signed-rank test rejects, with the coverage attained. With Pratt's
+  zeros the interval lies inside a margin exactly when `tost_signed_rank`
+  finds equivalence, except at a margin equal to an endpoint. The
+  bibliography gains Hodges and Lehmann (1963).

@@ -14,6 +14,8 @@ The statistical kernels: distributions, ranks, rank tests, equivalence tests, ef
 
 ::: dispatchatlas.analysis.stats.equivalence
 
+::: dispatchatlas.analysis.stats.location
+
 ::: dispatchatlas.analysis.stats.effect_sizes
 
 ::: dispatchatlas.analysis.stats.bootstrap
