@@ -20,6 +20,8 @@ Campaign configuration and files, planning, fairness, estimation, execution, rec
 
 ::: dispatchatlas.campaigns.estimation
 
+::: dispatchatlas.campaigns.costs
+
 ::: dispatchatlas.campaigns.runner
 
 ::: dispatchatlas.campaigns.backends

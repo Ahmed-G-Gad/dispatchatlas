@@ -356,3 +356,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `taillard_job_shop_seeded` with the family `taillard-job-shop-seeded`, job
   shops drawn by Taillard's generator from derived seeds that are never a
   published pair.
+- A solver entry may cap the time of its runs with `time_caps`, in seconds by
+  protocol name and problem id. A capped run stops at its time limit, its
+  record states the cap, `Run.censored` reads it, and `estimate` counts the
+  run as timed. A campaign without caps keeps its configuration hash, its
+  documents and its records.
+- `dispatchatlas.campaigns.costs`: `CostModel`, the mean seconds per
+  evaluation of each group of run records with the count of runs behind it;
+  `first_fitting`, the first of a sequence of candidate configurations whose
+  projected cost fits a limit, and `largest_budget`; and `estimate(costs=)`,
+  which gives `projected_seconds`.
