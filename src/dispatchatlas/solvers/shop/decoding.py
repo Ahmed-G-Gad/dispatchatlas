@@ -178,11 +178,13 @@ def _tasks(shop: JobShop, sequence: JobSequence) -> list[int]:
 def _ranks(shop: JobShop, rank: OperationRanks) -> list[int]:
     """Return the rank of each task as a list, after checking that every task has its own."""
     array = np.asarray(rank)
+    # Distinct ranks are checked on the sorted ranks: np.unique would import numpy.ma during the
+    # first decode of a process, which the warm-up rule of the campaigns forbids.
     if (
         array.ndim != 1
         or array.size != shop.size
         or array.dtype.kind not in "iu"
-        or np.unique(array).size != shop.size
+        or bool(np.any(np.diff(np.sort(array)) == 0))
     ):
         raise ModelError(
             f"the ranks are not one distinct integer per operation of problem {shop.problem.id!r}",
