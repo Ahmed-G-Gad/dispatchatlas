@@ -2,8 +2,9 @@
 
 Most tests replace :func:`~dispatchatlas.processes.calls.run_calls` by a function that runs the
 calls in turn in the process of the test and appends the rows as it would, and that can stop
-as a job killed by its wall time does. The tests with worker processes run a few experiments
-of the synthetic solver of ``batch_targets.py``.
+as a job killed by its wall time does. The tests with worker processes run a few experiments of the
+synthetic solver of ``batch_targets.py``, and one slow test tunes a small budget in two jobs of
+worker processes, the first killed in the middle of a batch, to the result of an uninterrupted run.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import pytest
 
 from dispatchatlas.core import ConfigError, StopCriteria
 from dispatchatlas.processes.affinity import pinning_refusal_text
-from dispatchatlas.processes.calls import Call, CallReport, CallsStoppedError
+from dispatchatlas.processes.calls import Call, CallReport, CallsStoppedError, run_calls
 from dispatchatlas.processes.child import locate_callable
 from dispatchatlas.processes.rows import (
     RowWriter,
@@ -599,3 +600,66 @@ def test_ballast_keeps_the_idle_processor_busy_while_the_experiment_runs(tmp_pat
     assert batch.last_report is not None
     assert batch.last_report.ballast_runs >= 1
     assert len(list(read_rows(rows))) == 1  # the rows of the ballast are discarded
+
+
+# ------------------------------------------------------------------ two jobs, worker processes
+
+
+class _Killer:
+    """Stands for ``run_calls`` in a job whose wall time ends after ``count`` experiments.
+
+    It hands the first ``count`` calls it is given to the real ``run_calls``, so that worker
+    processes run them and write their rows, and then raises, as a job killed in the middle of a
+    batch does. A batch that its remaining count covers whole is served and returns its report.
+    """
+
+    def __init__(self, count: int) -> None:
+        self.left = count
+
+    def __call__(self, calls: Sequence[Call], rows: Path, **options: Any) -> CallReport:
+        head = list(calls[: self.left])
+        self.left -= len(head)
+        report = run_calls(head, rows, **options)
+        if len(head) < len(calls):
+            raise _KilledError
+        return report
+
+
+def _small_tune(batch: ProcessRunBatch) -> TuningResult[int]:
+    """Tune with a small budget, the least that gives two races, in a few batches."""
+    racing = IteratedRacing(SPACE, 20, seed=3, first_test=2, iterations=2, min_survivors=2)
+    return racing.tune(list(range(4)), batch)
+
+
+@pytest.mark.slow
+def test_a_job_killed_after_a_few_experiments_resumes_in_worker_processes_to_the_same_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The uninterrupted run needs no worker processes: a cost depends on the experiment alone.
+    whole_calls = _Calls()
+    monkeypatch.setattr(batch_module, "run_calls", whole_calls)
+    whole = _small_tune(_batch(tmp_path / "whole.jsonl"))
+    total, killed_after = whole_calls.written, 4
+    assert whole.runs == total > 2 * killed_after
+    assert len(whole_calls.invocations[0]["calls"]) > killed_after  # killed inside a batch
+    # The first job runs four experiments in worker processes and is killed in its first batch.
+    rows = tmp_path / "rows.jsonl"
+    monkeypatch.setattr(batch_module, "run_calls", _Killer(killed_after))
+    with pytest.raises(_KilledError):
+        _small_tune(_batch(rows))
+    assert len(list(read_rows(rows))) == killed_after
+    # The second begins again from the same seed with the rows of the first, and runs the rest.
+    monkeypatch.setattr(batch_module, "run_calls", run_calls)
+    batch = _batch(rows)
+    resumed = _small_tune(batch)
+    assert (batch.executed, batch.replayed) == (total - killed_after, killed_after)
+    assert resumed.elites == whole.elites
+    assert resumed.records == whole.records
+    assert resumed == whole
+    assert _costs(rows) == _costs(tmp_path / "whole.jsonl")
+    # Every row, those of both jobs, came from a worker process, and no experiment ran twice.
+    assert len(_costs(rows)) == len(list(read_rows(rows))) == total
+    assert all(row["run"]["workers"] == len(CPUS) for row in read_rows(rows))
+    stamps = [item["stamp"] for item in read_rows(rows.with_name("rows.runs.jsonl"))]
+    assert len(stamps) > 1
+    assert all(stamp == stamps[0] for stamp in stamps)
