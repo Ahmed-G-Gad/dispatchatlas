@@ -386,3 +386,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result document and a run record hold them under `bounds` only when there
   are some, so existing documents, records and hashes do not change; the
   result hash covers the values of the bounds, not their times.
+- Job-shop random sampling (`shop-random-sampling`) and simulated annealing
+  (`shop-simulated-annealing`), each one solver whose control logic runs
+  unchanged on random keys or job sequences, with one builder. The two arms
+  of random sampling decode the same schedules. Annealing cools geometrically
+  on the evaluation clock, between temperatures that target acceptance
+  probabilities on moves of random solutions; `dispatchatlas.solvers.shop.family`
+  names, builds and checks the representations.

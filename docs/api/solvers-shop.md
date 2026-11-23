@@ -20,3 +20,9 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
 ::: dispatchatlas.solvers.shop.run
 
 ::: dispatchatlas.solvers.shop.observers
+
+::: dispatchatlas.solvers.shop.family
+
+::: dispatchatlas.solvers.shop.sampling
+
+::: dispatchatlas.solvers.shop.annealing

@@ -122,13 +122,15 @@ explains its options with `--help`.
   DAX formats, and a streaming reader for the batch jobs of the Alibaba 2018
   cluster trace; instance catalogs written to disk with SHA-256 manifests;
   descriptive features of every instance.
-- **72 solvers**: dispatching rules and list heuristics such as HEFT;
+- **74 solvers**: dispatching rules and list heuristics such as HEFT;
   constructive heuristics such as NEH and beam search; local search from hill
   climbing and simulated annealing to tabu search, iterated greedy, and ALNS;
   genetic, memetic, and ant colony algorithms, BRKGA, differential evolution,
   CMA-ES, and particle swarms; multi-objective algorithms including NSGA-II,
   NSGA-III, MOEA/D, and SMS-EMOA; learning methods and hyper-heuristics; exact
-  CP-SAT, time-indexed MILP, and enumeration solvers; and a matheuristic. Each
+  CP-SAT, time-indexed MILP, and enumeration solvers; a matheuristic; and
+  job-shop search families, each written once for random keys and job
+  sequences. Each
   solver declares the problem features it models and the sources it follows.
 - **9 objectives**: makespan, total completion time, total flow time, mean
   response time, total tardiness, maximum lateness, tardy tasks, energy, and

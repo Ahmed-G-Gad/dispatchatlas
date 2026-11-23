@@ -17,11 +17,13 @@ from collections.abc import Callable
 
 from dispatchatlas.core.solver import Solver
 from dispatchatlas.solvers.registry import SolverRegistry
+from dispatchatlas.solvers.shop.annealing import ShopAnnealing
+from dispatchatlas.solvers.shop.sampling import ShopRandomSampling
 
 __all__ = ["register"]
 
 # The solver classes of the package, in the order they register.
-_SOLVERS: tuple[Callable[..., Solver], ...] = ()
+_SOLVERS: tuple[Callable[..., Solver], ...] = (ShopRandomSampling, ShopAnnealing)
 
 
 def register(registry: SolverRegistry) -> None:
