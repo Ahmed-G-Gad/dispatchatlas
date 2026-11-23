@@ -14,6 +14,9 @@ Layout under an output root::
                            files moved aside when new records took their places
         logs/session-<n>.log  what each session logged, with UTC time stamps
         .lock              locked while a runner works on the campaign
+        .lock.excl         on a file system without flock, the lock instead: created
+                           exclusively by the runner, with its host, process id and
+                           time, and removed when the runner leaves
 
 ``<solver>`` is the solver's name, its label or else its id. Every document
 is written atomically, with sorted keys, two-space indentation, ASCII text,
@@ -48,8 +51,13 @@ the valid record of a planned run that has none.
 from __future__ import annotations
 
 import contextlib
+import enum
+import errno
+import json
+import os
 import re
 import shutil
+import socket
 import sys
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -57,6 +65,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from dispatchatlas.campaigns.config import Campaign, check_name
+from dispatchatlas.campaigns.execution import utc_now
 from dispatchatlas.campaigns.io import campaign_from_dict, campaign_to_dict
 from dispatchatlas.campaigns.planning import Plan, PlannedRun
 from dispatchatlas.campaigns.records import (
@@ -105,6 +114,16 @@ FAILURES = "failures"
 SUPERSEDED = "superseded"
 LOGS = "logs"
 _LOCK = ".lock"
+_EXCLUSIVE_LOCK = ".lock.excl"
+
+_UNSUPPORTED = frozenset({errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})
+"""The errno values of a lock call that the file system does not implement."""
+
+# Windows: the exit code that a running process reports, the access right that reads it, and
+# the error of OpenProcess for a process id that no process has.
+_STILL_ACTIVE = 259
+_QUERY_LIMITED_INFORMATION = 0x1000
+_NO_SUCH_PROCESS = 87
 
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 """What a run id must match to become part of a file name."""
@@ -455,20 +474,40 @@ class Store:
     def locked(self) -> Iterator[None]:
         """Hold the campaign's lock, so two runners never work on it at once.
 
-        The lock is an operating-system file lock, released when the process
-        ends in any way. Where the platform offers none, nothing is locked.
+        The lock is an operating-system file lock on ``.lock``, released when the
+        process ends in any way. A file system that does not implement it, such as
+        Lustre mounted without flock, answers the lock call with ``ENOSYS``,
+        ``ENOTSUP`` or ``EOPNOTSUPP``, and the lock is then the file ``.lock.excl``,
+        created exclusively (``O_CREAT | O_EXCL``) with the host name, the process
+        id and the UTC time of the runner, which removes it when it leaves. Any
+        other failure of the call, such as ``EWOULDBLOCK`` or ``EACCES``, means that
+        another process holds the lock. The two locks are independent: runners that
+        take different ones of one directory do not exclude each other.
+
+        A runner that is killed leaves ``.lock.excl`` behind. A session that finds
+        it written on this host by a process that no longer exists refuses to start
+        and names the file. The library never removes it: whoever runs the campaign
+        does, after checking that no runner works on it. A file written on another
+        host, or one that holds no readable owner, counts as held, because this
+        host cannot tell.
 
         Raises:
-            ConfigError: If another process holds the lock.
+            ConfigError: If another process holds the lock, or ``.lock.excl`` is
+                stale.
         """
         self.directory.mkdir(parents=True, exist_ok=True)
         with (self.directory / _LOCK).open("a+b") as handle:
-            if not _try_lock(handle):
+            outcome = _try_lock(handle)
+            if outcome is _Lock.HELD:
                 raise ConfigError(f"{self.directory} is in use by another campaign runner")
-            try:
-                yield
-            finally:
-                _unlock(handle)
+            if outcome is _Lock.UNSUPPORTED:
+                with _exclusive_file(self.directory):
+                    yield
+            else:
+                try:
+                    yield
+                finally:
+                    _unlock(handle)
 
     def open(self, campaign: Campaign, *, fresh: bool = False) -> None:
         """Prepare the directory for a campaign and record the campaign in it.
@@ -1140,23 +1179,52 @@ def _foreign(found_id: str, found_hash: str, run_id: str, config_hash: str) -> s
     return ""
 
 
-def _try_lock(handle: IO[bytes]) -> bool:
-    locked = True
-    if sys.platform == "win32":
-        import msvcrt  # noqa: PLC0415 - Windows only
+class _Lock(enum.Enum):
+    """What an attempt to take the operating system's lock on the lock file came to."""
 
-        try:
+    TAKEN = enum.auto()
+    HELD = enum.auto()
+    UNSUPPORTED = enum.auto()
+
+
+def _try_lock(handle: IO[bytes]) -> _Lock:
+    """Try to take the operating system's exclusive lock on an open file without waiting.
+
+    The call is ``msvcrt.locking`` on Windows and ``flock`` elsewhere. The errno of a
+    failed call tells whether another process holds the lock or the file system cannot
+    lock at all. The names below are those of the :mod:`errno` module, the same on every
+    platform though their numbers differ:
+
+    - **Another holder**, :attr:`_Lock.HELD`: ``EWOULDBLOCK`` or ``EAGAIN`` (11 on Linux)
+      and ``EACCES`` (13). On Linux, ``flock`` fails with ``EWOULDBLOCK`` while another
+      open file description holds the lock. On Windows, ``msvcrt.locking`` fails with
+      ``EACCES`` while another handle holds the byte.
+    - **Unsupported**, :attr:`_Lock.UNSUPPORTED`: ``ENOSYS``, "function not implemented"
+      (38 on Linux, 40 on Windows), ``ENOTSUP`` and ``EOPNOTSUPP``, "operation not
+      supported" (95 for both on Linux, 129 and 10045 on Windows). A file system that
+      lacks the call answers with one of them, as Lustre mounted without flock does. No
+      lock can be taken there, so the failure says nothing about other holders.
+    - **Any other errno**, such as ``EINVAL`` or ``ENOLCK``, or none, is taken as a
+      holder too, as every failure was: a runner never starts without a lock because of
+      an error it does not understand.
+
+    Returns:
+        :attr:`_Lock.TAKEN` when the lock is held now, :attr:`_Lock.HELD` when the call
+        failed for another holder or for an errno that is neither case, and
+        :attr:`_Lock.UNSUPPORTED` when the file system cannot lock.
+    """
+    try:
+        if sys.platform == "win32":
+            import msvcrt  # noqa: PLC0415 - Windows only
+
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            locked = False
-    else:
-        import fcntl  # noqa: PLC0415 - POSIX only
+        else:
+            import fcntl  # noqa: PLC0415 - POSIX only
 
-        try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            locked = False
-    return locked
+    except OSError as error:
+        return _Lock.UNSUPPORTED if error.errno in _UNSUPPORTED else _Lock.HELD
+    return _Lock.TAKEN
 
 
 def _unlock(handle: IO[bytes]) -> None:
@@ -1169,3 +1237,139 @@ def _unlock(handle: IO[bytes]) -> None:
         import fcntl  # noqa: PLC0415 - POSIX only
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _exclusive_file(directory: Path) -> Iterator[None]:
+    """Hold the exclusive-create lock file of a campaign directory for the context.
+
+    The file is created with ``O_CREAT | O_EXCL``, which fails when it exists, and holds
+    the host name, the process id and the UTC time of this process. The context removes
+    it when it ends, unless it no longer holds that text: another process wrote it, and
+    it stays.
+
+    Raises:
+        ConfigError: If the file exists. The message says who holds it, or that the file
+            is stale, and names the file.
+    """
+    path = directory / _EXCLUSIVE_LOCK
+    owner = _owner_text()
+    try:
+        stream = path.open("xb")
+    except FileExistsError:
+        raise ConfigError(_refusal(directory, path)) from None
+    try:
+        with stream:
+            stream.write(owner)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    try:
+        yield
+    finally:
+        _release(path, owner)
+
+
+def _owner_text() -> bytes:
+    """Return the text of this process's lock file: its host name, process id and time."""
+    owner = {"host": socket.gethostname(), "pid": os.getpid(), "time": utc_now()}
+    return (json.dumps(owner, sort_keys=True) + "\n").encode("ascii")
+
+
+def _owner(path: Path) -> tuple[str, int, str] | None:
+    """Return the host name, process id and time that a lock file holds, or ``None``.
+
+    A file that is empty, as one is between its creation and its first write, or does not
+    hold all three as a string, a positive integer and a string, holds no owner.
+    """
+    try:
+        document = json.loads(path.read_bytes())
+        host, pid, since = document["host"], document["pid"], document["time"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if (
+        isinstance(host, str)
+        and isinstance(since, str)
+        and isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+    ):
+        return host, pid, since
+    return None
+
+
+def _refusal(directory: Path, path: Path) -> str:
+    """Return why the lock file ``path`` keeps a session out of ``directory``.
+
+    The file is stale when it was written on this host by a process that no longer
+    exists. A file written on another host is never called stale, because that host's
+    processes cannot be asked, and neither is one that holds no readable owner.
+    """
+    owner = _owner(path)
+    if owner is None:
+        return (
+            f"{directory} is in use by another campaign runner: its lock file {path} holds no "
+            "readable owner. If no runner works on the campaign, remove the file"
+        )
+    host, pid, since = owner
+    who = f"process {pid} on {host}, since {since}"
+    if host != socket.gethostname():
+        return (
+            f"{directory} is in use by another campaign runner ({who}); this host cannot tell "
+            f"whether it still runs. If it is gone, remove the lock file {path}"
+        )
+    if _alive(pid):
+        return f"{directory} is in use by another campaign runner ({who})"
+    return (
+        f"the lock file {path} is stale: it was taken by {who}, and that process no longer "
+        "runs. Remove the file and run again"
+    )
+
+
+def _release(path: Path, owner: bytes) -> None:
+    """Remove the lock file ``path`` if it still holds ``owner``, the text this process wrote."""
+    try:
+        if path.read_bytes() != owner:
+            _LOG.warning("the lock file %s was replaced while the session ran; it stays", path)
+            return
+        path.unlink()
+    except OSError as error:
+        _LOG.warning("the lock file %s could not be removed: %s", path, error)
+
+
+def _alive(pid: int) -> bool:
+    """Return whether a process with this id exists on this host.
+
+    A process counts as gone only when the system says that no process has the id, so a
+    lock file is never called stale on a guess: a process of another user, which the
+    caller may not signal, still exists.
+    """
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 - Windows only
+        from ctypes import wintypes  # noqa: PLC0415 - Windows only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            try:
+                code = wintypes.DWORD()
+                read = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+                alive = not read or code.value == _STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            alive = ctypes.get_last_error() != _NO_SUCH_PROCESS
+    else:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except OSError:
+            alive = True
+    return alive

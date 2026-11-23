@@ -479,10 +479,23 @@ of one campaign.
                        files moved aside when new records took their places
     logs/session-<n>.log  what each session logged, with UTC time stamps
     .lock              held while a runner works on the campaign
+    .lock.excl         on a file system without flock, the lock instead: created
+                       exclusively by the runner, with its host, process id and time,
+                       and removed when the runner leaves
 ```
 
 Every document is written atomically, with sorted keys, two-space
 indentation, ASCII text, and a final newline.
+
+The lock `.lock` is an operating-system lock, so it ends with the process that
+holds it. A file system that does not implement it, such as Lustre mounted
+without flock, answers the lock call with `ENOSYS`, `ENOTSUP`, or `EOPNOTSUPP`,
+and the runner then takes the file `.lock.excl` by exclusive creation
+(`O_CREAT | O_EXCL`) and removes it when it leaves. A runner that crashes leaves
+the file. The next session on the same host reports a file of a process that no
+longer exists as stale, names the file, and does not start; remove the file after
+checking that no runner works on the campaign, because the library never removes
+it. A file written on another host, or one that names no owner, counts as held.
 
 - A **run record** (`dispatchatlas.run/1`) names the run, its campaign and
   config hash, problem id and digest, solver, protocol, replicate, and seed;
