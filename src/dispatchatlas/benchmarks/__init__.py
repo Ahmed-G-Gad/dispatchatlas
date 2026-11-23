@@ -42,6 +42,7 @@ from dispatchatlas.benchmarks.registry import (
 from dispatchatlas.benchmarks.taillard import (
     taillard_flow_shop,
     taillard_job_shop,
+    taillard_job_shop_seeded,
     taillard_open_shop,
 )
 from dispatchatlas.benchmarks.wfcommons import read_wfcommons
@@ -66,6 +67,7 @@ __all__ = [
     "read_wfcommons",
     "taillard_flow_shop",
     "taillard_job_shop",
+    "taillard_job_shop_seeded",
     "taillard_open_shop",
     "three_tier_platform",
 ]

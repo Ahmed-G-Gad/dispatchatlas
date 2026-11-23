@@ -30,30 +30,44 @@ Instances are named ``ta001`` to ``ta120`` (flow shop), ``ta01`` to ``ta80``
 and machines, for example ``tai4x4-1``; open shops are also numbered 1 to 60 in
 file order. The problems follow the conventions of
 :mod:`dispatchatlas.benchmarks.shop`, so machine ``M = 1`` is resource ``m0``.
+
+:func:`taillard_job_shop_seeded` builds job shops of any size by the same
+generator from seeds that Taillard did not publish: it derives the time seed and
+the machine seed from one seed with
+:func:`~dispatchatlas.core.seeds.derive_seed` and refuses a seed pair of the
+published job-shop and open-shop tables. The family ``taillard-job-shop-seeded``
+generates them, and :func:`register` adds it to a registry.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
+from typing import ClassVar
 
+from dispatchatlas.benchmarks._common import check_int, check_seed
+from dispatchatlas.benchmarks.registry import FamilyInfo, FamilyRegistry
 from dispatchatlas.benchmarks.shop import flow_shop_problem, job_shop_problem, open_shop_problem
 from dispatchatlas.core.errors import ConfigError
 from dispatchatlas.core.model import Problem, Scalar
+from dispatchatlas.core.seeds import derive_seed
 
 __all__ = [
     "TaillardInstance",
+    "TaillardJobShopSeeded",
     "flow_shop_instances",
     "flow_shop_matrix",
     "job_shop_instances",
     "job_shop_matrices",
     "open_shop_instances",
     "open_shop_matrices",
+    "register",
     "taillard_flow_shop",
     "taillard_instance",
     "taillard_job_shop",
+    "taillard_job_shop_seeded",
     "taillard_open_shop",
     "unif",
 ]
@@ -68,6 +82,8 @@ _QUOTIENT = 127773  # MODULUS // MULTIPLIER
 _REMAINDER = 2836  # MODULUS % MULTIPLIER
 
 _ORLIB = "https://people.brunel.ac.uk/~mastjjb/jeb/orlib/files/"
+
+_SEEDED_FAMILY = "taillard-job-shop-seeded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,15 +246,13 @@ def taillard_job_shop(instance: str | int) -> Problem:
         ConfigError: If the instance is unknown.
     """
     item = taillard_instance("job-shop", instance)
-    durations, order = job_shop_matrices(
-        item.time_seed, _machine_seed(item), item.jobs, item.machines
-    )
-    routes = [
-        [(order[i][j] - 1, float(durations[i][j])) for i in range(item.machines)]
-        for j in range(item.jobs)
-    ]
-    return job_shop_problem(
-        routes, machines=item.machines, problem_id=item.name, metadata=_metadata(item)
+    return _job_shop(
+        item.time_seed,
+        _machine_seed(item),
+        item.jobs,
+        item.machines,
+        problem_id=item.name,
+        metadata=_metadata(item),
     )
 
 
@@ -262,6 +276,93 @@ def taillard_open_shop(instance: str | int) -> Problem:
     return open_shop_problem(times, problem_id=item.name, metadata=_metadata(item))
 
 
+def taillard_job_shop_seeded(jobs: int, machines: int, seed: int) -> Problem:
+    """Return a job shop of Taillard's generator built from seeds that Taillard did not publish.
+
+    The time seed and the machine seed derive from ``seed`` and the size with
+    :func:`~dispatchatlas.core.seeds.derive_seed`, and are mapped onto the states ``1`` to
+    ``2^31 - 2`` of the generator. Equal arguments give the same problem on every platform,
+    and another seed or another size gives an unrelated one. The problem is built as
+    :func:`taillard_job_shop` builds a published instance: the processing times from the
+    time seed, then each job's machine order from the machine seed.
+
+    Args:
+        jobs: Number of jobs.
+        machines: Number of machines. Every job visits each machine once.
+        seed: Non-negative seed of the instance. The derived time and machine seeds are
+            recorded in the problem's metadata as ``time_seed`` and ``machine_seed``.
+
+    Returns:
+        The problem, named ``taillard-job-shop-seeded-<jobs>x<machines>-<seed>``.
+
+    Raises:
+        ValueError: If ``jobs`` or ``machines`` is not a positive integer, or ``seed`` is not
+            a non-negative integer.
+        ConfigError: If the derived seeds are a pair that Taillard published, for a job shop
+            or an open shop. Another ``seed`` gives other seeds.
+    """
+    jobs = check_int("jobs", jobs)
+    machines = check_int("machines", machines)
+    seed = check_seed(seed)
+    time_seed, machine_seed = _derived_seeds(jobs, machines, seed)
+    metadata: dict[str, Scalar] = {
+        "jobs": jobs,
+        "machines": machines,
+        "seed": seed,
+        "time_seed": time_seed,
+        "machine_seed": machine_seed,
+    }
+    return _job_shop(
+        time_seed,
+        machine_seed,
+        jobs,
+        machines,
+        problem_id=f"{_SEEDED_FAMILY}-{jobs}x{machines}-{seed}",
+        metadata=metadata,
+        family=_SEEDED_FAMILY,
+    )
+
+
+@dataclass(frozen=True)
+class TaillardJobShopSeeded:
+    """Job shops of Taillard's generator with seeds that Taillard did not publish.
+
+    The time seed and the machine seed of a problem derive from the seed given to
+    :meth:`generate`, as :func:`taillard_job_shop_seeded` describes. The family suits instance
+    sets that must not contain a published instance, such as the instances a method is tuned
+    on.
+
+    Attributes:
+        jobs: Number of jobs.
+        machines: Number of machines. Every job visits each machine once.
+    """
+
+    jobs: int = 15
+    machines: int = 15
+
+    info: ClassVar[FamilyInfo] = FamilyInfo(
+        id=_SEEDED_FAMILY,
+        name="Taillard job shop with derived seeds",
+        problem_class="job-shop",
+        summary="Job shops built by Taillard's (1993) generator from a time seed and a machine "
+        "seed derived from one seed, never a seed pair that Taillard published.",
+        references=("taillard1993benchmarks",),
+    )
+
+    def __post_init__(self) -> None:
+        check_int("jobs", self.jobs)
+        check_int("machines", self.machines)
+
+    def generate(self, seed: int = 0) -> Problem:
+        """Return the job shop for ``seed``."""
+        return taillard_job_shop_seeded(self.jobs, self.machines, seed)
+
+
+def register(registry: FamilyRegistry) -> None:
+    """Add the family of job shops with derived seeds to ``registry``."""
+    registry.register(TaillardJobShopSeeded)
+
+
 # ------------------------------------------------------------------ helpers
 
 
@@ -269,6 +370,55 @@ def _machine_seed(item: TaillardInstance) -> int:
     if item.machine_seed is None:  # pragma: no cover - every job and open shop has one
         raise ConfigError(f"instance {item.name!r} has no machine seed")
     return item.machine_seed
+
+
+def _job_shop(
+    time_seed: int,
+    machine_seed: int,
+    jobs: int,
+    machines: int,
+    *,
+    problem_id: str,
+    metadata: Mapping[str, Scalar],
+    family: str | None = None,
+) -> Problem:
+    """Return the job shop that Taillard's generator makes of a time seed and a machine seed."""
+    durations, order = job_shop_matrices(time_seed, machine_seed, jobs, machines)
+    routes = [
+        [(order[i][j] - 1, float(durations[i][j])) for i in range(machines)] for j in range(jobs)
+    ]
+    return job_shop_problem(
+        routes, machines=machines, problem_id=problem_id, family=family, metadata=metadata
+    )
+
+
+def _derived_seeds(jobs: int, machines: int, seed: int) -> tuple[int, int]:
+    """Return the time seed and the machine seed that ``seed`` derives for a size.
+
+    Raises:
+        ConfigError: If the pair is one that Taillard published.
+    """
+    stream = f"{_SEEDED_FAMILY}:{jobs}x{machines}"
+    time_seed = _generator_state(derive_seed(seed, stream, 0))
+    machine_seed = _generator_state(derive_seed(seed, stream, 1))
+    if (time_seed, machine_seed) in _published_pairs():
+        raise ConfigError(
+            f"seed {seed} derives the seeds {time_seed} and {machine_seed} for {jobs} jobs and "
+            f"{machines} machines, which are a pair that Taillard published; use another seed"
+        )
+    return time_seed, machine_seed
+
+
+def _generator_state(derived: int) -> int:
+    """Map a derived seed onto the states ``1`` to ``MODULUS - 1`` of Taillard's generator."""
+    return derived % (MODULUS - 1) + 1
+
+
+@cache
+def _published_pairs() -> frozenset[tuple[int, int]]:
+    """Return the ``(time seed, machine seed)`` pairs of the job-shop and open-shop tables."""
+    _, job, open_ = _tables()
+    return frozenset((item.time_seed, _machine_seed(item)) for item in (*job, *open_))
 
 
 def _metadata(item: TaillardInstance) -> dict[str, Scalar]:
