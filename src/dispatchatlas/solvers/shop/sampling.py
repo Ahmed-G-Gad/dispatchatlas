@@ -48,10 +48,16 @@ class ShopRandomSampling:
             (:data:`~dispatchatlas.solvers.shop.family.REPRESENTATIONS`).
         builder: The schedule builder, one of
             :data:`~dispatchatlas.solvers.shop.decoding.BUILDERS`.
+        distance_every: The observer measures the phenotype distance of the first
+            move and of every ``distance_every``-th one after it, an integer of at
+            least 1. The family makes no move, so no measure of its runs depends on
+            it; it is the parameter of the other three families, accepted so that
+            the four take the same settings.
     """
 
     representation: RepresentationName = "sequence"
     builder: BuilderName = "active"
+    distance_every: int = 1
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="shop-random-sampling",
@@ -66,14 +72,15 @@ class ShopRandomSampling:
     )
 
     def __post_init__(self) -> None:
-        check_family(self.representation, self.builder)
+        check_family(self.representation, self.builder, self.distance_every)
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         """Evaluate random solutions until a stop criterion fires."""
         search = Search(problem, stop, seed, self.info)
         shop = JobShop.from_problem(problem)
         representation = make_representation(shop, self.representation)
-        run = ShopRun(search, shop, self.builder, representation, TrajectoryObserver(shop))
+        observer = TrajectoryObserver(shop, self.distance_every)
+        run = ShopRun(search, shop, self.builder, representation, observer)
         with search:
             while True:
                 search.next_iteration()

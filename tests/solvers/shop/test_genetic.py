@@ -867,6 +867,7 @@ def test_the_genetic_algorithm_registers_and_is_created_by_its_id() -> None:
         "key_step",
         "sequence_move",
         "sequence_crossover",
+        "distance_every",
     }
     with pytest.raises(ConfigError, match="population_size"):
         registry.create("shop-steady-state-ga", population_size=1)

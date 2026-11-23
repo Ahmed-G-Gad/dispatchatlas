@@ -361,6 +361,10 @@ class ShopParticleSwarm:
             swarm reads it.
         sequence_move: The move of job sequences, ``"insert"``, ``"swap"`` or
             ``"mixed"``. Only the job-sequence swarm reads it.
+        distance_every: The observer measures the phenotype distance of the first
+            move and of every ``distance_every``-th one after it, an integer of at
+            least 1. Its other measures count every evaluation, and no decision of
+            the swarm depends on it. Both swarms read it.
     """
 
     representation: RepresentationName = "sequence"
@@ -374,6 +378,7 @@ class ShopParticleSwarm:
     leader_probability: float = 0.5
     inheritance: float = 0.5
     sequence_move: SequenceMove = "insert"
+    distance_every: int = 1
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="shop-particle-swarm",
@@ -395,7 +400,7 @@ class ShopParticleSwarm:
     )
 
     def __post_init__(self) -> None:
-        check_family(self.representation, self.builder)
+        check_family(self.representation, self.builder, self.distance_every)
         # The keys swarm has no move: its key arguments are the representation's defaults.
         check_moves("perturb", 0.1, self.sequence_move)
         size = self.swarm_size
@@ -438,7 +443,8 @@ class ShopParticleSwarm:
         representation = make_representation(
             shop, self.representation, sequence_move=self.sequence_move
         )
-        run = ShopRun(search, shop, self.builder, representation, TrajectoryObserver(shop))
+        observer = TrajectoryObserver(shop, self.distance_every)
+        run = ShopRun(search, shop, self.builder, representation, observer)
         with search:
             self._swarm(run, self._update(representation, shop))
         run.finish()

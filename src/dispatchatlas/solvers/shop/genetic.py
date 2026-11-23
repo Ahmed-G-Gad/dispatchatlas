@@ -136,6 +136,9 @@ class ShopSteadyStateGa:
             ``"perturb"`` reads it.
         sequence_move: The move of job sequences, ``"insert"``, ``"swap"`` or ``"mixed"``.
         sequence_crossover: The crossover of job sequences, ``"ppx"`` or ``"jox"``.
+        distance_every: The observer measures the phenotype distance of the first move and of
+            every ``distance_every``-th one after it, an integer of at least 1. Its other
+            measures count every evaluation, and no decision of the search depends on it.
     """
 
     representation: RepresentationName = "sequence"
@@ -149,6 +152,7 @@ class ShopSteadyStateGa:
     key_step: float = 0.1
     sequence_move: SequenceMove = "insert"
     sequence_crossover: SequenceCrossover = "ppx"
+    distance_every: int = 1
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="shop-steady-state-ga",
@@ -168,7 +172,7 @@ class ShopSteadyStateGa:
     )
 
     def __post_init__(self) -> None:
-        check_family(self.representation, self.builder)
+        check_family(self.representation, self.builder, self.distance_every)
         check_moves(self.key_move, self.key_step, self.sequence_move)
         if self.sequence_crossover not in SEQUENCE_CROSSOVERS:
             raise ValueError(
@@ -193,7 +197,8 @@ class ShopSteadyStateGa:
             sequence_move=self.sequence_move,
             crossover=self.sequence_crossover,
         )
-        run = ShopRun(search, shop, self.builder, representation, TrajectoryObserver(shop))
+        observer = TrajectoryObserver(shop, self.distance_every)
+        run = ShopRun(search, shop, self.builder, representation, observer)
         with search:
             # The whole population is drawn before any other draw from the operator stream.
             genotypes = [representation.initial(run.operators) for _ in range(self.population_size)]

@@ -24,7 +24,9 @@ them in step by the same rules:
   outcome decides, such as one uniform number for every acceptance test whether
   or not the move worsens, so both runs read the same control numbers at the
   same step;
-- its observer draws from no stream;
+- its observer draws from no stream, and its ``distance_every`` parameter, which
+  sets how many moves the observer takes to measure the phenotype distance of one,
+  changes no decision of the search;
 - it calls :meth:`~dispatchatlas.solvers.shop.run.ShopRun.finish` once its search
   is exhausted, which refuses a run that repaired a sequence;
 - a job shop of one job has a single job sequence, which the family evaluates
@@ -105,17 +107,31 @@ def make_representation(
     raise ValueError(_unknown("representation", representation, REPRESENTATIONS))
 
 
-def check_family(representation: object, builder: object) -> None:
-    """Raise :class:`ValueError` unless both name a representation and a schedule builder.
+def check_family(representation: object, builder: object, distance_every: object = 1) -> None:
+    """Raise :class:`ValueError` unless the arguments that every family takes are valid.
+
+    ``representation`` and ``builder`` must name a representation and a schedule
+    builder, and ``distance_every`` must be an integer of at least 1, as the
+    :class:`~dispatchatlas.solvers.shop.observers.TrajectoryObserver` that the
+    family creates requires, so that the family refuses a bad value when it is
+    created and not when it solves.
 
     Args:
         representation: One of :data:`REPRESENTATIONS`.
         builder: One of :data:`~dispatchatlas.solvers.shop.decoding.BUILDERS`.
+        distance_every: How many moves the observer takes to measure the
+            phenotype distance of one.
     """
     if representation not in REPRESENTATIONS:
         raise ValueError(_unknown("representation", representation, REPRESENTATIONS))
     if builder not in BUILDERS:
         raise ValueError(_unknown("builder", builder, BUILDERS))
+    if (
+        isinstance(distance_every, bool)
+        or not isinstance(distance_every, int)
+        or distance_every < 1
+    ):
+        raise ValueError(f"distance_every must be an integer of at least 1, got {distance_every!r}")
 
 
 def check_moves(key_move: object, key_step: object, sequence_move: object) -> None:

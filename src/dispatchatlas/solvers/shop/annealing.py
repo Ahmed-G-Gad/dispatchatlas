@@ -123,6 +123,10 @@ class ShopAnnealing:
             finite. Only ``"perturb"`` reads it.
         sequence_move: The move of job sequences, ``"insert"``, ``"swap"`` or
             ``"mixed"``.
+        distance_every: The observer measures the phenotype distance of the first
+            move and of every ``distance_every``-th one after it, an integer of at
+            least 1. Its other measures count every evaluation, and no decision of
+            the walk depends on it.
     """
 
     representation: RepresentationName = "sequence"
@@ -133,6 +137,7 @@ class ShopAnnealing:
     key_move: KeyMove = "redraw"
     key_step: float = 0.1
     sequence_move: SequenceMove = "insert"
+    distance_every: int = 1
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="shop-simulated-annealing",
@@ -153,7 +158,7 @@ class ShopAnnealing:
     )
 
     def __post_init__(self) -> None:
-        check_family(self.representation, self.builder)
+        check_family(self.representation, self.builder, self.distance_every)
         check_moves(self.key_move, self.key_step, self.sequence_move)
         if not 0.0 < self.initial_acceptance < 1.0:
             raise ValueError(
@@ -181,7 +186,8 @@ class ShopAnnealing:
             key_step=self.key_step,
             sequence_move=self.sequence_move,
         )
-        run = ShopRun(search, shop, self.builder, representation, TrajectoryObserver(shop))
+        observer = TrajectoryObserver(shop, self.distance_every)
+        run = ShopRun(search, shop, self.builder, representation, observer)
         with search:
             current = run.evaluate(representation.initial(run.operators))
             if shop.jobs > 1:
