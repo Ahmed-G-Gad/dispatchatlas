@@ -37,30 +37,41 @@ the machine seed from one seed with
 :func:`~dispatchatlas.core.seeds.derive_seed` and refuses a seed pair of the
 published job-shop and open-shop tables. The family ``taillard-job-shop-seeded``
 generates them, and :func:`register` adds it to a registry.
+
+:data:`JOB_SHOP_ROUTE_DIGESTS` stores a digest of the routes of each job shop
+``ta01`` to ``ta80`` as the generator rebuilds it, and
+:func:`check_taillard_job_shop` compares a rebuilt instance with its entry, so
+that a study can check from the installed package that it rebuilds the instances
+the library was tested on.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
+from types import MappingProxyType
 from typing import ClassVar
 
 from dispatchatlas.benchmarks._common import check_int, check_seed
 from dispatchatlas.benchmarks.registry import FamilyInfo, FamilyRegistry
 from dispatchatlas.benchmarks.shop import flow_shop_problem, job_shop_problem, open_shop_problem
-from dispatchatlas.core.errors import ConfigError
+from dispatchatlas.core.errors import ConfigError, ModelError
 from dispatchatlas.core.model import Problem, Scalar
 from dispatchatlas.core.seeds import derive_seed
 
 __all__ = [
+    "JOB_SHOP_ROUTE_DIGESTS",
     "TaillardInstance",
     "TaillardJobShopSeeded",
+    "check_taillard_job_shop",
     "flow_shop_instances",
     "flow_shop_matrix",
     "job_shop_instances",
     "job_shop_matrices",
+    "job_shop_route_digest",
     "open_shop_instances",
     "open_shop_matrices",
     "register",
@@ -274,6 +285,78 @@ def taillard_open_shop(instance: str | int) -> Problem:
         for i in range(item.machines):
             times[j][order[i][j] - 1] = float(durations[i][j])
     return open_shop_problem(times, problem_id=item.name, metadata=_metadata(item))
+
+
+def job_shop_route_digest(problem: Problem) -> str:
+    """Return the SHA-256 digest, in hexadecimal, of the routes of a job shop.
+
+    The digest hashes one line for each job, the jobs in the order of the problem's groups:
+    the problem's id, then the operations of the job in order, each written
+    ``<machine>:<time>`` with the machine the operation demands and its processing time in
+    Python's ``g`` format, separated by spaces, and a line feed. It covers the machine and
+    the processing time of every operation and the order of the operations and of the jobs.
+    Release times, due dates, metadata, and the rest of the problem are not in it;
+    :func:`~dispatchatlas.core.serialization.problem_digest` digests the whole problem.
+
+    Args:
+        problem: A job shop whose every operation belongs to a job group, as the problems
+            of this module are.
+
+    Returns:
+        The digest, 64 lowercase hexadecimal digits.
+
+    Raises:
+        ModelError: If the problem is not a job shop, or an operation belongs to no group.
+    """
+    if "job-shop" not in problem.shapes:
+        raise ModelError(f"problem {problem.id!r} is not a job shop")
+    if sum(len(indices) for indices in problem.groups.values()) != len(problem.tasks):
+        raise ModelError(f"problem {problem.id!r} has operations that belong to no job group")
+    digest = hashlib.sha256()
+    for indices in problem.groups.values():
+        route = []
+        for index in indices:
+            mode = problem.tasks[index].modes[0]
+            route.append(f"{next(iter(mode.demands))}:{mode.duration:g}")
+        digest.update(f"{problem.id} {' '.join(route)}\n".encode())
+    return digest.hexdigest()
+
+
+def check_taillard_job_shop(instance: Problem) -> None:
+    """Raise :class:`~dispatchatlas.core.errors.ModelError` unless a job shop has its stored routes.
+
+    ``instance`` is a job shop named ``ta01`` to ``ta80``, such as :func:`taillard_job_shop`
+    builds. Its route digest (:func:`job_shop_route_digest`) must equal the entry of
+    :data:`JOB_SHOP_ROUTE_DIGESTS` for its id. The tests of the library rebuild ta01 to ta80
+    and compare each with its entry, so a study that calls this function on the machine where
+    it runs, with the package it installed, checks that it rebuilds the instances the library
+    was tested on.
+
+    This checks the reproducibility of the generator: that it gives here the instance it gave
+    the tests. It does not compare the instance with the processing-time files that Taillard
+    published; that is a separate check, which needs those files.
+
+    Args:
+        instance: The rebuilt job shop. Its id names the instance.
+
+    Raises:
+        ModelError: If the id is not one of ``ta01`` to ``ta80``, the problem is not a job
+            shop, or its routes differ from the stored ones. The ``issues`` of a difference
+            hold the stored digest and the digest found.
+    """
+    name = instance.id
+    stored = JOB_SHOP_ROUTE_DIGESTS.get(name)
+    if stored is None:
+        raise ModelError(
+            f"{name!r} is not one of the job shops ta01 to ta80, so no route digest is stored "
+            "for it"
+        )
+    found = job_shop_route_digest(instance)
+    if found != stored:
+        raise ModelError(
+            f"job shop {name!r} does not have the routes that the library stored for it",
+            issues=(f"stored route digest: {stored}", f"digest of the routes found: {found}"),
+        )
 
 
 def taillard_job_shop_seeded(jobs: int, machines: int, seed: int) -> Problem:
@@ -615,3 +698,100 @@ _OPEN_SHOP_SEEDS: tuple[tuple[int, tuple[tuple[int, int, int, bool, int], ...]],
           (1591533998, 1146547719, 1294, True, 1294), (937297777, 92726463, 1173, False, 1169),
           (687896268, 1731298717, 1289, True, 1289), (687034842, 684013066, 1241, True, 1241))),
 )  # fmt: skip
+
+
+# ------------------------------------------------------------------ route digests
+#
+# The route digest of each job shop, as job_shop_route_digest computes it from the
+# instance that the seeds above rebuild.
+
+JOB_SHOP_ROUTE_DIGESTS: Mapping[str, str] = MappingProxyType(
+    {
+        "ta01": "8367dc56d16ded75eae478d50e66a37260c1d6232cc63a6d933147779e9dcd0f",
+        "ta02": "bdb5cded0710db8cc30d989fcb30be5fcd7bdf59da27dcd453a3ec7402a63fe9",
+        "ta03": "e82892d31579fb7025d63e66db9cd14b891dd8a9e55125cc6b988a5cc3a6caed",
+        "ta04": "06bc5fc9795fa6e2d59eea07ce0c9d921e2b33a4670accb6a3b3e5b3bed00893",
+        "ta05": "36bca665d09418e511b18a3344d96a026a4b3008335d1af1a322ac954821b032",
+        "ta06": "e325bc2e4d818492cba7f43964f5ba9e3dc305367918ea4342e18238eb835699",
+        "ta07": "f3c84f13e8025e65face31ab061928d706cb69507950da2207875ed44f0cb177",
+        "ta08": "5bc754fe9e305ef57112aba2ebf351cdb072f9ca5a8ba64987fe15cd37289211",
+        "ta09": "ab4c13aeaea4fcb37158acff04572f06646059bec03aecdf474d152f7ac40cc0",
+        "ta10": "60f9f3bb5c0e0732df3def8de3d67073ab46750ac35b640b9565c91753fcbfda",
+        "ta11": "7504100355a84e97a971b677fb77f0bc13c7ba3653ba58ec499559fcded63358",
+        "ta12": "c014aa8cd6bcc91bebd04ad1286adb1866b3da9416c8800c85abe2ef81ab9133",
+        "ta13": "897b26dc658392702695b0746b89f39d900b1d90fe4e52741f706f2c66828ee4",
+        "ta14": "6371759fba36ccd178c165e23f571053a6930d85f2c19f0dddca22bf84e7d670",
+        "ta15": "bd946f5e165789abd1165035bbcefbf4cea3bdaa8765e4ae1c4f65e083a97a72",
+        "ta16": "3b20b726112953237d7cf55ccd1c16e9c5880f3acbba27ef68d62541e9758020",
+        "ta17": "579164327ceac0263c4213dc04ad13fbe31edd2699ba1ea52af89cd6753f0cb3",
+        "ta18": "47b75514b5461dc7e6b61d53ac8c4a75584eb568a7ff5d852f69f0ee9e019513",
+        "ta19": "51f35c81de53e3db05d6b5dfff415a7bcb7206e71ed8afdcd56b18ae00907f57",
+        "ta20": "c6b6aa6e4fe3ac3e74a21ed49fcddd006ee2daf26e7a71ef795d3968ac72e2aa",
+        "ta21": "57b1ca5836589b4c23f3c76793138210a40cc216b93aa54e3f485afc9646c755",
+        "ta22": "d6882da3d26a95d967b6528256642b28573a5c1c5ba734db95ecd7786cc14feb",
+        "ta23": "779de048a0b2fd90aea665d6d07fcf045156811625e87cfad202bea9dd745784",
+        "ta24": "011f5bfa06464f61244116e7c37f09ef3aee6c56c07efd3e9e85fe6f867b7d26",
+        "ta25": "b34cc1515e30489287245fa511fcce93d8cf969144bbc6ad71b82edf6122d7a2",
+        "ta26": "7f4c15d3022aa874292dd604977ee4115f1df2416c8639aa2f8ccb875d52b78e",
+        "ta27": "803911794060f13063a034ea13ba225c480977c82c825511480d1f0e75936a63",
+        "ta28": "37c8a04cf9c8800419f7e377be8ed756a8ce9c5bb0ac2bc59b2a33e3a271e31f",
+        "ta29": "d443922852cd5d6eadfa65d9f6cdb6f777df4ce8f5c90ea56f323a2f83c761b9",
+        "ta30": "ad3a2e5280ef053ea1a203a9e395d4b9ea9180e15a1cc46d02607e5a2f5cde46",
+        "ta31": "62887f7d74096eef5aaa169ae6c65448d27db3821e6fa860c25c40c543e9d3c4",
+        "ta32": "3bfadcc4b05b364a0380292b5a46d349647ce10f1707b78819c99c08796984d3",
+        "ta33": "ed1be7587ffc1362dc5f5747cd8204c0b30ca5f89ecfc49ba7ce2eae27ca1573",
+        "ta34": "cd5ac810b3e060036f80ce5e763f90afb511979738137c241888559dd9fc4458",
+        "ta35": "29012048dabef1abb91fb317d20929f7a4a23bc2016a124b83bf2eb5bb1fcdf3",
+        "ta36": "37c5b3177f9a11c5797c245ea6d651386089962b9d840cd2e545a516059a732b",
+        "ta37": "a0cdbad48b0f166c47b83313a334140797b02eca671d59a24b4e2b93d98ae704",
+        "ta38": "7e7faf6ecf902bd9bc84cfdbc5eebe2e70049af60d7967bd3d698afa816dd666",
+        "ta39": "1c92bf7d870e25ae60050f08bffc062d31225fd7d1f5010649033f38e9ad0bf0",
+        "ta40": "354487951c79cfd279fcea3d8d21f503790d0a9d4fa06225f1f6b2e67a35ec33",
+        "ta41": "6a5190615b3d29fffe883c5c54c9beada85739105d93d5612ffc2992d6deed38",
+        "ta42": "89e95a539936e8d43d88e3eaa8e1c5bff7030734267603c078cd07da76789fdb",
+        "ta43": "672b160e8e0351312a1d28506a25ff4947209805037111741ca0957d5fe91da9",
+        "ta44": "c0cd7ec791a68dd6b4826feb4f985913681480d368cd8fc5d7801fb489e78acc",
+        "ta45": "7f66632182b52069cdd19b18ce84e9ca6bbbcc086d51120244e547b7c9cc792e",
+        "ta46": "636a617326225880e7ccdbf96101133af1c7bd983fd3a121d5f8dd129d939d32",
+        "ta47": "48d45045bba5d899f7cdcc36a055ed053936ddb94c7fb28a2899b2226704ac56",
+        "ta48": "bfd19feca4bfd34fe053590df75b5dd228720650bfe34e7099179742161ad6ca",
+        "ta49": "8b0aec0ae8d3da94a77a2cb7946dfc7fd2601db75fa4d427a69d12c2bd718df5",
+        "ta50": "a75c3cf66b44112e95d3221ceae8b785e63462f8204fd8f18087798dfc0cff08",
+        "ta51": "f0a59f59f96bb9e61cb5483a1687f4a6a27896bd4c5072b2485dc35fef742d2a",
+        "ta52": "8601a7798b1f7d9ea0548aa76c795ed9ff04aa518b65dc67d987093d94ad6a75",
+        "ta53": "9ec3c72d4a42e26215328adadd461935fa8a5c598e7621d560582f1584c46985",
+        "ta54": "08b5e6e89d34c6aa5ac8fda26902b79432b21b395097935ade61949b010041bf",
+        "ta55": "d634d64207453dea56869c7b8935eb835d2582f1f65eb96911e3bda004c2b928",
+        "ta56": "9f8b4b00396b686bc5ad1edaa78bebb72200e19174e3d267443a7c9701a88507",
+        "ta57": "74cf3f37ed553d62b2d006479af748199ca73f11e75747f5e237a718a7cd9738",
+        "ta58": "7f2b7cf42f52501e4844ca3924f441d74484b5e2fd537ca77888cc3a4d03c128",
+        "ta59": "4aa8c9c8d7c334e113a328ac7c9eb20e5a01e9b9c544d94b1476737988683c9c",
+        "ta60": "b8178d0a868634832827579daf214b093fade031fa4719519f31d494de0521de",
+        "ta61": "7ba5020b13c689a07a092e150530782e1eb29c7abc6d31945e6c3948b6872b6f",
+        "ta62": "2fdebb6ea96e814e61e03dc754fa70dbb51a4f647b27380264e87f1a8393447f",
+        "ta63": "9759e01550dbca5f6a7d678724dbc162f8b9787d3cfde1060ecdfb7dcc72e1e6",
+        "ta64": "fd5d0ca6759f0cbb46bd4826e3d6ca4a956d6831c1072d17987e51c92c1484d9",
+        "ta65": "c3fb6d2a9d2046a11d8a1a98688e2af554aa0933258fe628081d08a485914a22",
+        "ta66": "0c9af5dccdb55eff7f7b240a5d8adefca532f1ded8fec4acde6d6522575107aa",
+        "ta67": "07bbee8a85e5817723f4e9edf9594d64032200053285a403e8fe00b03d20115b",
+        "ta68": "b924dfbf87ad3997416dd16ec3e9f933af737bd39921090923d9e966dcb7e00d",
+        "ta69": "284b979689300720f1040ec1a83acb5c281ec2d2967cc563fde14fe1f5305d53",
+        "ta70": "ff0a1557d9cd0b4fab93f14ea8a749dc1333e047040d04ae25a0b9cc2e68bf23",
+        "ta71": "cf6d9d98ef5fab3676bf300f9924294950e04a1ec2dd03490de05ff546e8854c",
+        "ta72": "ec2baeadfe928ccdf494f4a7bc1c71ff6a8e02f92be00eb91b76c607c38a3fa2",
+        "ta73": "21fe7f9ff0ef5269af3128a9b8f7cfbd3fbf8530fc66137761ddd2d8e9c3e7d3",
+        "ta74": "f462f2a7a0d836585b17f744a260de7ae3bd885623749d29ae48bf391cbced26",
+        "ta75": "af19a794e61d9326183b4aaa3bc2fcb061f020ab77082bc326c66b5e604247f5",
+        "ta76": "98199fd387215bfd5a65326db028d7132affa721558ddc0b49d0df5d0d05a7da",
+        "ta77": "1ce20b77d56d099c0af8d3e82f4703685619271b80cf6952d43041d7487dbeaf",
+        "ta78": "d066d3f1dbbbd5adcf9a64ae299c598808f4e35b9afe2ba13b95486c565b9199",
+        "ta79": "c91192e0df9cd2ac1eb62be1e9a9f6c24541ae8c63eba213df369bc7b39d1d2b",
+        "ta80": "ee33fbf4118627fe43f3a32de945659dfd27af38e4792a400592310b54408f4b",
+    }
+)
+"""The route digest of each job shop ta01 to ta80, by name, read-only.
+
+Each value is what :func:`job_shop_route_digest` returns for the instance that
+:func:`taillard_job_shop` builds. :func:`check_taillard_job_shop` compares a rebuilt
+instance with its entry.
+"""

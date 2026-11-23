@@ -4,7 +4,9 @@ The matrices below are copied from the OR-Library files that distribute
 Taillard's (1993) generator: ``flowshop2.txt`` prints the processing times of
 ta001, and ``jobshop2.txt`` and ``openshop.txt`` print a 4 x 4 instance whose
 seeds are those of the first open shop. The first job of ta01 is copied from
-the published instance file in the JSPLIB collection.
+the published instance file in the JSPLIB collection. The last tests check the route digests
+that the library stores for ta01 to ta80 and the function that compares a rebuilt job shop
+with them.
 """
 
 from __future__ import annotations
@@ -12,28 +14,45 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
+from dataclasses import replace
+from typing import Any
 
 import pytest
 
 from dispatchatlas.benchmarks import taillard
+from dispatchatlas.benchmarks.shop import job_shop_problem
 from dispatchatlas.benchmarks.taillard import (
+    JOB_SHOP_ROUTE_DIGESTS,
     MODULUS,
     MULTIPLIER,
+    check_taillard_job_shop,
     flow_shop_instances,
     flow_shop_matrix,
     job_shop_instances,
     job_shop_matrices,
+    job_shop_route_digest,
     open_shop_instances,
     open_shop_matrices,
     taillard_flow_shop,
     taillard_instance,
     taillard_job_shop,
+    taillard_job_shop_seeded,
     taillard_open_shop,
     unif,
 )
-from dispatchatlas.core import ConfigError, check_schedule
+from dispatchatlas.core import (
+    ConfigError,
+    Dependency,
+    ModelError,
+    Problem,
+    Resource,
+    Task,
+    check_schedule,
+)
 from dispatchatlas.solvers.operators import random_order
 from dispatchatlas.solvers.scheduling import Decoder
+from tests.helpers import random_problem
 
 TA001 = [
     [54, 83, 15, 71, 77, 36, 53, 38, 27, 87, 76, 91, 14, 29, 12, 77, 32, 87, 68, 94],
@@ -247,3 +266,154 @@ def test_every_instance_builds():
         assert taillard_job_shop(item.name).size == item.jobs * item.machines
     for item in open_shop_instances():
         assert taillard.taillard_open_shop(item.name).size == item.jobs * item.machines
+
+
+# ------------------------------------------------------------ the stored route digests
+
+
+def _routes(name: str) -> list[list[tuple[int, float]]]:
+    """Return the routes of a published job shop straight from the generator's matrices.
+
+    Job ``j`` visits, in order, machine ``M[i][j] - 1`` for ``d[i][j]``.
+    """
+    item = taillard_instance("job-shop", name)
+    assert item.machine_seed is not None
+    durations, order = job_shop_matrices(
+        item.time_seed, item.machine_seed, item.jobs, item.machines
+    )
+    return [
+        [(order[i][j] - 1, float(durations[i][j])) for i in range(item.machines)]
+        for j in range(item.jobs)
+    ]
+
+
+def _oracle(name: str) -> str:
+    """Return the route digest of a published job shop written out from its routes alone.
+
+    One line for each job, the name and then ``m<machine>:<time>`` for each operation, the
+    machine index zero-padded to the width the shop builders give resource ids.
+    """
+    width = len(str(taillard_instance("job-shop", name).machines - 1))
+    lines = [
+        f"{name} {' '.join(f'm{machine:0{width}d}:{time:g}' for machine, time in route)}\n"
+        for route in _routes(name)
+    ]
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def _rebuilt(name: str, routes: list[list[tuple[int, float]]]) -> Problem:
+    """Return a job shop named ``name`` with the given routes, built by the shop builder."""
+    item = taillard_instance("job-shop", name)
+    return job_shop_problem(routes, machines=item.machines, problem_id=name)
+
+
+def test_every_published_job_shop_has_a_stored_route_digest():
+    names = [item.name for item in job_shop_instances()]
+    assert list(JOB_SHOP_ROUTE_DIGESTS) == names
+    assert (names[0], names[-1]) == ("ta01", "ta80")
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in JOB_SHOP_ROUTE_DIGESTS.values())
+    assert len(set(JOB_SHOP_ROUTE_DIGESTS.values())) == 80
+    with pytest.raises(TypeError):
+        JOB_SHOP_ROUTE_DIGESTS["ta01"] = "0" * 64  # type: ignore[index]
+
+
+def test_the_stored_route_digests_are_those_of_the_routes_the_generator_draws():
+    # The oracle reads the generator's matrices and no problem, so it is independent of the
+    # builder and of the digest function; the check of every rebuilt problem against these
+    # entries is made by test_the_published_job_shops_keep_their_routes.
+    for name, stored in JOB_SHOP_ROUTE_DIGESTS.items():
+        assert _oracle(name) == stored, name
+    problem = taillard_job_shop("ta01")
+    assert job_shop_route_digest(problem) == _oracle("ta01")
+    check_taillard_job_shop(problem)
+
+
+@pytest.mark.parametrize("name", ["ta01", "ta42", "ta80"])
+def test_the_check_accepts_a_job_shop_built_from_the_generators_routes_by_other_code(name):
+    # Only the routes are digested: the metadata of the library's builder are not.
+    problem = _rebuilt(name, _routes(name))
+    assert problem != taillard_job_shop(name)
+    check_taillard_job_shop(problem)
+    assert job_shop_route_digest(problem) == JOB_SHOP_ROUTE_DIGESTS[name]
+
+
+def _changed_time(routes: list[list[tuple[int, float]]]) -> None:
+    machine, time = routes[3][7]
+    routes[3][7] = (machine, time + 1.0)
+
+
+def _swapped_machines(routes: list[list[tuple[int, float]]]) -> None:
+    (first, one), (second, other) = routes[0][0], routes[0][1]
+    routes[0][0], routes[0][1] = (second, one), (first, other)
+
+
+def _swapped_operations(routes: list[list[tuple[int, float]]]) -> None:
+    routes[5][2], routes[5][3] = routes[5][3], routes[5][2]
+
+
+def _swapped_jobs(routes: list[list[tuple[int, float]]]) -> None:
+    routes[0], routes[1] = routes[1], routes[0]
+
+
+def _dropped_job(routes: list[list[tuple[int, float]]]) -> None:
+    routes.pop()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [_changed_time, _swapped_machines, _swapped_operations, _swapped_jobs, _dropped_job],
+    ids=["time", "machines", "operations", "jobs", "missing-job"],
+)
+def test_the_check_refuses_a_job_shop_whose_routes_differ(change: Any):
+    routes = _routes("ta01")
+    change(routes)
+    problem = _rebuilt("ta01", routes)
+    found = job_shop_route_digest(problem)
+    assert found != JOB_SHOP_ROUTE_DIGESTS["ta01"]
+    with pytest.raises(ModelError, match="'ta01' does not have the routes") as refused:
+        check_taillard_job_shop(problem)
+    assert refused.value.issues == (
+        f"stored route digest: {JOB_SHOP_ROUTE_DIGESTS['ta01']}",
+        f"digest of the routes found: {found}",
+    )
+
+
+def test_the_check_refuses_the_routes_of_one_job_shop_under_the_name_of_another():
+    problem = _rebuilt("ta02", _routes("ta01"))
+    with pytest.raises(ModelError, match="'ta02' does not have the routes"):
+        check_taillard_job_shop(problem)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: replace(taillard_job_shop("ta01"), id="ta81"),
+        lambda: replace(taillard_job_shop("ta01"), id="my-job-shop"),
+        lambda: taillard_job_shop_seeded(15, 15, 1),
+        lambda: taillard_flow_shop("ta001"),
+    ],
+    ids=["ta81", "other-name", "seeded", "flow-shop"],
+)
+def test_the_check_refuses_a_name_that_has_no_stored_digest(make: Any):
+    with pytest.raises(ModelError, match="is not one of the job shops ta01 to ta80"):
+        check_taillard_job_shop(make())
+
+
+def test_a_problem_that_is_not_a_job_shop_has_no_route_digest():
+    several_modes = replace(random_problem(2, tasks=8, max_modes=2, pools=1), id="ta01")
+    ungrouped = Problem(
+        "ta01",
+        tasks=(Task.on("a0", "m0", 2.0), Task.on("a1", "m1", 3.0)),
+        resources=(Resource("m0"), Resource("m1")),
+        dependencies=(Dependency("a0", "a1"),),
+    )
+    assert "job-shop" not in several_modes.shapes
+    assert "job-shop" in ungrouped.shapes
+    with pytest.raises(ModelError, match="is not a job shop"):
+        job_shop_route_digest(several_modes)
+    with pytest.raises(ModelError, match="is not a job shop"):
+        check_taillard_job_shop(several_modes)
+    with pytest.raises(ModelError, match="belong to no job group"):
+        job_shop_route_digest(ungrouped)
+    with pytest.raises(ModelError, match="belong to no job group"):
+        check_taillard_job_shop(ungrouped)

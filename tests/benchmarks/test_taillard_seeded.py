@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import random
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +13,7 @@ from dispatchatlas.benchmarks.registry import FamilyRegistry
 from dispatchatlas.benchmarks.taillard import (
     MODULUS,
     TaillardJobShopSeeded,
+    check_taillard_job_shop,
     job_shop_instances,
     open_shop_instances,
     register,
@@ -27,9 +27,6 @@ from dispatchatlas.solvers.scheduling import Decoder
 
 FAMILY = "taillard-job-shop-seeded"
 SIZES = [(15, 15), (20, 15), (20, 20), (30, 15), (30, 20)]
-ROUTES_DIGEST = "e3711ecc896688b345db53551007c2be3ec8001ce0c492798ca1710145aa3737"
-"""SHA-256 of the routes of ta01 to ta80, hashed job by job: the machine and the processing time of
-each operation in order."""
 
 
 def _published() -> set[tuple[int, int]]:
@@ -202,16 +199,8 @@ def test_a_problem_decodes_to_a_feasible_schedule() -> None:
 
 
 def test_the_published_job_shops_keep_their_routes() -> None:
-    digest = hashlib.sha256()
     for item in job_shop_instances():
-        problem = taillard_job_shop(item.name)
-        for indices in problem.groups.values():
-            route = []
-            for index in indices:
-                mode = problem.tasks[index].modes[0]
-                route.append(f"{next(iter(mode.demands))}:{mode.duration:g}")
-            digest.update(f"{item.name} {' '.join(route)}\n".encode())
-    assert digest.hexdigest() == ROUTES_DIGEST
+        check_taillard_job_shop(taillard_job_shop(item.name))
 
 
 def test_a_published_job_shop_keeps_its_name_and_metadata() -> None:
