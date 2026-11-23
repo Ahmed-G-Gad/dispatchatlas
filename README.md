@@ -128,10 +128,13 @@ explains its options with `--help`.
   genetic, memetic, and ant colony algorithms, BRKGA, differential evolution,
   CMA-ES, and particle swarms; multi-objective algorithms including NSGA-II,
   NSGA-III, MOEA/D, and SMS-EMOA; learning methods and hyper-heuristics; exact
-  CP-SAT, time-indexed MILP, and enumeration solvers; a matheuristic; and
-  job-shop search families, each written once for random keys and job
-  sequences. Each
-  solver declares the problem features it models and the sources it follows.
+  CP-SAT, time-indexed MILP, and enumeration solvers; and a matheuristic. Nine
+  work on job shops only: random sampling, simulated annealing, a steady-state
+  genetic algorithm, and a particle swarm, each written once for random keys and
+  for job sequences and run on common random numbers, and, as context, a tabu
+  search over machine orders, a BRKGA with a local search, two Giffler-Thompson
+  dispatching rules, and an insertion heuristic. Each solver declares the
+  problem features it models and the sources it follows.
 - **9 objectives**: makespan, total completion time, total flow time, mean
   response time, total tardiness, maximum lateness, tardy tasks, energy, and
   cost. A plugin can register more.
