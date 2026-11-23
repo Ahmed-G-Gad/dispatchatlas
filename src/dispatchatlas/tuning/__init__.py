@@ -8,14 +8,25 @@
   Conover's comparisons with the best, and :func:`compare_with_best`, the test itself.
 - :mod:`~dispatchatlas.tuning.irace`: :class:`IteratedRacing`, the elitist iterated racing
   of the irace package (López-Ibáñez et al. 2016), and the formulas it applies.
+- :mod:`~dispatchatlas.tuning.batch`: :func:`process_run_batch`, a ``run_batch`` that runs
+  the experiments in worker processes and keeps a row for each, so that a job that was
+  killed resumes from them.
 
-The package never starts a solver. The caller passes ``run_batch``, a function that takes
-the experiments of one step, each a configuration, an instance, and a seed, and returns
-their costs, so the caller decides how the runs are made and where they are recorded.
-The package depends on :mod:`dispatchatlas.core` and on the statistics of
-:mod:`dispatchatlas.analysis.stats`.
+Racing and iterated racing never start a solver. The caller passes ``run_batch``, a function
+that takes the experiments of one step, each a configuration, an instance, and a seed, and
+returns their costs, so the caller decides how the runs are made and where they are
+recorded. The package depends on :mod:`dispatchatlas.core` and on the statistics of
+:mod:`dispatchatlas.analysis.stats`; the module of the batch also on
+:mod:`dispatchatlas.processes`.
 """
 
+from dispatchatlas.tuning.batch import (
+    ExperimentsFailedError,
+    ProcessRunBatch,
+    configuration_digest,
+    experiment_key,
+    process_run_batch,
+)
 from dispatchatlas.tuning.irace import (
     IteratedRacing,
     TuningResult,
@@ -60,11 +71,13 @@ __all__ = [
     "Configuration",
     "Entry",
     "Experiment",
+    "ExperimentsFailedError",
     "Integer",
     "IteratedRacing",
     "Ordinal",
     "Parameter",
     "ParameterSpace",
+    "ProcessRunBatch",
     "RaceResult",
     "Real",
     "Record",
@@ -75,11 +88,14 @@ __all__ = [
     "Value",
     "candidate_count",
     "compare_with_best",
+    "configuration_digest",
     "default_iterations",
     "default_survivors",
+    "experiment_key",
     "iteration_budget",
     "narrow_model",
     "parent_probabilities",
+    "process_run_batch",
     "race",
     "restart_model",
 ]
