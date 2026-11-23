@@ -32,6 +32,13 @@ that comes first in the priority fixes the machine. Positions in a sequence are
 unique, so no other tie arises in any builder. Random keys sort stably, so equal
 keys keep the order of their slots.
 
+**Ranks.** A job sequence lists the operations of a job in their route order, so
+it cannot express a priority that ranks an operation ahead of its job
+predecessor, such as shortest processing time. :func:`giffler_thompson_ranked`
+builds the same active and non-delay schedules from one rank per operation, a
+lower rank coming first in the priority, under the same tie rule. The ranks must
+be pairwise different, so that no tie arises there either.
+
 Every builder returns a :class:`~dispatchatlas.solvers.scheduling.Decoded`
 schedule of plain Python numbers, which
 :class:`~dispatchatlas.solvers.evaluation.Evaluator` scores and
@@ -56,8 +63,10 @@ __all__ = [
     "BuilderName",
     "JobSequence",
     "JobSequenceDecoder",
+    "OperationRanks",
     "check_sequence",
     "giffler_thompson",
+    "giffler_thompson_ranked",
     "semi_active",
     "sequence_from_keys",
 ]
@@ -67,6 +76,9 @@ type BuilderName = Literal["semi-active", "active", "non-delay"]
 
 type JobSequence = Sequence[int] | NDArray[np.integer[Any]]
 """A job sequence: one job index per operation, as a sequence or an integer array."""
+
+type OperationRanks = Sequence[int] | NDArray[np.integer[Any]]
+"""Operation ranks: one integer per task, indexed by task index, as a sequence or an array."""
 
 BUILDERS: tuple[BuilderName, ...] = ("semi-active", "active", "non-delay")
 """The names of the schedule builders, as :class:`JobSequenceDecoder` takes them."""
@@ -163,6 +175,39 @@ def _tasks(shop: JobShop, sequence: JobSequence) -> list[int]:
     return tasks
 
 
+def _ranks(shop: JobShop, rank: OperationRanks) -> list[int]:
+    """Return the rank of each task as a list, after checking that every task has its own."""
+    array = np.asarray(rank)
+    if (
+        array.ndim != 1
+        or array.size != shop.size
+        or array.dtype.kind not in "iu"
+        or np.unique(array).size != shop.size
+    ):
+        raise ModelError(
+            f"the ranks are not one distinct integer per operation of problem {shop.problem.id!r}",
+            _rank_issues(shop, array),
+        )
+    return [int(value) for value in array.tolist()]
+
+
+def _rank_issues(shop: JobShop, array: NDArray[Any]) -> tuple[str, ...]:
+    """Return every way in which ``array`` fails to hold one distinct integer rank per task."""
+    if array.ndim != 1:
+        return (f"the ranks are one row of integers, one per operation, got shape {array.shape}",)
+    issues: list[str] = []
+    if array.size != shop.size:
+        issues.append(f"there are {array.size} ranks for the {shop.size} operations")
+    if array.size and array.dtype.kind not in "iu":
+        issues.append(f"the ranks are integers, got {array.dtype}")
+    else:
+        values, counts = np.unique(array, return_counts=True)
+        repeated = values[counts > 1]
+        if repeated.size:
+            issues.append(f"ranks occur more than once: {repeated[:5].tolist()}")
+    return tuple(issues)
+
+
 def semi_active(shop: JobShop, sequence: JobSequence) -> Decoded:
     """Decode a job sequence into a semi-active schedule.
 
@@ -228,7 +273,8 @@ def giffler_thompson(shop: JobShop, priority: JobSequence, *, non_delay: bool = 
     Positions in a sequence are unique, so no other tie arises. Each operation is
     appended to its machine, so no idle interval is filled later. Each step looks
     at every job, so a decode takes time proportional to the number of
-    operations times the number of jobs.
+    operations times the number of jobs. :func:`giffler_thompson_ranked` runs the
+    same procedure on a priority that is one rank per operation.
 
     Args:
         shop: The job shop.
@@ -242,10 +288,52 @@ def giffler_thompson(shop: JobShop, priority: JobSequence, *, non_delay: bool = 
     Raises:
         ModelError: If ``priority`` is not a job sequence of ``shop``.
     """
-    tasks = _tasks(shop, priority)
     rank = [0] * shop.size
-    for position, task in enumerate(tasks):
+    for position, task in enumerate(_tasks(shop, priority)):
         rank[task] = position
+    return _giffler_thompson(shop, rank, non_delay)
+
+
+def giffler_thompson_ranked(
+    shop: JobShop, rank: OperationRanks, *, non_delay: bool = False
+) -> Decoded:
+    """Decode per-operation ranks into an active schedule, or into a non-delay one.
+
+    The procedure is that of :func:`giffler_thompson`, with the priority given as
+    one rank per operation instead of a job sequence: ``rank[task]`` is the rank
+    of task ``task``, and an operation comes before another in the priority when
+    its rank is lower. Of the operations that attain C*, the one of lowest rank
+    fixes the machine M*, and the operation of lowest rank in the conflict set is
+    scheduled. With non-delay, the operation of lowest rank among those that
+    attain S* is scheduled.
+
+    The ranks must be pairwise different, which leaves no other tie. A
+    priority rule makes them so by sorting the operations on a key such as the
+    rule's value, then the job, then the operation, and ranking them by their
+    place in the sort. Only the first unscheduled operation of each job can be
+    scheduled next, so the ranks of one job's operations are never compared with
+    each other: a rank may put an operation ahead of its job predecessor, which a
+    job sequence cannot do. When the ranks are the positions of a job
+    sequence's occurrences, the result is that of :func:`giffler_thompson`.
+
+    Args:
+        shop: The job shop.
+        rank: One integer per task, indexed by task index, all different.
+        non_delay: Build a non-delay schedule instead of an active one.
+
+    Returns:
+        The schedule, whose sequence lists the operations in the order they were
+        scheduled.
+
+    Raises:
+        ModelError: If ``rank`` does not hold one integer per task of ``shop``, or
+            two tasks share a rank.
+    """
+    return _giffler_thompson(shop, _ranks(shop, rank), non_delay)
+
+
+def _giffler_thompson(shop: JobShop, rank: list[int], non_delay: bool) -> Decoded:
+    """Run the procedure of :func:`giffler_thompson` on one distinct rank per task."""
     operations, machine, duration = shop.operations, shop.machine, shop.duration
     release = shop.release
     step = [0] * shop.jobs
