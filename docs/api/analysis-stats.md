@@ -1,6 +1,6 @@
 # Statistics
 
-The statistical kernels: distributions, ranks, rank tests, effect sizes, bootstrap intervals, Bayesian tests, corrections, and power.
+The statistical kernels: distributions, ranks, rank tests, equivalence tests, effect sizes, bootstrap intervals, Bayesian tests, corrections, and power.
 
 ::: dispatchatlas.analysis.stats
     options:

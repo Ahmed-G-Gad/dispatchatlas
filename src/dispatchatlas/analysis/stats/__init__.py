@@ -5,10 +5,12 @@ corrections are pure Python and verified against reference values computed
 with SciPy; the bootstrap, the Bayesian tests, and the power simulation draw
 from ``numpy.random.default_rng(seed)``.
 
-- :mod:`~dispatchatlas.analysis.stats.distributions`: normal, chi-square, and F tails.
+- :mod:`~dispatchatlas.analysis.stats.distributions`: normal, chi-square, F, and Student t tails.
 - :mod:`~dispatchatlas.analysis.stats.ranks`: ties, midranks, and orientation.
 - :mod:`~dispatchatlas.analysis.stats.nonparametric`: Wilcoxon, sign,
   Mann-Whitney, Friedman, Iman-Davenport, and Nemenyi.
+- :mod:`~dispatchatlas.analysis.stats.equivalence`: two one-sided tests of equivalence
+  within a margin, and the four outcomes they give with a test of a difference.
 - :mod:`~dispatchatlas.analysis.stats.effect_sizes`: A12, Cliff's delta,
   Cohen's d and d_z, and the paired win share.
 - :mod:`~dispatchatlas.analysis.stats.bootstrap`: BCa and percentile intervals.
@@ -35,6 +37,8 @@ from dispatchatlas.analysis.stats.distributions import (
     normal_cdf,
     normal_ppf,
     normal_sf,
+    t_ppf,
+    t_sf,
 )
 from dispatchatlas.analysis.stats.effect_sizes import (
     Magnitude,
@@ -48,11 +52,22 @@ from dispatchatlas.analysis.stats.effect_sizes import (
     paired_win_share,
     vargha_delaney_a12,
 )
+from dispatchatlas.analysis.stats.equivalence import (
+    EquivalenceOutcome,
+    TostPairedTResult,
+    TostResult,
+    TostSignedRankResult,
+    equivalence_report,
+    tost_paired_t,
+    tost_signed_rank,
+)
 from dispatchatlas.analysis.stats.nonparametric import (
+    Alternative,
     FriedmanResult,
     ImanDavenportResult,
     MannWhitneyResult,
     WilcoxonResult,
+    ZeroMethod,
     friedman_test,
     iman_davenport,
     mann_whitney_u,
@@ -81,16 +96,22 @@ from dispatchatlas.analysis.stats.ranks import (
 __all__ = [
     "CORRECTIONS",
     "TIE_TOLERANCE",
+    "Alternative",
     "BayesianResult",
     "BootstrapInterval",
     "Correction",
+    "EquivalenceOutcome",
     "FriedmanResult",
     "ImanDavenportResult",
     "Magnitude",
     "MannWhitneyResult",
     "PowerAssessment",
     "Sense",
+    "TostPairedTResult",
+    "TostResult",
+    "TostSignedRankResult",
     "WilcoxonResult",
+    "ZeroMethod",
     "a12_magnitude",
     "adjust_p_values",
     "attainable_floor",
@@ -104,6 +125,7 @@ __all__ = [
     "cohens_d_magnitude",
     "cohens_dz",
     "detectable_effect_size",
+    "equivalence_report",
     "f_sf",
     "friedman_test",
     "iman_davenport",
@@ -123,7 +145,11 @@ __all__ = [
     "shaffer_hypothesis_counts",
     "sign_test",
     "strictly_better",
+    "t_ppf",
+    "t_sf",
     "ties",
+    "tost_paired_t",
+    "tost_signed_rank",
     "vargha_delaney_a12",
     "wilcoxon_power",
     "wilcoxon_signed_rank",

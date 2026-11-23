@@ -5,12 +5,14 @@ several problems (Demšar 2006; Derrac et al. 2011): a paired test for two
 algorithms, and for several algorithms an omnibus test over complete blocks
 followed by a post-hoc comparison of average ranks.
 
-All tests are two-sided. Small samples use the exact null distribution: the
-signed-rank test with or without tied magnitudes, where ties make it the
-distribution conditional on the midranks, and the Mann-Whitney test without
-ties. Larger samples, and tied Mann-Whitney samples, use the normal
-approximation with the tie-corrected variance and a continuity correction of
-0.5, whose tail comes from
+All tests are two-sided, except that the signed-rank test also takes a
+one-sided alternative, whose p-value reads one tail of the same null
+distribution as the two-sided one. Small samples use the exact null
+distribution: the signed-rank test with or without tied magnitudes, where ties,
+and zeros that Pratt's treatment ranks, make it the distribution conditional on
+the ranks, and the Mann-Whitney test without ties. Larger samples, and tied
+Mann-Whitney samples, use the normal approximation with the tie-corrected
+variance and a continuity correction of 0.5, whose tail comes from
 :func:`~dispatchatlas.analysis.stats.distributions.normal_sf` so that very
 small p-values keep their precision. Rank ties follow
 :data:`~dispatchatlas.analysis.stats.ranks.TIE_TOLERANCE`, and so do the
@@ -40,11 +42,13 @@ from dispatchatlas.core.errors import ConfigError
 __all__ = [
     "MANN_WHITNEY_EXACT_LIMIT",
     "WILCOXON_EXACT_LIMIT",
+    "Alternative",
     "FriedmanResult",
     "ImanDavenportResult",
     "MannWhitneyResult",
     "TestMethod",
     "WilcoxonResult",
+    "ZeroMethod",
     "friedman_statistic",
     "friedman_test",
     "iman_davenport",
@@ -61,8 +65,26 @@ type TestMethod = Literal["exact", "exact-conditional", "normal", "degenerate"]
 
 ``"exact"`` is the exact null distribution of untied ranks,
 ``"exact-conditional"`` the exact null distribution of the signed-rank
-statistic given the midranks of tied magnitudes, ``"normal"`` the normal
-approximation, and ``"degenerate"`` a test without data.
+statistic given the ranks of the non-zero magnitudes when ties, or zeros that
+Pratt's treatment ranks, make them differ from 1 to ``n``, ``"normal"`` the
+normal approximation, and ``"degenerate"`` a test without data.
+"""
+
+type Alternative = Literal["two-sided", "greater", "less"]
+"""The alternative hypothesis of a test of paired differences.
+
+``"two-sided"`` is that the differences tend to differ from zero in either
+direction, ``"greater"`` that they tend to be positive, and ``"less"`` that
+they tend to be negative.
+"""
+
+type ZeroMethod = Literal["wilcox", "pratt"]
+"""How the signed-rank test treats differences of zero.
+
+``"wilcox"`` drops them before ranking, so the other magnitudes are ranked from
+1 (Wilcoxon 1945). ``"pratt"`` ranks the magnitudes with the zeros included,
+which gives the zeros the lowest ranks and moves every other magnitude up by
+their number, and then drops the zeros' ranks from the sums (Pratt 1959).
 """
 
 WILCOXON_EXACT_LIMIT = 50
@@ -113,14 +135,19 @@ _NEMENYI_Q: Mapping[float, Mapping[int, float]] = {
 
 @dataclass(frozen=True, slots=True)
 class WilcoxonResult:
-    """A two-sided Wilcoxon signed-rank test.
+    """A Wilcoxon signed-rank test.
 
     Attributes:
-        statistic: ``min(W+, W-)``, the smaller signed-rank sum.
-        p_value: Two-sided p-value.
-        pairs: Number of non-zero differences the test ranked.
-        zeros: Number of differences dropped as zero.
+        statistic: For the two-sided alternative, ``min(W+, W-)``, the smaller
+            signed-rank sum; for a one-sided alternative, ``W+``, the sum of
+            the ranks of the positive differences.
+        p_value: p-value for ``alternative``.
+        pairs: Number of non-zero differences the statistic sums.
+        zeros: Number of differences of zero, which ``zero_method`` drops
+            before ranking or from the sums.
         method: How the p-value was obtained.
+        alternative: The alternative hypothesis the p-value tests.
+        zero_method: How the zero differences were treated.
     """
 
     statistic: float
@@ -128,6 +155,8 @@ class WilcoxonResult:
     pairs: int
     zeros: int
     method: TestMethod
+    alternative: Alternative = "two-sided"
+    zero_method: ZeroMethod = "wilcox"
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,68 +228,147 @@ class ImanDavenportResult:
     df_denominator: int
 
 
-def wilcoxon_signed_rank(differences: Iterable[float]) -> WilcoxonResult:
-    """Return the two-sided Wilcoxon signed-rank test of paired differences.
+def wilcoxon_signed_rank(
+    differences: Iterable[float],
+    *,
+    alternative: Alternative = "two-sided",
+    zero_method: ZeroMethod = "wilcox",
+) -> WilcoxonResult:
+    """Return the Wilcoxon signed-rank test of paired differences.
 
-    Differences within :data:`TIE_TOLERANCE` of zero are dropped (Wilcoxon's
-    treatment of zeros), the magnitudes of the others are midranked, and the
-    statistic is the smaller of the positive and negative rank sums. Up to
-    :data:`WILCOXON_EXACT_LIMIT` pairs, the p-value comes from the exact
-    null distribution of the statistic: under the null hypothesis each
-    difference is positive or negative with equal probability, so every
-    assignment of signs to the ranks is equally likely, and a subset-sum
-    recursion counts the assignments by their rank sum. With tied
-    magnitudes the ranks are the midranks, and the distribution is the one
-    conditional on them (method ``"exact-conditional"``), whose smallest
-    p-value over ``n`` pairs is ``2 / 2^n`` as without ties; a normal
-    approximation can fall below that on a small tied sample. Above the
-    limit the normal
-    approximation uses the mean ``n(n+1)/4``, the variance
-    ``n(n+1)(2n+1)/24 - sum(t^3 - t)/48`` over the tie groups, and a
-    continuity correction of 0.5 (Wilcoxon 1945). Infinite differences are
-    allowed and rank above every finite one.
+    Differences within :data:`TIE_TOLERANCE` of zero are zeros, which
+    ``zero_method`` treats as Wilcoxon (1945) or Pratt (1959) does. Both
+    midrank the magnitudes of the non-zero differences. Wilcoxon's treatment
+    drops the zeros first, so the ranks run from 1. Pratt's ranks the
+    magnitudes with the zeros included, so the zeros hold the lowest ranks and
+    the non-zero differences rank above them, and only then drops the zeros'
+    ranks from the sums. The two-sided test uses the smaller of the rank sums
+    ``W+`` and ``W-`` of the positive and the negative differences. A
+    one-sided test uses ``W+``: the alternative ``"greater"``, that the
+    differences tend to be positive, rejects for a large ``W+``, and
+    ``"less"``, that they tend to be negative, for a small one.
+
+    Up to :data:`WILCOXON_EXACT_LIMIT` non-zero pairs, the p-value comes from
+    the exact null distribution of ``W+`` given those ranks: under the null
+    hypothesis each difference is positive or negative with equal
+    probability, so every assignment of signs to the ranks is equally likely,
+    and a subset-sum recursion counts the assignments by their rank sum. A
+    one-sided p-value is the probability of a sum at least as extreme as the
+    observed one in the direction of the alternative (Conover 1999), and the
+    two-sided p-value is twice the smaller of the two tails, capped at 1.
+    Without ties, and without zeros that Pratt's treatment ranks, the ranks
+    are 1 to ``n`` and the distribution does not depend on the data (method
+    ``"exact"``). With tied magnitudes the ranks are midranks, and with Pratt's
+    treatment of zeros they start above the zeros; the distribution is then the
+    one conditional on them (method ``"exact-conditional"``). Its smallest
+    two-sided p-value over ``n`` non-zero pairs is ``2 / 2^n`` as without ties,
+    and the smallest one-sided one ``1 / 2^n``; a normal approximation can fall
+    below that on a small tied sample. The recursion counts sums up to twice
+    the total of the ranks, so Pratt's treatment, which lifts every rank by the
+    number of zeros, lengthens it in proportion.
+
+    Above the limit the normal approximation uses the mean ``sum(r) / 2`` and
+    the variance ``sum(r^2) / 4`` of the signed-rank sum under that null, for
+    the ranks ``r`` of the non-zero differences, and a continuity correction
+    of 0.5 towards the null (Wilcoxon 1945). Without zeros that Pratt's
+    treatment ranks, they are ``n(n+1)/4`` and
+    ``n(n+1)(2n+1)/24 - sum(t^3 - t)/48`` over the tie groups. Infinite
+    differences are allowed and rank above every finite one.
 
     Args:
-        differences: One difference per matched pair.
+        differences: One difference per matched pair. Orient them so that a
+            positive difference supports the alternative ``"greater"``, for
+            example the value of the first sample minus that of the second.
+        alternative: ``"two-sided"``, ``"greater"``, or ``"less"``.
+        zero_method: ``"wilcox"`` drops the zeros before ranking, and
+            ``"pratt"`` ranks them and drops their ranks from the sums.
 
     Returns:
-        The test, whose ``method`` names how the p-value was obtained; with
+        The test, whose ``method`` names how the p-value was obtained and
+        whose ``alternative`` and ``zero_method`` repeat the arguments; with
         no non-zero difference, a degenerate result with p-value 1.
 
     Raises:
-        ConfigError: If there are no differences or one is NaN.
+        ConfigError: If there are no differences, one is NaN, or the
+            alternative or the zero method is not one of the two documented.
     """
+    alternative = _check_alternative(alternative)
+    zero_method = _check_zero_method(zero_method)
     values = finite_or_infinite(differences, "Wilcoxon differences")
     if not values:
         raise ConfigError("the Wilcoxon signed-rank test needs at least one difference")
     nonzero = [value for value in values if abs(value) > TIE_TOLERANCE]
     zeros = len(values) - len(nonzero)
     if not nonzero:
-        return WilcoxonResult(0.0, 1.0, 0, zeros, "degenerate")
+        return WilcoxonResult(0.0, 1.0, 0, zeros, "degenerate", alternative, zero_method)
     magnitudes = [abs(value) for value in nonzero]
     ranks = midranks(magnitudes)
+    # Pratt's zeros hold the ranks 1 to ``zeros``, so the others start above them.
+    lift = zeros if zero_method == "pratt" else 0
+    if lift:
+        ranks = tuple(rank + lift for rank in ranks)
     positive = math.fsum(rank for rank, value in zip(ranks, nonzero, strict=True) if value > 0.0)
     negative = math.fsum(rank for rank, value in zip(ranks, nonzero, strict=True) if value < 0.0)
-    statistic = min(positive, negative)
+    two_sided = alternative == "two-sided"
+    statistic = min(positive, negative) if two_sided else positive
     count = len(nonzero)
     if count <= WILCOXON_EXACT_LIMIT:
-        method: TestMethod = "exact" if len(set(ranks)) == count else "exact-conditional"
-        return WilcoxonResult(statistic, _wilcoxon_exact(statistic, ranks), count, zeros, method)
-    mean = count * (count + 1) / 4.0
-    variance = count * (count + 1) * (2 * count + 1) / 24.0 - _rank_tie_sum(ranks) / 48.0
-    p_value = _normal_two_sided(statistic, mean, variance)
-    return WilcoxonResult(statistic, p_value, count, zeros, "normal")
+        untied = lift == 0 and len(set(ranks)) == count
+        method: TestMethod = "exact" if untied else "exact-conditional"
+        p_value = (
+            _wilcoxon_exact(statistic, ranks)
+            if two_sided
+            else _wilcoxon_exact_tail(positive, ranks, alternative)
+        )
+        return WilcoxonResult(statistic, p_value, count, zeros, method, alternative, zero_method)
+    if lift:
+        mean = math.fsum(ranks) / 2.0
+        variance = math.fsum(rank * rank for rank in ranks) / 4.0
+    else:
+        mean = count * (count + 1) / 4.0
+        variance = count * (count + 1) * (2 * count + 1) / 24.0 - _rank_tie_sum(ranks) / 48.0
+    p_value = (
+        _normal_two_sided(statistic, mean, variance)
+        if two_sided
+        else _normal_tail(positive, mean, variance, alternative)
+    )
+    return WilcoxonResult(statistic, p_value, count, zeros, "normal", alternative, zero_method)
 
 
-def _wilcoxon_exact(statistic: float, ranks: Sequence[float]) -> float:
-    """Return the exact two-sided p-value of ``min(W+, W-)`` given the ranks of the pairs.
+def _check_alternative(alternative: object) -> Alternative:
+    """Return ``alternative`` if it is ``"two-sided"``, ``"greater"``, or ``"less"``.
+
+    Raises:
+        ConfigError: For any other value.
+    """
+    if alternative == "two-sided":
+        return "two-sided"
+    if alternative == "greater":
+        return "greater"
+    if alternative == "less":
+        return "less"
+    raise ConfigError(f"alternative must be 'two-sided', 'greater', or 'less', got {alternative!r}")
+
+
+def _check_zero_method(zero_method: object) -> ZeroMethod:
+    """Return ``zero_method`` if it is ``"wilcox"`` or ``"pratt"``.
+
+    Raises:
+        ConfigError: For any other value.
+    """
+    if zero_method == "wilcox":
+        return "wilcox"
+    if zero_method == "pratt":
+        return "pratt"
+    raise ConfigError(f"zero_method must be 'wilcox' or 'pratt', got {zero_method!r}")
+
+
+def _sign_assignment_counts(ranks: Sequence[float]) -> list[int]:
+    """Return how many sign assignments of the ranks give each doubled positive rank sum.
 
     Every assignment of signs to the ranks is equally likely under the null
-    hypothesis. Midranks are multiples of one half, so the recursion counts
-    the assignments by twice their positive rank sum, an integer. The
-    distribution of that sum is symmetric about half the total, so twice its
-    lower tail at the statistic is the probability that the smaller of the
-    two sums is at most the statistic.
+    hypothesis. Midranks are multiples of one half, so the recursion counts the
+    assignments by twice their positive rank sum, an integer.
     """
     doubled = [round(2.0 * rank) for rank in ranks]
     counts = [0] * (sum(doubled) + 1)
@@ -268,8 +376,34 @@ def _wilcoxon_exact(statistic: float, ranks: Sequence[float]) -> float:
     for rank in doubled:
         for total in range(len(counts) - 1, rank - 1, -1):
             counts[total] += counts[total - rank]
+    return counts
+
+
+def _wilcoxon_exact(statistic: float, ranks: Sequence[float]) -> float:
+    """Return the exact two-sided p-value of ``min(W+, W-)`` given the ranks of the pairs.
+
+    The distribution of the positive rank sum is symmetric about half the
+    total, so twice its lower tail at the statistic is the probability that
+    the smaller of the two sums is at most the statistic.
+    """
+    counts = _sign_assignment_counts(ranks)
     lower = sum(counts[: math.floor(2.0 * statistic + 1e-9) + 1])
-    return min(1.0, 2.0 * lower / (1 << len(doubled)))
+    return min(1.0, 2.0 * lower / (1 << len(ranks)))
+
+
+def _wilcoxon_exact_tail(
+    positive: float, ranks: Sequence[float], alternative: Alternative
+) -> float:
+    """Return the exact one-sided p-value of ``W+`` given the ranks of the pairs.
+
+    ``"greater"`` takes the upper tail of the distribution of the positive
+    rank sum from the observed value, ``"less"`` the lower tail up to it, the
+    observed value itself counting in both.
+    """
+    counts = _sign_assignment_counts(ranks)
+    observed = round(2.0 * positive)
+    tail = sum(counts[observed:]) if alternative == "greater" else sum(counts[: observed + 1])
+    return tail / (1 << len(ranks))
 
 
 def sign_test(wins: int, losses: int) -> float:
@@ -519,3 +653,16 @@ def _normal_two_sided(statistic: float, mean: float, variance: float) -> float:
         return 1.0
     z = max((abs(statistic - mean) - _CONTINUITY) / math.sqrt(variance), 0.0)
     return min(1.0, 2.0 * normal_sf(z))
+
+
+def _normal_tail(positive: float, mean: float, variance: float, alternative: Alternative) -> float:
+    """Return the continuity-corrected one-sided normal p-value of ``W+``, 1 without variance.
+
+    The correction moves ``W+`` half a unit towards the mean, whichever tail
+    the alternative reads: the upper one for ``"greater"``, the lower for
+    ``"less"``.
+    """
+    if variance <= 0.0:
+        return 1.0
+    shift = positive - mean if alternative == "greater" else mean - positive
+    return normal_sf((shift - _CONTINUITY) / math.sqrt(variance))

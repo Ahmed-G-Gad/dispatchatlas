@@ -36,3 +36,23 @@ def test_ids_are_unique_and_families_filter():
         method("t-test")
     with pytest.raises(ConfigError, match="unknown method family"):
         implemented_methods("parametric")  # type: ignore[arg-type]
+
+
+def test_the_equivalence_and_zero_treatment_methods_are_catalogued_with_their_sources():
+    tests = {entry.id for entry in implemented_methods("test")}
+    assert {"tost-paired-t", "tost-signed-rank", "wilcoxon-pratt-zeros"} <= tests
+    assert method("equivalence-report").family == "reporting"
+    assert method("tost-paired-t").function.endswith(".equivalence.tost_paired_t")
+    assert method("tost-signed-rank").function.endswith(".equivalence.tost_signed_rank")
+    assert method("wilcoxon-pratt-zeros").function.endswith(".nonparametric.wilcoxon_signed_rank")
+    for identifier in ("tost-paired-t", "tost-signed-rank", "equivalence-report"):
+        assert "lakens2017equivalence" in method(identifier).references
+    for identifier in ("tost-paired-t", "tost-signed-rank"):
+        assert "schuirmann1987comparison" in method(identifier).references
+    for identifier in ("wilcoxon-pratt-zeros", "tost-signed-rank"):
+        assert "pratt1959remarks" in method(identifier).references
+    # The entry that every bundle writes keeps its text.
+    assert method("wilcoxon-signed-rank").references == (
+        "wilcoxon1945individual",
+        "derrac2011practical",
+    )

@@ -1,8 +1,10 @@
-"""The normal, chi-square, and F distribution functions, in pure Python.
+"""The normal, chi-square, F, and Student t distribution functions, in pure Python.
 
 The rank tests read their p-values from these distributions: the normal for
 large-sample Wilcoxon and Mann-Whitney statistics, the chi-square for the
-Friedman statistic, and the F for the Iman-Davenport statistic.
+Friedman statistic, and the F for the Iman-Davenport statistic. The Student t
+serves the paired t test, its confidence interval, and the equivalence tests
+built on them.
 
 - The normal tails use :func:`math.erfc`, so a tail probability keeps its
   relative precision far into the tail instead of cancelling against one.
@@ -16,6 +18,11 @@ Friedman statistic, and the F for the Iman-Davenport statistic.
   ``I_{d2/(d2 + d1 f)}(d2/2, d1/2)``, evaluated by the modified Lentz continued
   fraction on the side of its symmetry point where it converges (Press et al.
   2007, section 6.4).
+- The Student t tail is half the same incomplete beta function,
+  ``I_{df/(df + t^2)}(df/2, 1/2) / 2``, of the magnitude of the statistic. The
+  t quantile inverts it by Newton's method on the logarithm of the tail,
+  started from the normal quantile and held inside a bracket that every
+  evaluation narrows, so a tail of 1e-12 is inverted as exactly as one of 0.05.
 
 Both continued fractions and the series stop at relative convergence (1e-15
 for the gamma function, 3e-14 for the beta function) and raise
@@ -30,7 +37,7 @@ import math
 
 from dispatchatlas.core.errors import ConfigError
 
-__all__ = ["chi2_sf", "f_sf", "normal_cdf", "normal_ppf", "normal_sf"]
+__all__ = ["chi2_sf", "f_sf", "normal_cdf", "normal_ppf", "normal_sf", "t_ppf", "t_sf"]
 
 _SQRT2 = math.sqrt(2.0)
 
@@ -72,6 +79,9 @@ _GAMMA_CONVERGENCE = 1e-15
 _BETA_CONVERGENCE = 3e-14
 _GAMMA_TINY = 1e-300
 _BETA_TINY = 1e-30
+_QUANTILE_CONVERGENCE = 1e-13
+_QUANTILE_LIMIT = 1e150
+_QUANTILE_STEPS = 200
 
 
 def normal_cdf(z: float) -> float:
@@ -179,6 +189,81 @@ def f_sf(statistic: float, df_numerator: float, df_denominator: float) -> float:
         return 0.0
     total = d2 + d1 * f
     return _beta_i(d2 / 2.0, d1 / 2.0, d2 / total, d1 * f / total)
+
+
+def t_sf(statistic: float, df: float) -> float:
+    """Return the Student t upper tail ``P(T > statistic)``.
+
+    For a positive statistic ``t`` the tail is ``I_x(df/2, 1/2) / 2`` at
+    ``x = df / (df + t^2)``, evaluated like the F tail with the complement
+    ``t^2 / (df + t^2)`` passed directly, so that a tail far below machine
+    epsilon keeps its relative precision. The lower half of the distribution
+    follows by symmetry.
+
+    Args:
+        statistic: The observed statistic. Positive infinity gives 0 and
+            negative infinity gives 1.
+        df: Degrees of freedom, positive. They need not be an integer.
+
+    Returns:
+        The tail probability. Its relative error is below 1e-12 up to 10^4
+        degrees of freedom and below 1e-10 up to 10^6, for tails down to
+        1e-15.
+
+    Raises:
+        ConfigError: If ``df`` is not a positive finite number or the
+            statistic is NaN.
+        ArithmeticError: If the incomplete beta function fails to converge.
+    """
+    nu = _positive(df, "Student t degrees of freedom")
+    t = _statistic(statistic, "t statistic")
+    if t == 0.0:
+        return 0.5
+    if math.isinf(t):
+        return 0.0 if t > 0.0 else 1.0
+    tail = _t_upper_tail(abs(t), nu)
+    return tail if t > 0.0 else 1.0 - tail
+
+
+def t_ppf(probability: float, df: float) -> float:
+    """Return the Student t quantile ``t`` with ``P(T <= t)`` equal to ``probability``.
+
+    The quantile is found from the tail on its own side of the median, the
+    smaller of ``probability`` and ``1 - probability``, so a probability
+    near 0 or 1 is inverted as exactly as :func:`t_sf` evaluates the tail
+    and ``t_ppf(1 - p, df) == -t_ppf(p, df)`` up to rounding. Newton's method
+    runs on the logarithm of the tail, whose slope is minus the hazard rate
+    ``pdf / sf``, from the normal quantile ``z`` plus the first term of its
+    expansion for the t quantile, ``z (z^2 + 1) / (4 df)``. A bracket
+    around the root narrows with every evaluation: a step that leaves it is
+    replaced by the midpoint, or by a doubling while the upper end is unknown,
+    so a poor start costs steps and never diverges.
+
+    Args:
+        probability: A probability strictly between 0 and 1.
+        df: Degrees of freedom, positive. They need not be an integer.
+
+    Returns:
+        The quantile. Up to 10^4 degrees of freedom and for tails down to
+        1e-15, its relative error is below 1e-12 beyond 0.1 in magnitude and
+        its absolute error about 1e-13 closer to 0.
+
+    Raises:
+        ConfigError: If ``probability`` is not strictly between 0 and 1, or
+            ``df`` is not a positive finite number.
+        ArithmeticError: If the quantile exceeds 1e150, the iteration does
+            not converge, or the incomplete beta function does not.
+    """
+    p = float(probability)
+    if not 0.0 < p < 1.0:
+        raise ConfigError(
+            f"the Student t quantile needs a probability in (0, 1), got {probability!r}"
+        )
+    nu = _positive(df, "Student t degrees of freedom")
+    if p == 0.5:
+        return 0.0
+    magnitude = _t_upper_quantile(min(p, 1.0 - p), nu)
+    return -magnitude if p < 0.5 else magnitude
 
 
 def _positive(value: float, what: str) -> float:
@@ -309,3 +394,93 @@ def _beta_fraction(a: float, b: float, x: float) -> float:
     raise ArithmeticError(
         f"the incomplete beta continued fraction did not converge for a={a!r}, b={b!r}"
     )
+
+
+def _log_gamma_ratio(a: float) -> float:
+    """Return ``ln Gamma(a + 1/2) - ln Gamma(a)``.
+
+    Below 20 the difference of :func:`math.lgamma` values is accurate to about
+    1e-14. Above it the difference would lose digits in proportion to ``a``, as
+    both terms grow like ``a ln a``, so the Stirling series
+    ``ln(a)/2 - 1/(8a) + 1/(192a^3) - 1/(640a^5) + 17/(14336a^7)`` takes over,
+    its truncation error below 4e-15 from ``a = 20``.
+    """
+    if a < 20.0:
+        return math.lgamma(a + 0.5) - math.lgamma(a)
+    inverse = 1.0 / a
+    square = inverse * inverse
+    series = -inverse / 8.0 + inverse * square * (
+        1.0 / 192.0 + square * (-1.0 / 640.0 + square * (17.0 / 14336.0))
+    )
+    return 0.5 * math.log(a) + series
+
+
+def _t_upper_tail(magnitude: float, nu: float) -> float:
+    """Return ``P(T > magnitude)`` of a Student t variable, for a non-negative magnitude.
+
+    This is :func:`_beta_i` at ``b = 1/2``, halved, with its prefactor
+    assembled from quantities that keep their precision as ``nu`` grows: the
+    gamma ratio of :func:`_log_gamma_ratio` and ``ln x = -log1p(t^2 / nu)``,
+    where ``ln x`` taken from a rounded ``x`` near one would lose digits in
+    proportion to ``nu``.
+    """
+    square = magnitude * magnitude
+    total = nu + square
+    x, y = nu / total, square / total
+    if y <= 0.0:
+        return 0.5
+    if x <= 0.0:
+        return 0.0
+    a = nu / 2.0
+    front = math.exp(
+        _log_gamma_ratio(a)
+        - 0.5 * math.log(math.pi)
+        - a * math.log1p(square / nu)
+        + 0.5 * math.log(y)
+    )
+    if x < (a + 1.0) / (a + 2.5):
+        return 0.5 * front * _beta_fraction(a, 0.5, x) / a
+    return 0.5 * (1.0 - 2.0 * front * _beta_fraction(0.5, a, y))
+
+
+def _t_log_density(t: float, nu: float) -> float:
+    """Return the logarithm of the Student t density at ``t``."""
+    return (
+        _log_gamma_ratio(nu / 2.0)
+        - 0.5 * math.log(nu * math.pi)
+        - (nu + 1.0) / 2.0 * math.log1p(t * t / nu)
+    )
+
+
+def _t_upper_quantile(tail: float, nu: float) -> float:
+    """Return the ``t > 0`` whose upper tail is ``tail``, for a ``tail`` below one half.
+
+    ``low`` always has a tail above the target and ``high`` one below it. The
+    Newton step on the logarithm of the tail is ``gap * value / density``, for
+    the gap between the logarithms of the tail ``value`` at ``t`` and of the
+    target. A step that leaves the bracket, or is undefined where the tail or
+    the density underflows, gives way to a doubling or a bisection.
+    """
+    target = math.log(tail)
+    z = -normal_ppf(tail)
+    t = z + z * (z * z + 1.0) / (4.0 * nu)
+    low, high = 0.0, math.inf
+    for _ in range(_QUANTILE_STEPS):
+        value = _t_upper_tail(t, nu)
+        gap = math.log(value) - target if value > 0.0 else -math.inf
+        if gap > 0.0:
+            low = t
+        else:
+            high = t
+        density = math.exp(_t_log_density(t, nu))
+        candidate = t + gap * value / density if density > 0.0 else math.nan
+        if not low < candidate < high:
+            candidate = 2.0 * t if math.isinf(high) else 0.5 * (low + high)
+        if candidate > _QUANTILE_LIMIT:
+            raise ArithmeticError(
+                f"the Student t quantile for tail={tail!r}, df={nu!r} exceeds {_QUANTILE_LIMIT!r}"
+            )
+        if abs(candidate - t) <= _QUANTILE_CONVERGENCE * max(1.0, candidate):
+            return candidate
+        t = candidate
+    raise ArithmeticError(f"the Student t quantile did not converge for tail={tail!r}, df={nu!r}")

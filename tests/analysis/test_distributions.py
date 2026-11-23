@@ -1,10 +1,14 @@
 """Reference values for the distribution functions.
 
 The literals below were computed once with SciPy 1.18.1
-(``scipy.stats.norm``, ``chi2``, and ``f``) and pasted here; neither the
+(``scipy.stats.norm``, ``chi2``, ``f``, and ``t``) and pasted here; neither the
 library nor these tests import SciPy. Acklam's normal quantile is checked
-against its documented relative error of 1.15e-9, every other function to a
-relative error of 1e-12.
+against its documented relative error of 1.15e-9, the Student t functions to
+the relative errors their docstrings state (1e-12 up to a thousand degrees of
+freedom, 1e-10 beyond), and every other function to a relative error of 1e-12.
+The Student t checks pass ``abs=0.0`` to ``pytest.approx``: with a relative
+tolerance alone, ``approx`` keeps an absolute floor of 1e-12, which would not
+check a tail probability below it.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ from dispatchatlas.analysis.stats.distributions import (
     normal_cdf,
     normal_ppf,
     normal_sf,
+    t_ppf,
+    t_sf,
 )
 from dispatchatlas.core.errors import ConfigError
 
@@ -176,6 +182,259 @@ F_SF = [
     (3.0, 9, 1000, 0.001547163961210472),
     (20.0, 9, 1000, 4.0311469565470495e-31),
 ]
+# (t, df, scipy.stats.t.sf(t, df)). For each df, the statistics round the quantiles of the upper
+# tails 0.4, 0.1, 0.025, 1e-3, 1e-6, 1e-9, and 1e-12 to four decimals, and four more cover the
+# lower half and the centre.
+T_SF = [
+    (0.3249, 1, 0.4000056708539634),
+    (3.0777, 1, 0.09999949960022102),
+    (12.7062, 1, 0.0250000092803552),
+    (318.3088, 1, 0.001000000122476331),
+    (318309.8862, 1, 9.99999999945787e-07),
+    (318309886.1838, 1, 9.999999999999707e-10),
+    (318309886183.7907, 1, 9.999999999999998e-13),
+    (-0.3, 1, 0.5927735790777422),
+    (-2.5, 1, 0.8788810584091566),
+    (0.0, 1, 0.5),
+    (0.1, 1, 0.4682744825694465),
+    (0.2887, 2, 0.3999917309588712),
+    (1.8856, 2, 0.10000138097933563),
+    (4.3027, 2, 0.024999491204367064),
+    (22.3271, 2, 0.0010000022121881113),
+    (707.1057, 2, 1.0000000580560236e-06),
+    (22360.6797, 2, 1.0000000037080158e-09),
+    (707106.7812, 2, 9.99999999958951e-13),
+    (-0.3, 2, 0.6037571695799112),
+    (-2.5, 2, 0.9351941398892446),
+    (0.0, 2, 0.5),
+    (0.1, 2, 0.4647327192070701),
+    (0.2767, 3, 0.39998974682708166),
+    (1.6377, 3, 0.10000454431984455),
+    (3.1824, 3, 0.025000888807106294),
+    (10.2145, 3, 0.0010000091455691403),
+    (103.2995, 3, 9.999990644971393e-07),
+    (1033.1097, 3, 9.999999259629413e-10),
+    (10331.1082, 3, 1.000000012861878e-12),
+    (-0.3, 3, 0.6081183539800405),
+    (-2.5, 3, 0.9561466764959672),
+    (0.0, 3, 0.5),
+    (0.1, 3, 0.46332617440040297),
+    (0.2672, 5, 0.39999303894382554),
+    (1.4759, 5, 0.09999795365192975),
+    (2.5706, 5, 0.024999448940038974),
+    (5.8934, 5, 0.0010000223406039102),
+    (24.771, 5, 1.0000059574962295e-06),
+    (98.9372, 5, 1.000001245112849e-09),
+    (393.957, 5, 9.999994869837101e-13),
+    (-0.3, 5, 0.6118754788683627),
+    (-2.5, 5, 0.9727549503288119),
+    (0.0, 5, 0.5),
+    (0.1, 5, 0.4621150705773302),
+    (0.2602, 10, 0.3999943120702245),
+    (1.3722, 10, 0.09999753538612123),
+    (2.2281, 10, 0.02500164679323725),
+    (4.1437, 10, 0.0010000007876319994),
+    (9.752, 10, 9.99995780039102e-07),
+    (20.1447, 10, 9.999989158061077e-10),
+    (40.5321, 10, 9.99999062436628e-13),
+    (-0.3, 10, 0.6148396962171008),
+    (-2.5, 10, 0.9842765778816955),
+    (0.0, 10, 0.5),
+    (0.1, 10, 0.4611603592822041),
+    (0.2556, 30, 0.40000205217159096),
+    (1.3104, 30, 0.10000250861288364),
+    (2.0423, 30, 0.024998551186969694),
+    (3.3852, 30, 0.0009999602420901644),
+    (5.8711, 30, 1.0000479899569192e-06),
+    (8.4459, 30, 9.999057840678517e-10),
+    (11.3972, 30, 1.0000377388772922e-12),
+    (-0.3, 30, 0.6168769473578236),
+    (-2.5, 30, 0.9909421754659666),
+    (0.0, 30, 0.5),
+    (0.1, 30, 0.4605048058951356),
+    (0.2547, 49, 0.4000103777562417),
+    (1.2991, 49, 0.09999468607118349),
+    (2.0096, 49, 0.024998642848326678),
+    (3.2651, 49, 0.0009999397445967972),
+    (5.3908, 49, 9.999965077610255e-07),
+    (7.3366, 49, 1.0000447375262535e-09),
+    (9.3166, 49, 9.998532257033037e-13),
+    (-0.3, 49, 0.6172769051079856),
+    (-2.5, 49, 0.9920921055764099),
+    (0.0, 49, 0.5),
+    (0.1, 49, 0.4603761762925517),
+    (0.254, 100, 0.400008544522179),
+    (1.2901, 100, 0.09999563607713108),
+    (1.984, 100, 0.02499838689808366),
+    (3.1737, 100, 0.0010001234730717863),
+    (5.0488, 100, 1.0001287087947108e-06),
+    (6.5989, 100, 1.0001870344325266e-09),
+    (8.0258, 100, 1.0001267960129788e-12),
+    (-0.3, 100, 0.6176000598498482),
+    (-2.5, 100, 0.9929771054379614),
+    (0.0, 100, 0.5),
+    (0.1, 100, 0.4602722655479256),
+    (0.2534, 1000, 0.40000560642467964),
+    (1.2824, 1000, 0.09999977595104885),
+    (1.9623, 1000, 0.02500227702616852),
+    (3.0984, 1000, 0.0010000072323000137),
+    (4.7816, 1000, 1.0000419306238552e-06),
+    (6.0537, 1000, 9.99941721105439e-10),
+    (7.1242, 1000, 1.0001998544280968e-12),
+    (-0.3, 1000, 0.617880247916378),
+    (-2.5, 1000, 0.9937107160994546),
+    (0.0, 1000, 0.5),
+    (0.1, 1000, 0.46018218451180204),
+]
+# (t, df, scipy.stats.t.sf(t, df)) for degrees of freedom that are not integers.
+T_SF_FRACTIONAL = [
+    (0.5, 0.5, 0.37865903646471827),
+    (2.0, 0.5, 0.22275744509156564),
+    (6.0, 0.5, 0.13065468873499939),
+    (-1.5, 0.5, 0.7460491046759459),
+    (0.5, 2.5, 0.3288489599348574),
+    (2.0, 2.5, 0.07869574787898295),
+    (6.0, 2.5, 0.0076408649427614495),
+    (-1.5, 2.5, 0.8760817734568519),
+    (0.5, 7.25, 0.31594618523271595),
+    (2.0, 7.25, 0.04210554128962592),
+    (6.0, 7.25, 0.00023705664785829812),
+    (-1.5, 7.25, 0.9120786419378002),
+    (0.5, 33.3, 0.3101816364253493),
+    (2.0, 33.3, 0.026855371885523265),
+    (6.0, 33.3, 4.6599300490246786e-07),
+    (-1.5, 33.3, 0.9284816228382734),
+]
+# (t, df, scipy.stats.t.sf(t, df)) for very many degrees of freedom.
+T_SF_LARGE = [
+    (0.25, 10000, 0.4012962420014125),
+    (2.0, 10000, 0.022763630330717714),
+    (4.5, 10000, 3.4360489269392304e-06),
+    (7.0, 10000, 1.3620157803399156e-12),
+    (9.0, 10000, 1.3339216347343303e-19),
+    (-3.0, 10000, 0.9986467759050012),
+    (0.25, 100000, 0.40129393108853634),
+    (2.0, 100000, 0.022751481728753256),
+    (4.5, 100000, 3.4014958817258506e-06),
+    (7.0, 100000, 1.2878278339080033e-12),
+    (9.0, 100000, 1.147704502511574e-19),
+    (-3.0, 100000, 0.9986497695579677),
+    (0.25, 1000000, 0.4012936999942525),
+    (2.0, 1000000, 0.02275026692565962),
+    (4.5, 1000000, 3.3980552524769427e-06),
+    (7.0, 1000000, 1.280612055687031e-12),
+    (9.0, 1000000, 1.1304865167464308e-19),
+    (-3.0, 1000000, 0.9986500687292891),
+]
+# (p, df, scipy.stats.t.ppf(p, df)).
+T_PPF = [
+    (1e-12, 1, -318309886183.7907),
+    (1e-06, 1, -318309.8861827435),
+    (0.001, 1, -318.30883898555044),
+    (0.025, 1, -12.706204736174705),
+    (0.25, 1, -1.0),
+    (0.9, 1, 3.0776835371752544),
+    (0.975, 1, 12.706204736174694),
+    (0.999999, 1, 318309.88617359026),
+    (1e-12, 2, -707106.7811854869),
+    (1e-06, 2, -707.1057205259339),
+    (0.001, 2, -22.327124770119873),
+    (0.025, 2, -4.302652729749464),
+    (0.25, 2, -0.8164965809277261),
+    (0.9, 2, 1.8856180831641272),
+    (0.975, 2, 4.302652729749462),
+    (0.999999, 2, 707.1057205157672),
+    (1e-12, 3, -10331.108244292487),
+    (1e-06, 3, -103.29946778041935),
+    (0.001, 3, -10.214531852407385),
+    (0.025, 3, -3.1824463052837086),
+    (0.25, 3, -0.7648923284043444),
+    (0.9, 3, 1.637744353696209),
+    (0.975, 3, 3.1824463052837078),
+    (0.999999, 3, 103.29946777942898),
+    (1e-12, 5, -393.95695957760375),
+    (1e-06, 5, -24.771029720515948),
+    (0.001, 5, -5.893429531356009),
+    (0.025, 5, -2.5705818356363155),
+    (0.25, 5, -0.7266868438004226),
+    (0.9, 5, 1.4758840488244815),
+    (0.975, 5, 2.5705818356363146),
+    (0.999999, 5, 24.771029720372493),
+    (1e-12, 10, -40.5320961786626),
+    (1e-06, 10, -9.751995490940581),
+    (0.001, 10, -4.143700494046589),
+    (0.025, 10, -2.2281388519862753),
+    (0.25, 10, -0.6998120613124319),
+    (0.9, 10, 1.372183641110336),
+    (0.975, 10, 2.2281388519862744),
+    (0.999999, 10, 9.751995490909856),
+    (1e-12, 30, -11.397217523311413),
+    (1e-06, 30, -5.871117120418882),
+    (0.001, 30, -3.385184866829305),
+    (0.025, 30, -2.042272456301238),
+    (0.25, 30, -0.6827556933212927),
+    (0.9, 30, 1.3104150253913955),
+    (0.975, 30, 2.0422724563012378),
+    (0.999999, 30, 5.871117120408624),
+    (1e-12, 49, -9.316556804496521),
+    (1e-06, 49, -5.390798999260053),
+    (0.001, 49, -3.2650791729288593),
+    (0.025, 49, -2.0095752371292397),
+    (0.25, 49, -0.6795296452626508),
+    (0.9, 49, 1.2990687847477498),
+    (0.975, 49, 2.0095752371292392),
+    (0.999999, 49, 5.390798999251814),
+    (1e-12, 100, -8.02582559449325),
+    (1e-06, 100, -5.048830877228346),
+    (0.001, 100, -3.173739493738783),
+    (0.025, 100, -1.983971518523552),
+    (0.25, 100, -0.6769510430114717),
+    (0.9, 100, 1.290074761346516),
+    (0.975, 100, 1.983971518523552),
+    (0.999999, 100, 5.048830877221446),
+    (1e-12, 1000, -7.124228925314409),
+    (1e-06, 1000, -4.781608620458351),
+    (0.001, 1000, -3.0984021639129233),
+    (0.025, 1000, -1.9623390808264087),
+    (0.25, 1000, -0.6747351646070093),
+    (0.9, 1000, 1.2823987214609247),
+    (0.975, 1000, 1.9623390808264083),
+    (0.999999, 1000, 4.781608620452439),
+]
+# (p, df, scipy.stats.t.ppf(p, df)) for degrees of freedom that are not integers.
+T_PPF_FRACTIONAL = [
+    (1e-09, 0.5, -1.0284911563163397e17),
+    (0.05, 0.5, -41.13600009287826),
+    (0.3, 0.5, -1.0095258786071655),
+    (0.95, 0.5, 41.13600009287819),
+    (1e-09, 2.5, -3489.583395369981),
+    (0.05, 2.5, -2.5582186141359364),
+    (0.3, 2.5, -0.597307738252318),
+    (0.95, 2.5, 2.5582186141359355),
+    (1e-09, 7.25, -35.81102082151911),
+    (0.05, 7.25, -1.8847957180841028),
+    (0.3, 7.25, -0.5482311688374483),
+    (0.95, 7.25, 1.8847957180841022),
+    (1e-09, 33.3, -8.139556476972048),
+    (0.05, 33.3, -1.69192018167795),
+    (0.3, 33.3, -0.5294580795134494),
+    (0.95, 33.3, 1.6919201816779497),
+]
+# (p, df, scipy.stats.t.ppf(p, df)) for very many degrees of freedom.
+T_PPF_LARGE = [
+    (1e-12, 10000, -7.0433716020557755),
+    (0.001, 10000, -3.091047516030612),
+    (0.05, 10000, -1.6450060180692432),
+    (0.975, 10000, 1.960201239890626),
+    (1e-12, 100000, -7.035371742393576),
+    (0.001, 100000, -3.090313809427238),
+    (0.05, 100000, -1.6448688647849703),
+    (0.975, 100000, 1.9599877075346095),
+    (1e-12, 1000000, -7.034572608411255),
+    (0.001, 1000000, -3.09024045631652),
+    (0.05, 1000000, -1.6448551507220406),
+    (0.975, 1000000, 1.9599663568141068),
+]
 
 
 @pytest.mark.parametrize(("z", "expected"), NORMAL_CDF)
@@ -250,3 +509,122 @@ def test_non_converging_expansions_raise_instead_of_returning_a_partial_sum(monk
         chi2_sf(40.0, 4)
     with pytest.raises(ArithmeticError, match="did not converge"):
         f_sf(1.5, 5, 30)
+
+
+# ---------------------------------------------------------------- Student t
+
+
+@pytest.mark.parametrize(("t", "df", "expected"), [*T_SF, *T_SF_FRACTIONAL])
+def test_t_sf_matches_scipy_in_both_tails_down_to_1e_12(t, df, expected):
+    assert t_sf(t, df) == pytest.approx(expected, rel=1e-12, abs=0.0)
+
+
+@pytest.mark.parametrize(("t", "df", "expected"), T_SF_LARGE)
+def test_t_sf_keeps_its_precision_for_very_many_degrees_of_freedom(t, df, expected):
+    # The continued fraction takes its argument rounded near one, so the error grows with df.
+    assert t_sf(t, df) == pytest.approx(expected, rel=1e-10, abs=0.0)
+
+
+@pytest.mark.parametrize(("p", "df", "expected"), [*T_PPF, *T_PPF_FRACTIONAL])
+def test_t_ppf_matches_scipy_in_the_tails_and_the_centre(p, df, expected):
+    assert t_ppf(p, df) == pytest.approx(expected, rel=1e-11, abs=0.0)
+
+
+@pytest.mark.parametrize(("p", "df", "expected"), T_PPF_LARGE)
+def test_t_ppf_for_very_many_degrees_of_freedom(p, df, expected):
+    assert t_ppf(p, df) == pytest.approx(expected, rel=1e-10, abs=0.0)
+
+
+def test_t_sf_has_the_closed_forms_of_one_and_two_degrees_of_freedom():
+    # One degree of freedom is the Cauchy distribution; with two, P(T > t) = 1 / (s (s + t))
+    # for s = sqrt(2 + t^2). Both forms keep their precision for large t.
+    for t in (0.1, 0.7, 1.0, 3.0, 12.0, 250.0, 1e5, 1e9):
+        s = math.sqrt(2.0 + t * t)
+        assert t_sf(t, 1) == pytest.approx(math.atan(1.0 / t) / math.pi, rel=1e-13, abs=0.0)
+        assert t_sf(t, 2) == pytest.approx(1.0 / (s * (s + t)), rel=1e-13, abs=0.0)
+        assert t_sf(-t, 1) == pytest.approx(1.0 - math.atan(1.0 / t) / math.pi, rel=1e-13, abs=0.0)
+
+
+def test_t_ppf_has_the_closed_forms_of_one_and_two_degrees_of_freedom():
+    for p in (1e-12, 1e-9, 1e-6, 1e-3, 0.05, 0.3):
+        cauchy = -1.0 / math.tan(math.pi * p)
+        two = -(1.0 - 2.0 * p) / math.sqrt(2.0 * p * (1.0 - p))
+        assert t_ppf(p, 1) == pytest.approx(cauchy, rel=1e-12, abs=0.0)
+        assert t_ppf(p, 2) == pytest.approx(two, rel=1e-12, abs=0.0)
+
+
+@pytest.mark.parametrize("df", [1, 5, 49, 1000])
+def test_t_sf_squares_into_the_f_tail(df):
+    # T^2 has the F distribution with 1 and df degrees of freedom: P(|T| > t) = P(F > t^2).
+    for t in (0.1, 1.0, 2.5, 6.0, 12.0):
+        assert 2.0 * t_sf(t, df) == pytest.approx(f_sf(t * t, 1, df), rel=1e-10, abs=0.0)
+
+
+def test_t_sf_is_symmetric_and_reaches_its_limits():
+    assert t_sf(0.0, 7) == 0.5
+    assert t_sf(math.inf, 7) == 0.0
+    assert t_sf(-math.inf, 7) == 1.0
+    for t in (0.2, 1.3, 4.0, 11.0):
+        assert t_sf(-t, 7) == 1.0 - t_sf(t, 7)
+    # A statistic whose square overflows has a tail below any float of interest.
+    assert t_sf(1e200, 3) == 0.0
+    assert t_sf(-1e200, 3) == 1.0
+
+
+def test_t_ppf_is_zero_at_one_half_and_odd_about_it():
+    assert t_ppf(0.5, 4) == 0.0
+    # Probabilities such as 2^-k and 1 - 2^-k are exact, so both sides invert the same tail.
+    for k in (3, 10, 20, 40):
+        p = 2.0**-k
+        assert t_ppf(1.0 - p, 6) == -t_ppf(p, 6)
+        assert t_ppf(p, 6) < 0.0
+
+
+@pytest.mark.parametrize("df", [1, 2.5, 5, 30, 49, 1000])
+def test_t_ppf_inverts_the_tail_down_to_1e_12(df):
+    for p in (1e-12, 1e-9, 1e-6, 1e-3, 0.05, 0.3):
+        assert t_sf(-t_ppf(p, df), df) == pytest.approx(p, rel=1e-11, abs=0.0)
+    for k in (2, 5, 20, 40):
+        tail = 2.0**-k
+        assert t_sf(t_ppf(1.0 - tail, df), df) == pytest.approx(tail, rel=1e-11, abs=0.0)
+
+
+def test_t_functions_increase_and_decrease_monotonically():
+    probabilities = [1e-10, 1e-6, 0.001, 0.1, 0.4, 0.5, 0.6, 0.9, 0.999, 1.0 - 1e-6]
+    quantiles = [t_ppf(p, 5) for p in probabilities]
+    assert all(a < b for a, b in pairwise(quantiles))
+    grid = [0.25 * step - 30.0 for step in range(240)]
+    tails = [t_sf(t, 4) for t in grid]
+    assert all(a >= b for a, b in pairwise(tails))
+
+
+@pytest.mark.parametrize("df", [0, -1.0, math.inf, math.nan, True, "3"])
+def test_t_functions_refuse_invalid_degrees_of_freedom(df):
+    with pytest.raises(ConfigError, match="degrees of freedom"):
+        t_sf(1.0, df)
+    with pytest.raises(ConfigError, match="degrees of freedom"):
+        t_ppf(0.9, df)
+
+
+def test_t_functions_refuse_a_nan_statistic_and_a_probability_outside_the_open_interval():
+    with pytest.raises(ConfigError, match="statistic"):
+        t_sf(math.nan, 5)
+    for probability in (0.0, 1.0, -0.1, 1.5, math.nan):
+        with pytest.raises(ConfigError, match="probability"):
+            t_ppf(probability, 5)
+
+
+def test_t_expansions_and_quantiles_raise_instead_of_returning_a_wrong_value(monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(distributions, "_cap", lambda *shapes: 2)
+        with pytest.raises(ArithmeticError, match="did not converge"):
+            t_sf(0.5, 5)
+        with pytest.raises(ArithmeticError, match="did not converge"):
+            t_sf(6.0, 5)
+    with monkeypatch.context() as patch:
+        patch.setattr(distributions, "_QUANTILE_STEPS", 1)
+        with pytest.raises(ArithmeticError, match="did not converge"):
+            t_ppf(1e-9, 3)
+    # With one degree of freedom the quantile of a tail of 1e-300 is about 3e299, past the limit.
+    with pytest.raises(ArithmeticError, match="exceeds"):
+        t_ppf(1e-300, 1)

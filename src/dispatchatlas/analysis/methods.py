@@ -81,6 +81,17 @@ _METHODS: tuple[Method, ...] = (
         f"{_STATS}.nonparametric.wilcoxon_signed_rank",
     ),
     Method(
+        "wilcoxon-pratt-zeros",
+        "Pratt's treatment of zero differences",
+        "test",
+        "Ranks the magnitudes of the paired differences with the zeros included, which gives "
+        "the zeros the lowest ranks, and drops the zeros' ranks from the signed-rank sums; the "
+        "p-value comes from the signs of the non-zero differences given their ranks.",
+        (_PAIRED, "the differences are symmetric about their median"),
+        ("pratt1959remarks", "wilcoxon1945individual"),
+        f"{_STATS}.nonparametric.wilcoxon_signed_rank",
+    ),
+    Method(
         "sign-test",
         "Sign test",
         "test",
@@ -117,6 +128,44 @@ _METHODS: tuple[Method, ...] = (
         ("the assumptions of the Friedman test",),
         ("iman1980approximations", "demsar2006statistical"),
         f"{_STATS}.nonparametric.iman_davenport",
+    ),
+    Method(
+        "tost-paired-t",
+        "Two one-sided paired t tests",
+        "test",
+        "Shows that the mean paired difference lies inside an equivalence margin by rejecting, "
+        "with one-sided paired t tests, that it is at most the lower bound and that it is at "
+        "least the upper bound, and reports the larger of the two p-values.",
+        (
+            _PAIRED,
+            "approximately normal differences, or enough pairs for their mean to be normal",
+            "a margin fixed before the data are seen",
+        ),
+        ("schuirmann1987comparison", "lakens2017equivalence"),
+        f"{_STATS}.equivalence.tost_paired_t",
+    ),
+    Method(
+        "tost-signed-rank",
+        "Two one-sided signed-rank tests",
+        "test",
+        "Shows that the paired differences are centred inside an equivalence margin by "
+        "rejecting, with one-sided Wilcoxon signed-rank tests of the differences shifted by "
+        "each bound, that the centre is at most the lower bound and that it is at least the "
+        "upper bound, and reports the larger of the two p-values. A difference equal to a "
+        "bound is a zero, which Pratt's treatment ranks and then drops from the sums.",
+        (
+            _PAIRED,
+            "the differences are symmetric about their median",
+            "a margin fixed before the data are seen",
+        ),
+        (
+            "schuirmann1987comparison",
+            "lakens2017equivalence",
+            "wilcoxon1945individual",
+            "pratt1959remarks",
+            "conover1999practical",
+        ),
+        f"{_STATS}.equivalence.tost_signed_rank",
     ),
     Method(
         "nemenyi",
@@ -326,6 +375,16 @@ _METHODS: tuple[Method, ...] = (
         (),
         ("carrasco2020recent",),
         "dispatchatlas.analysis.tables.check_p_values",
+    ),
+    Method(
+        "equivalence-report",
+        "Equivalence and difference outcomes",
+        "reporting",
+        "Reads an equivalence test and a test of a difference at one level together as one of "
+        "four outcomes: equivalent, different, equivalent and different, or inconclusive.",
+        ("both tests ask about the same paired differences, at the same level",),
+        ("lakens2017equivalence",),
+        f"{_STATS}.equivalence.equivalence_report",
     ),
 )
 

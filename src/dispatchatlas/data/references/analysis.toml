@@ -176,6 +176,13 @@ title = "On a test of whether one of two random variables is stochastically larg
 venue = "The Annals of Mathematical Statistics 18(1):50-60"
 doi = "10.1214/aoms/1177730491"
 
+[pratt1959remarks]
+authors = "J. W. Pratt"
+year = 1959
+title = "Remarks on zeros and ties in the Wilcoxon signed rank procedures"
+venue = "Journal of the American Statistical Association 54(287):655-667"
+doi = "10.1080/01621459.1959.10501526"
+
 [romano2006appropriate]
 authors = "J. Romano, J. D. Kromrey, J. Coraggio and J. Skowronek"
 year = 2006
