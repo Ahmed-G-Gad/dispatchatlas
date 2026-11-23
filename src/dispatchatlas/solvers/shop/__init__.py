@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dispatchatlas.core.solver import Solver
 from dispatchatlas.solvers.registry import SolverRegistry
 from dispatchatlas.solvers.shop.annealing import ShopAnnealing
+from dispatchatlas.solvers.shop.brkga import ShopBrkga
 from dispatchatlas.solvers.shop.genetic import ShopSteadyStateGa
 from dispatchatlas.solvers.shop.insertion import WernerWinklerInsertion
 from dispatchatlas.solvers.shop.rules import GtMostWorkRemaining, GtShortestProcessingTime
@@ -37,6 +38,7 @@ _SOLVERS: tuple[Callable[..., Solver], ...] = (
     GtMostWorkRemaining,
     WernerWinklerInsertion,
     ShopTabuSearch,
+    ShopBrkga,
 )
 
 

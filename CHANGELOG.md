@@ -446,3 +446,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the held-back runs stay pending for the next session.
 - `run_calls` locks its rows file by the exclusive creation of a lock file
   where `flock` is not implemented, as the campaign store does.
+- A job-shop biased random-key genetic algorithm (`shop-brkga`): random-key
+  chromosomes decoded by a builder, the active one by default; each schedule
+  improved by `critical_block_descent`; and `adjust_keys`, which rearranges the
+  keys to sort into the improved schedule's job sequence (`start_sequence`), so
+  that the semi-active builder rebuilds that schedule exactly. A chromosome's
+  value is its improved schedule's, since the active builder may rebuild a
+  longer one.
