@@ -26,3 +26,5 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
 ::: dispatchatlas.solvers.shop.sampling
 
 ::: dispatchatlas.solvers.shop.annealing
+
+::: dispatchatlas.solvers.shop.genetic

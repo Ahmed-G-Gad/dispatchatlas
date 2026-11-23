@@ -399,3 +399,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IteratedRacing(space, budget, seed=).tune(instances, run_batch)`, elitist
   iterated racing with its budget counted in runs and its published defaults,
   which returns every experiment as a record.
+- A job-shop steady-state genetic algorithm (`shop-steady-state-ga`), one
+  solver whose control logic runs unchanged on random keys or job sequences,
+  with one builder: parents by tournament, the fitter first, and a child that
+  replaces the worst member when it is no worse than it.
