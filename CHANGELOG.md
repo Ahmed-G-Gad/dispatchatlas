@@ -345,3 +345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with random keys sorted into a job sequence by `sequence_from_keys`; and the
   disjunctive graph of a schedule: machine orders, heads and tails, and
   critical blocks.
+- Equivalence statistics: `t_sf` and `t_ppf`; `wilcoxon_signed_rank` takes
+  `alternative` and `zero_method`, Wilcoxon's or Pratt's treatment of zeros,
+  and keeps every two-sided result as it was; `tost_paired_t`,
+  `tost_signed_rank` and `equivalence_report` test equivalence within a
+  margin by two one-sided tests.
