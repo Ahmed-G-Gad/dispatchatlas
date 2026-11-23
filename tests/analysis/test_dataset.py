@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from dispatchatlas.analysis.dataset import load_dataset
+from dispatchatlas.analysis.dataset import Run, load_dataset
 from dispatchatlas.campaigns import read_plan, read_runs
+from dispatchatlas.core import StopReason
 from dispatchatlas.core.errors import ConfigError, SerializationError
 from tests.analysis.analysis_data import campaign_dir, make_dataset
 
@@ -84,3 +86,41 @@ def test_statuses_of_synthetic_runs() -> None:
 def test_an_unreadable_directory_raises(tmp_path: Path) -> None:
     with pytest.raises(SerializationError, match=r"plan\.json"):
         load_dataset(tmp_path)
+
+
+def _stopped(item: Run, reason: StopReason, cap: float | None) -> Run:
+    """The run as if its solver had stopped for ``reason`` under a cap of ``cap`` seconds."""
+    record = item.record
+    assert record is not None
+    return replace(
+        item,
+        record=replace(
+            record,
+            outcome=replace(record.outcome, stop_reason=reason),
+            provenance=replace(record.provenance, time_cap=cap),
+        ),
+    )
+
+
+def test_a_run_is_censored_when_it_stopped_on_a_time_cap() -> None:
+    dataset = make_dataset({"a": {"p1": [1.0, "failed", None]}})
+    done, failed, missing = dataset.runs
+    assert [done.censored, failed.censored, missing.censored] == [False, False, False]
+    assert done.outcome is not None
+    assert done.outcome.evaluations == 10
+    assert done.outcome.stop_reason is StopReason.EVALUATION_LIMIT
+    capped = {
+        # The time limit of a protocol is no cap, and a cap that did not stop the run did nothing.
+        (None, StopReason.TIME_LIMIT): False,
+        (None, StopReason.EVALUATION_LIMIT): False,
+        (5.0, StopReason.EVALUATION_LIMIT): False,
+        (5.0, StopReason.TARGET_REACHED): False,
+        (5.0, StopReason.TIME_LIMIT): True,
+    }
+    for (cap, reason), censored in capped.items():
+        item = _stopped(done, reason, cap)
+        assert item.censored is censored
+        # A censored run is still a succeeded run, and its stop and evaluations are on record.
+        assert item.succeeded
+        assert item.outcome is not None
+        assert item.outcome.stop_reason is reason

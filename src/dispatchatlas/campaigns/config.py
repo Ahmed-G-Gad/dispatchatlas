@@ -5,7 +5,8 @@ separately, how to execute it:
 
 - ``instances``: one or more instance sources, see :data:`InstanceSource`;
 - ``solvers``: registered solver ids with parameter values. A label tells two
-  parameter settings of one solver apart;
+  parameter settings of one solver apart, and time caps bound how long its
+  runs may take;
 - ``protocols``: named stop criteria. Every solver runs under every protocol
   with the same criteria, so each protocol is one fair comparison;
 - ``replicates``: runs per stochastic solver, problem, and protocol.
@@ -254,6 +255,26 @@ def _texts(values: object, what: str) -> tuple[str, ...]:
     return items
 
 
+def _time_caps(value: object, solver: str) -> Mapping[str, Mapping[str, float]]:
+    """Return the time caps of a solver as read-only tables of positive seconds."""
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"the time caps of solver {solver!r} must be a table")
+    frozen: dict[str, Mapping[str, float]] = {}
+    for protocol, caps in value.items():
+        _check_text(protocol, f"a protocol name in the time caps of solver {solver!r}")
+        where = f"the time caps of solver {solver!r} under protocol {protocol!r}"
+        if not isinstance(caps, Mapping) or not caps:
+            raise ConfigError(f"{where} must be a table of problem ids and seconds, not empty")
+        seconds: dict[str, float] = {}
+        for problem, cap in caps.items():
+            _check_text(problem, f"a problem id in {where}")
+            seconds[problem] = _check_number(cap, f"the cap on problem {problem!r} in {where}", 0.0)
+            if not seconds[problem] > 0.0:
+                raise ConfigError(f"the cap on problem {problem!r} in {where} must be positive")
+        frozen[protocol] = MappingProxyType(seconds)
+    return MappingProxyType(frozen)
+
+
 # ------------------------------------------------------------------- sources
 
 
@@ -439,12 +460,22 @@ class SolverSpec:
             stochastic solver, and for one declared deterministic a single
             run, or every replicate under a time limit when the campaign
             sets ``replicate_timed``.
+        time_caps: Seconds a run of this solver may take, by protocol name
+            and then problem id. A cap is the run's time limit when the
+            protocol sets none or a longer one, and a run that reaches it
+            stops for its time limit and is recorded with the cap
+            (:attr:`~dispatchatlas.campaigns.records.Provenance.time_cap`). The
+            process backend also kills, as for any time limit, a run that
+            does not stop ``timeout_factor * cap + grace`` seconds after its
+            solve begins. A run without an entry has no cap. Empty for a
+            solver without caps.
     """
 
     id: str
     label: str | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict, hash=False)
     replicates: int | None = None
+    time_caps: Mapping[str, Mapping[str, float]] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
         _check_text(self.id, "a solver id")
@@ -454,20 +485,46 @@ class SolverSpec:
         object.__setattr__(self, "parameters", _frozen_table(self.parameters, "parameters"))
         if self.replicates is not None:
             _check_integer(self.replicates, f"the replicates of solver {self.name!r}", 1)
+        object.__setattr__(self, "time_caps", _time_caps(self.time_caps, self.name))
 
     @property
     def name(self) -> str:
         """The label, or the id when there is none. Unique within a campaign."""
         return self.label if self.label is not None else self.id
 
+    def time_cap(self, protocol: str, problem: str) -> float | None:
+        """Return the cap on the runs under a protocol on a problem, or ``None`` without one."""
+        return self.time_caps.get(protocol, {}).get(problem)
+
+    def capped(self, protocol: Protocol, problem: str) -> tuple[StopCriteria, float | None]:
+        """Return the stop criteria a run executes under, and the cap that set their time limit.
+
+        Args:
+            protocol: The protocol of the run.
+            problem: Id of the problem of the run.
+
+        Returns:
+            The protocol's criteria with the cap as their time limit, and the
+            cap, when there is one and the protocol sets no time limit or a
+            longer one. Otherwise the protocol's criteria and ``None``.
+        """
+        cap = self.time_cap(protocol.name, problem)
+        stop = protocol.stop
+        if cap is None or (stop.time_limit is not None and stop.time_limit <= cap):
+            return stop, None
+        return replace(stop, time_limit=cap), cap
+
     def to_dict(self) -> dict[str, Any]:
         """Return the specification as a JSON-ready dictionary.
 
-        ``replicates`` is part of it only when the specification sets one.
+        ``replicates`` and ``time_caps`` are part of it only when the
+        specification sets them.
         """
         document = {"id": self.id, "label": self.label, "parameters": jsonable(self.parameters)}
         if self.replicates is not None:
             document["replicates"] = self.replicates
+        if self.time_caps:
+            document["time_caps"] = jsonable(self.time_caps)
         return document
 
     def arguments(self) -> dict[str, Any]:
@@ -523,9 +580,11 @@ class Execution:
         workers: Worker processes, or ``"auto"`` for the processors the
             calling process may use minus :data:`CPU_RESERVE`. Must be 1 for
             the sequential backend.
-        timeout_factor: A run whose protocol sets ``time_limit`` is killed
+        timeout_factor: A run whose protocol sets ``time_limit``, or whose
+            solver caps it with ``time_caps``, is killed
             ``timeout_factor * time_limit + grace`` seconds after its solve
-            begins. At least 1. ``None`` disables hard limits.
+            begins, the limit being the cap where a cap is the time limit.
+            At least 1. ``None`` disables hard limits.
         grace: Seconds added to the hard limit.
         retries: Further attempts for a run whose failure may be transient.
         record_schedules: Store every run's best schedule in its record. Its
@@ -796,9 +855,9 @@ class Campaign:
         ``instances`` without file-system locations, ``solvers``,
         ``protocols``, ``replicates``, and ``objectives``, and the optional
         settings that are set: ``replicate_timed`` when it is true,
-        ``seed_namespace`` when there is one, a solver's own ``replicates``,
-        and a protocol's ``schedule`` when it is not the default. A setting
-        left at its default is absent from the identity.
+        ``seed_namespace`` when there is one, a solver's own ``replicates``
+        and ``time_caps``, and a protocol's ``schedule`` when it is not the
+        default. A setting left at its default is absent from the identity.
         """
         identity: dict[str, Any] = {
             "seed": self.seed,

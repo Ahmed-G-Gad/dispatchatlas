@@ -41,8 +41,10 @@ Example::
 
 An instance source is one of ``{family, seeds, parameters?}``,
 ``{suite, instances, directory?}``, ``{catalog, seed?}``, ``{directory}``,
-or ``{file, format?}``. A solver is ``{id, label?, parameters?, replicates?}``.
-A protocol's ``stop`` table takes the fields of
+or ``{file, format?}``. A solver is
+``{id, label?, parameters?, replicates?, time_caps?}``; its ``time_caps`` hold,
+for each protocol name, a table of seconds by problem id. A protocol's
+``stop`` table takes the fields of
 :class:`~dispatchatlas.core.solver.StopCriteria`. The optional top-level keys
 are ``replicates``, ``replicate_timed``, ``seed_namespace``, ``objectives``,
 ``execution`` (the fields of
@@ -323,7 +325,7 @@ def _source(value: object, where: str) -> InstanceSource:
 
 
 def _solver(value: object, where: str) -> SolverSpec:
-    table = _Table(value, where, ("id", "label", "parameters", "replicates"))
+    table = _Table(value, where, ("id", "label", "parameters", "replicates", "time_caps"))
     solver_id = _string(table.required("id"), f"{where}.id")
     label = table.get("label")
     name = None if label is _ABSENT else _string(label, f"{where}.label")
@@ -331,7 +333,20 @@ def _solver(value: object, where: str) -> SolverSpec:
     options = {} if parameters is _ABSENT else _json_table(parameters, f"{where}.parameters")
     replicates = table.get("replicates")
     count = None if replicates is _ABSENT else _integer(replicates, f"{where}.replicates")
-    return _build(where, lambda: SolverSpec(solver_id, name, options, count))
+    caps = table.get("time_caps")
+    time_caps = {} if caps is _ABSENT else _time_caps(caps, f"{where}.time_caps")
+    return _build(where, lambda: SolverSpec(solver_id, name, options, count, time_caps))
+
+
+def _time_caps(value: object, where: str) -> dict[str, dict[str, float]]:
+    """Read the tables of seconds by problem id, by protocol name."""
+    caps: dict[str, dict[str, float]] = {}
+    for protocol, table in _json_table(value, where).items():
+        caps[protocol] = {
+            problem: _number(cap, f"{where}.{protocol}.{problem}")
+            for problem, cap in _json_table(table, f"{where}.{protocol}").items()
+        }
+    return caps
 
 
 def _protocol(value: object, where: str) -> Protocol:

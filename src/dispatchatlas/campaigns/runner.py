@@ -409,13 +409,16 @@ def tasks_for(
         attempt: The attempt number of a run, given its id.
 
     Returns:
-        One task per run, each with a fresh solver instance.
+        One task per run, each with a fresh solver instance. A run under a
+        time cap of its solver (:attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps`)
+        has the cap as its time limit, and its hard limit follows from it.
     """
     digests = {problem.id: problem.digest for problem in prepared.plan.problems}
     tasks: list[Task] = []
     for item in runs:
         spec = prepared.campaign.solver(item.solver)
         protocol = prepared.campaign.protocol(item.protocol)
+        stop, _ = spec.capped(protocol, item.problem)
         tasks.append(
             Task(
                 run_id=item.run_id,
@@ -423,9 +426,9 @@ def tasks_for(
                 problem=prepared.problems[item.problem],
                 digest=digests[item.problem],
                 solver=prepared.registry.create(spec.id, **spec.arguments()),
-                stop=protocol.stop,
+                stop=stop,
                 seed=item.seed,
-                hard_limit=hard_limit(protocol.stop, execution),
+                hard_limit=hard_limit(stop, execution),
                 record_schedule=execution.record_schedules,
             )
         )
@@ -505,6 +508,10 @@ class _Books:
         plan = self.prepared.plan
         planned = plan.run(result.run_id)
         measured = result.measurement
+        campaign = self.prepared.campaign
+        _, cap = campaign.solver(planned.solver).capped(
+            campaign.protocol(planned.protocol), planned.problem
+        )
         provenance = Provenance(
             attempt=result.attempt,
             session=self.session,
@@ -519,6 +526,7 @@ class _Books:
             concurrent=measured.concurrent,
             waited_seconds=measured.waited_seconds,
             shared_clock=measured.shared_clock,
+            time_cap=cap,
         )
         identity: dict[str, Any] = {
             "run_id": planned.run_id,

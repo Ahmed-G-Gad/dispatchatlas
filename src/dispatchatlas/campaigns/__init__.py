@@ -18,6 +18,8 @@ The modules, in the order a campaign meets them:
   plan, checked by :mod:`~dispatchatlas.campaigns.compatibility` and
   :mod:`~dispatchatlas.campaigns.fairness`;
 - :mod:`~dispatchatlas.campaigns.estimation`: run counts and time bounds;
+- :mod:`~dispatchatlas.campaigns.costs`: seconds per evaluation measured on run
+  records, and the budget a campaign can afford;
 - :mod:`~dispatchatlas.campaigns.runner`, :mod:`~dispatchatlas.campaigns.backends`,
   :mod:`~dispatchatlas.campaigns.execution`,
   :mod:`~dispatchatlas.campaigns.timeout`, and
@@ -45,6 +47,7 @@ from dispatchatlas.campaigns.config import (
     SolverSpec,
     SuiteSource,
 )
+from dispatchatlas.campaigns.costs import Cost, CostModel, first_fitting, largest_budget
 from dispatchatlas.campaigns.environment import capture_environment
 from dispatchatlas.campaigns.estimation import Estimate, estimate
 from dispatchatlas.campaigns.fairness import Fairness
@@ -89,6 +92,8 @@ __all__ = [
     "Caveat",
     "CheckReport",
     "Compatibility",
+    "Cost",
+    "CostModel",
     "DirectorySource",
     "Estimate",
     "Exclusion",
@@ -121,6 +126,8 @@ __all__ = [
     "check_campaign",
     "check_compatibility",
     "estimate",
+    "first_fitting",
+    "largest_budget",
     "load_campaign",
     "loads_campaign",
     "plan",

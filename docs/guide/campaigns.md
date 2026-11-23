@@ -76,6 +76,15 @@ planned. `replicates`, an integer of at least 1, is the number of runs of
 this solver per problem and protocol, in place of the count the campaign
 would give it (see [Planning](#planning)).
 
+An optional `time_caps` limits how long runs of the solver may take. It is a
+table of tables of seconds above zero, by protocol name and then problem id.
+A cap is the time limit of its run when the protocol sets none or a longer
+one, so a run that reaches it stops for its time limit, and its record states
+the cap. The process backend also kills a run that does not stop
+`timeout_factor * cap + grace` seconds after its solve begins, as for any
+time limit. A cap must name a protocol and a problem of the campaign, and a
+run without an entry has no cap.
+
 A protocol has a `name` and a `stop` table with the fields of `StopCriteria`:
 `time_limit`, `max_evaluations`, `max_iterations`, `target`, `patience`, and
 `schedule`. Every protocol must set a time, evaluation, or iteration limit.
@@ -102,7 +111,8 @@ The **config hash** identifies an experiment: the SHA-256 digest of the
 canonical JSON of the fields that determine the results, `seed`, `instances`,
 `solvers`, `protocols`, `replicates`, and `objectives`, as written, so
 reordering a list changes it too. The optional settings `replicate_timed`,
-`seed_namespace`, a solver's `replicates`, and a protocol's `schedule` enter
+`seed_namespace`, a solver's `replicates` and `time_caps`, and a protocol's
+`schedule` enter
 it only when they are set to other than their default, so a campaign file
 that sets none of them has the config hash, the seeds, and the run ids it has
 without them. The campaign `id` only names the directory,
@@ -240,7 +250,19 @@ long their solves can take. The solve of a run whose protocol sets
 `time_limit` takes at most its hard limit, and every attempt may take that
 long; the time a worker needs to begin a solve is not counted. A run bounded
 only by evaluations or iterations has no duration bound, so those runs are
-counted apart. With `--output`, runs already completed there are left out.
+counted apart, unless a time cap of its solver gives it a time limit. With
+`--output`, runs already completed there are left out.
+
+From Python, `estimate(campaign, costs=model)` also projects the seconds the
+remaining runs take. A `CostModel`, from `dispatchatlas.campaigns`, holds the
+mean seconds per evaluation of each group of run records, with the number of
+runs behind it, and the function that groups runs by solver name and problem
+id. A run is projected at its evaluation limit times the cost of its group, at
+most its time limit. The model fits no curve and refuses a group it did not
+measure. `first_fitting` takes candidate configurations in the order of
+preference and returns the first whose projected cost, times a factor, is at
+most a limit, and `largest_budget` does so over budget levels, the largest
+first.
 
 ## Execution
 
@@ -303,7 +325,8 @@ of one campaign.
   protocol with a time limit compares solvers whose `threads` differ, the
   plan keeps a note of it in its fairness assessment and stays fair.
 - **Hard time limits.** Stop criteria are cooperative, so the process
-  backend gives every run whose protocol sets `time_limit` a hard limit of
+  backend gives every run whose protocol sets `time_limit`, or whose solver
+  entry caps it with `time_caps`, a hard limit of
   `timeout_factor * time_limit + grace` seconds, counted from the instant its
   worker states as the start of the solve. What comes before that instant is
   not charged to the run: the start of the worker's interpreter and the
@@ -476,7 +499,9 @@ indentation, ASCII text, and a final newline.
   solver, and whether the solver's clocks started at the instant the wall
   time counts from (`shared_clock`, true for an attempt whose solver
   returned or raised, null for one the engine ended or that never reached
-  its solver). A record that lacks one of the four reads as null for it. The CPU
+  its solver). A record that lacks one of the four reads as null for it. An
+  attempt that ran under a time cap also states it (`time_cap`, in seconds);
+  the key is absent from the provenance of an attempt without one. The CPU
   seconds are those of the executing process, with the threads the solver
   started, and on POSIX systems those of the child processes it started and
   waited for; on Windows the time of a child process, such as a backend
@@ -760,7 +785,8 @@ not:
 - **The budgets.** Under each protocol, the solvers whose completed runs
   took more wall time than the time limit and the tolerance allow, with the
   largest ratio (`--overrun-tolerance`, by default the margin of the
-  engine's note on a run); hard limits that differ among the attempts; and
+  engine's note on a run); hard limits that differ among the attempts, those
+  of runs under different time caps being no difference; and
   stop reasons that differ among the runs of the iterative solvers.
 - **The sessions.** The sessions that executed the attempts the directory
   counts are compared with each other. Each field that differs is named

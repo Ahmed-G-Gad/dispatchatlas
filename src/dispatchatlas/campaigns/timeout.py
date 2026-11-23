@@ -2,8 +2,10 @@
 
 Stop criteria are cooperative: a solver checks them itself, and one that
 does not, or that is stuck inside a native extension, keeps running. The
-process backend therefore gives every run whose protocol sets ``time_limit``
-a hard limit of ``timeout_factor * time_limit + grace`` seconds, counted from
+process backend therefore gives every run whose stop criteria set
+``time_limit``, the protocol's or the cap of its solver
+(:attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps`), a hard limit of
+``timeout_factor * time_limit + grace`` seconds, counted from
 the instant its worker states as the start of the solve. When the limit
 passes, the supervising process kills the worker and records a terminal
 timeout failure: the same instance, seed, and budget would overrun again. The
@@ -62,12 +64,13 @@ def hard_limit(stop: StopCriteria, execution: Execution) -> float | None:
     """Return the hard limit of a run in seconds.
 
     Args:
-        stop: Stop criteria of the run's protocol.
+        stop: Stop criteria the run executes under: its protocol's, with the
+            time cap of its solver as the time limit where one applies.
         execution: The campaign's execution settings.
 
     Returns:
         ``timeout_factor * time_limit + grace``, or ``None`` when the
-        protocol sets no time limit, hard limits are disabled, or the backend
+        criteria set no time limit, hard limits are disabled, or the backend
         is sequential and cannot enforce them.
     """
     if (

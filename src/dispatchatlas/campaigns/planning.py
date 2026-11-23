@@ -27,6 +27,8 @@ problem x replicate x solver x protocol into :class:`PlannedRun` items:
 - **Compatibility.** A pair whose solver does not model a feature of the
   problem is excluded, and the plan records why (see
   :mod:`~dispatchatlas.campaigns.compatibility`).
+- **Time caps.** A solver's time caps must name protocols and problems the
+  campaign has, so that a misspelt name does not leave a run without its cap.
 
 The problem digest is that of the problem as solved, after any objective
 override. :func:`~dispatchatlas.campaigns.fairness.assess` verifies every plan
@@ -473,6 +475,7 @@ def prepare(
     entries = tuple(_solver_entry(spec, solvers) for spec in campaign.solvers)
     loaded = _load_problems(campaign, families)
     problems = {problem.id: problem for _, problem in loaded}
+    _check_time_caps(campaign, problems)
     assessment = compatibility.assess(
         list(problems.values()),
         [(spec.name, solvers.info(spec.id)) for spec in campaign.solvers],
@@ -596,6 +599,28 @@ def _solver_entry(spec: SolverSpec, registry: SolverRegistry) -> SolverEntry:
         threads=threads,
         replicates=spec.replicates,
     )
+
+
+def _check_time_caps(campaign: Campaign, problems: Mapping[str, Problem]) -> None:
+    """Refuse a time cap for a protocol or a problem the campaign does not have.
+
+    A cap that names neither would apply to no run and leave the run it was
+    meant for without a limit.
+    """
+    protocols = {protocol.name for protocol in campaign.protocols}
+    for spec in campaign.solvers:
+        for protocol, caps in spec.time_caps.items():
+            if protocol not in protocols:
+                raise ConfigError(
+                    f"solver {spec.name!r} has time caps for protocol {protocol!r}, "
+                    "which the campaign does not have"
+                )
+            unknown = sorted(problem for problem in caps if problem not in problems)
+            if unknown:
+                raise ConfigError(
+                    f"solver {spec.name!r} has time caps under protocol {protocol!r} for "
+                    f"problems the campaign does not have: {', '.join(map(repr, unknown))}"
+                )
 
 
 def _replicates(

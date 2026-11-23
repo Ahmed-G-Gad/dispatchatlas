@@ -465,6 +465,12 @@ class Provenance:
             of the outcome, the times of its trace, and the time limit
             count from the start of the attempt. ``None`` when the record
             does not state it, as for an attempt the engine ended.
+        time_cap: The cap, in seconds, that set the time limit of the attempt:
+            the entry of the solver's
+            :attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps` for
+            the run, when there is one and the protocol sets no time limit or
+            a longer one. ``None`` for an attempt without such a cap and when
+            the record does not state it.
     """
 
     attempt: int
@@ -480,10 +486,14 @@ class Provenance:
     concurrent: int | None = None
     waited_seconds: float | None = None
     shared_clock: bool | None = None
+    time_cap: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the provenance as a JSON-ready dictionary."""
-        return {
+        """Return the provenance as a JSON-ready dictionary.
+
+        ``time_cap`` is part of it only when a cap set the time limit.
+        """
+        document: dict[str, Any] = {
             "attempt": self.attempt,
             "session": self.session,
             "started": self.started,
@@ -498,16 +508,26 @@ class Provenance:
             "waited_seconds": self.waited_seconds,
             "shared_clock": self.shared_clock,
         }
+        if self.time_cap is not None:
+            document["time_cap"] = self.time_cap
+        return document
 
     @classmethod
     def from_dict(cls, document: object) -> Provenance:
         """Build provenance from :meth:`to_dict` output.
 
-        The fields ``cpu``, ``concurrent``, ``waited_seconds``, and
-        ``shared_clock`` may be absent, and are then ``None``.
+        The fields ``cpu``, ``concurrent``, ``waited_seconds``,
+        ``shared_clock``, and ``time_cap`` may be absent, and are then ``None``.
+
+        Raises:
+            SerializationError: If the document is malformed, or its
+                ``time_cap`` is not above zero.
         """
         fields = _Fields(document, "a provenance block")
         rss = fields.raw("peak_rss_bytes")
+        cap = fields.absent_or_number("time_cap")
+        if cap is not None and not cap > 0.0:
+            raise SerializationError("a provenance block field 'time_cap' must be above zero")
         return cls(
             attempt=fields.integer("attempt"),
             session=fields.integer("session"),
@@ -522,6 +542,7 @@ class Provenance:
             concurrent=fields.absent_or_integer("concurrent"),
             waited_seconds=fields.absent_or_number("waited_seconds"),
             shared_clock=fields.absent_or_boolean("shared_clock"),
+            time_cap=cap,
         )
 
 

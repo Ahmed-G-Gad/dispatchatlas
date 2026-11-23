@@ -26,6 +26,13 @@ passed. It stays a failed run in every count; an analysis that asks for it
 scores the run by that incumbent instead of the worst value. What its search
 found after the time limit is never a score.
 
+A run that stopped on a time cap of its solver
+(:attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps`) is *censored*
+(:attr:`Run.censored`). It completed, so every count keeps its status and
+every analysis keeps its recorded outcome, but the search it made falls short
+of the one its protocol asked for. A run that reached its evaluation limit
+is not censored, and its outcome states the evaluations and the stop reason.
+
 :func:`load_dataset` also checks the directory
 (:func:`~dispatchatlas.campaigns.checking.check_campaign`) and keeps the
 report in :attr:`Dataset.check`, from which the analysis takes the findings
@@ -56,7 +63,7 @@ from dispatchatlas.campaigns.records import (
 from dispatchatlas.campaigns.store import read_failures, read_plan, read_runs, read_sessions
 from dispatchatlas.core.errors import ConfigError
 from dispatchatlas.core.logs import get_logger
-from dispatchatlas.core.solver import TracePoint
+from dispatchatlas.core.solver import StopReason, TracePoint
 
 __all__ = ["RUN_STATUSES", "Dataset", "Run", "RunStatus", "load_dataset"]
 
@@ -107,6 +114,28 @@ class Run:
             self.status == "failed"
             and bool(self.failures)
             and self.failures[-1].error.kind is ErrorKind.TIMEOUT
+        )
+
+    @property
+    def censored(self) -> bool:
+        """Whether the run stopped on a time cap rather than on the limits of its protocol.
+
+        A cap (:attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps`)
+        is the time limit of the runs it names when the protocol sets none or
+        a longer one, and the record states it
+        (:attr:`~dispatchatlas.campaigns.records.Provenance.time_cap`). The run
+        is censored when its record states a cap and its solver stopped for
+        its time limit: how far it got is a lower bound on the search that
+        the protocol asked for. A run that reached its evaluation limit is
+        not censored, so its ``outcome.evaluations`` and ``outcome.stop_reason``
+        are those the protocol sets. A run killed at its hard limit has no
+        record: it is :attr:`killed`.
+        """
+        if self.record is None:
+            return False
+        return (
+            self.record.provenance.time_cap is not None
+            and self.record.outcome.stop_reason is StopReason.TIME_LIMIT
         )
 
     @property

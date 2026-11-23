@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -184,7 +184,8 @@ CODES: Mapping[str, tuple[Severity, str]] = {
     ),
     "hard-limits-differ": (
         "limitation",
-        "The attempts under one protocol ran under different hard limits.",
+        "The attempts under one protocol, and under one time cap where they have one, ran "
+        "under different hard limits.",
     ),
     "stop-reasons-diverge": (
         "limitation",
@@ -1140,9 +1141,13 @@ def _check_records(
         cell = (run.protocol, run.solver)
         held[cell] += 1
         unhashed += record.identity_hash is None
+        stop = record.protocol.stop
+        if record.provenance.time_cap is not None:
+            # The solver received the cap as its time limit, and its notes count from it.
+            stop = replace(stop, time_limit=record.provenance.time_cap)
         facts = observations(
             record.outcome,
-            record.protocol.stop,
+            stop,
             record.provenance.wall_seconds,
             iterative=record.solver.iterative,
         )
@@ -1237,20 +1242,24 @@ def _check_records(
 def _check_hard_limits(
     plan: Plan, records: Mapping[str, RunRecord], ledger: Ledger, found: _Findings
 ) -> None:
-    limits: dict[str, Counter[float | None]] = {}
+    # Attempts under one cap share a hard limit; those of runs with different caps do not.
+    limits: dict[tuple[str, float | None], Counter[float | None]] = {}
     attempts: list[RunRecord | FailureRecord] = list(records.values())
     for failures in ledger.failures.values():
         attempts.extend(failures)
     for attempt in attempts:
         under = plan.run(attempt.run_id).protocol
-        limits.setdefault(under, Counter())[attempt.provenance.hard_limit] += 1
+        cell = limits.setdefault((under, attempt.provenance.time_cap), Counter())
+        cell[attempt.provenance.hard_limit] += 1
     for protocol in plan.protocols:
-        counted = limits.get(protocol.name, Counter())
-        if len(counted) > 1:
+        for (name, cap), counted in limits.items():
+            if name != protocol.name or len(counted) < 2:
+                continue
             ordered = sorted(counted.items(), key=lambda item: (item[0] is None, item[0] or 0.0))
+            capped = "" if cap is None else f" for the runs under a time cap of {cap:g} s,"
             found.add(
                 "hard-limits-differ",
-                f"Under protocol {protocol.name}, the attempts ran under {len(counted)} "
+                f"Under protocol {protocol.name},{capped} the attempts ran under {len(counted)} "
                 "different hard limits, so the engine did not end them alike.",
                 (
                     ("no hard limit" if limit is None else f"{limit:g} s")

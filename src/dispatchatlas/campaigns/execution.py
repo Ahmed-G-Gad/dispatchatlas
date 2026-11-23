@@ -135,7 +135,9 @@ class Task:
         problem: The problem, as solved.
         digest: Digest of the problem.
         solver: A solver instance built with the campaign's parameters.
-        stop: Stop criteria of the run's protocol.
+        stop: Stop criteria the run executes under: those of its protocol,
+            with the time cap of its solver as the time limit where one
+            applies (:meth:`~dispatchatlas.campaigns.config.SolverSpec.capped`).
         seed: Seed of the run.
         hard_limit: Seconds after the start of the solve at which the process
             backend kills the run, or ``None``.

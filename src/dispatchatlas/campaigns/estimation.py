@@ -7,7 +7,13 @@ enforces one, and otherwise relies on the solver honouring the time limit.
 Every attempt may take that long, and a run gets up to ``1 + retries``
 attempts. The time a worker takes to begin a solve, which the start-up limit
 bounds, is not counted. A run whose protocol bounds only evaluations or
-iterations has no duration bound, so those runs are counted apart.
+iterations has no duration bound, so those runs are counted apart, unless a
+time cap of its solver (:attr:`~dispatchatlas.campaigns.config.SolverSpec.time_caps`)
+gives it a time limit.
+
+Given a cost model (:class:`~dispatchatlas.campaigns.costs.CostModel`), the
+estimate also projects the seconds the remaining runs take, from their
+evaluations and the measured seconds per evaluation.
 """
 
 from __future__ import annotations
@@ -19,7 +25,8 @@ from pathlib import Path
 
 from dispatchatlas.benchmarks.registry import FamilyRegistry
 from dispatchatlas.campaigns.config import Campaign
-from dispatchatlas.campaigns.planning import prepare
+from dispatchatlas.campaigns.costs import CostModel
+from dispatchatlas.campaigns.planning import PlannedRun, prepare
 from dispatchatlas.campaigns.runner import overridden
 from dispatchatlas.campaigns.store import (
     Ledger,
@@ -28,7 +35,9 @@ from dispatchatlas.campaigns.store import (
     recorded_config_hash,
 )
 from dispatchatlas.campaigns.timeout import hard_limit
+from dispatchatlas.core.errors import ConfigError
 from dispatchatlas.core.logs import get_logger
+from dispatchatlas.core.solver import StopCriteria
 from dispatchatlas.solvers.registry import SolverRegistry
 
 __all__ = ["Estimate", "estimate"]
@@ -53,12 +62,19 @@ class Estimate:
         by_protocol: Remaining runs per protocol.
         by_solver: Remaining runs per solver.
         workers: Runs that execute at once.
-        timed: Remaining runs whose protocol sets a time limit.
+        timed: Remaining runs that have a time limit, their protocol's or a
+            cap's.
         untimed: Remaining runs without a time limit, whose duration has no bound.
         budget_seconds: Sum of the time limits of the timed runs.
         worst_case_seconds: Sum of the longest time the solve of every
             attempt of every timed run may take: its hard limit when
             enforced, else its time limit, times ``1 + retries``.
+        projected_seconds: Seconds the remaining runs are projected to take
+            in all, or ``None`` when the estimate was made without a cost
+            model. A run contributes its evaluation limit times the model's
+            seconds per evaluation for its solver and problem, at most its
+            time limit; a run with a time limit and no evaluation limit
+            contributes the time limit.
     """
 
     planned: int
@@ -76,6 +92,7 @@ class Estimate:
     untimed: int
     budget_seconds: float
     worst_case_seconds: float
+    projected_seconds: float | None = None
 
     @property
     def budget_wall_seconds(self) -> float:
@@ -96,6 +113,7 @@ def estimate(
     families: FamilyRegistry | None = None,
     backend: str | None = None,
     workers: int | str | None = None,
+    costs: CostModel | None = None,
 ) -> Estimate:
     """Plan a campaign and bound the time its remaining runs can take.
 
@@ -108,12 +126,18 @@ def estimate(
             and plugins.
         backend: Override of the campaign's execution backend.
         workers: Override of the campaign's worker count, or ``"auto"``.
+        costs: A cost model that projects the seconds the remaining runs
+            take. ``None`` leaves :attr:`Estimate.projected_seconds` unset and
+            changes nothing else.
 
     Returns:
         The estimate.
 
     Raises:
-        ConfigError: If the campaign cannot be planned.
+        ConfigError: If the campaign cannot be planned. Also, with ``costs``,
+            if the model measured no group of a remaining run, or a remaining
+            run has neither an evaluation limit nor a time limit, so that
+            nothing projects its duration.
     """
     execution = overridden(campaign.execution, backend, workers)
     plan = prepare(campaign, registry=registry, families=families).plan
@@ -126,10 +150,13 @@ def estimate(
     remaining = ledger.pending(plan, execution.max_attempts)
     failed = sum(1 for item in plan.runs if ledger.closed(item.run_id, execution.max_attempts))
     protocols = {protocol.name: protocol for protocol in plan.protocols}
+    specs = {spec.name: spec for spec in campaign.solvers}
     timed = untimed = 0
-    budget = worst = 0.0
+    budget = worst = projected = 0.0
     for item in remaining:
-        stop = protocols[item.protocol].stop
+        stop, _ = specs[item.solver].capped(protocols[item.protocol], item.problem)
+        if costs is not None:
+            projected += _projected(costs, item, stop)
         if stop.time_limit is None:
             untimed += 1
             continue
@@ -153,7 +180,21 @@ def estimate(
         untimed=untimed,
         budget_seconds=budget,
         worst_case_seconds=worst,
+        projected_seconds=None if costs is None else projected,
     )
+
+
+def _projected(costs: CostModel, item: PlannedRun, stop: StopCriteria) -> float:
+    """Return the seconds a run is projected to take under its stop criteria."""
+    if stop.max_evaluations is None:
+        if stop.time_limit is None:
+            raise ConfigError(
+                f"run {item.run_id} ({item.solver} on {item.problem}, protocol {item.protocol}) "
+                "has no evaluation limit and no time limit, so nothing projects its duration"
+            )
+        return stop.time_limit
+    spent = costs.seconds(item.solver, item.problem, stop.max_evaluations)
+    return spent if stop.time_limit is None else min(spent, stop.time_limit)
 
 
 def _same_configuration(directory: Path, config_hash: str) -> bool:
