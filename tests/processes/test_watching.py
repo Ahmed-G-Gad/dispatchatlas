@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -23,15 +22,20 @@ def test_the_watch_follows_the_runner_and_its_rows_until_it_ends(tmp_path: Path)
     rows = tmp_path / "rows.jsonl"
     rows.write_bytes(b'{"a":1}\n')
     runner = sleeper(6.0)
+    first = threading.Event()
 
     def append() -> None:
-        time.sleep(1.0)
+        # After the watch's first status, however slow the process scan of a loaded machine.
+        first.wait(30)
         with rows.open("ab") as stream:
             stream.write(b'{"a":2}\n{"a":3}\n')
 
     writer = threading.Thread(target=append)
     writer.start()
-    statuses = list(watch(runner.pid, rows=rows, cpus=slot_cpus(2), interval=0.5, until=120))
+    statuses = []
+    for status in watch(runner.pid, rows=rows, cpus=slot_cpus(2), interval=0.5, until=120):
+        statuses.append(status)
+        first.set()
     writer.join()
     runner.wait(30)
     assert statuses[0].runner_alive
