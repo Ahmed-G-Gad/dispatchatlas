@@ -339,3 +339,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dispatchatlas.solvers.shop` holds the job-shop solvers, and the
   bibliography gains their sources and those of iterated racing and of
   equivalence testing.
+- A job-shop view of the problems with the job-shop shape, which refuses every
+  feature its builders do not model; semi-active, active (Giffler and
+  Thompson) and non-delay builders that decode job sequences without repair,
+  with random keys sorted into a job sequence by `sequence_from_keys`; and the
+  disjunctive graph of a schedule: machine orders, heads and tails, and
+  critical blocks.

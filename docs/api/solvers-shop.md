@@ -6,3 +6,9 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
     options:
       members:
         - register
+
+::: dispatchatlas.solvers.shop.instance
+
+::: dispatchatlas.solvers.shop.decoding
+
+::: dispatchatlas.solvers.shop.graph
