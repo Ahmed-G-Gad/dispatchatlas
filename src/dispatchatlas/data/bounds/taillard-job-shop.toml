@@ -1,0 +1,377 @@
+# Reference values for the makespan of Taillard's job shops ta01 to ta50, as two published sources
+# print them: peng2015tabu is Peng, Lü and Cheng (2015) and goncalves2014extended is Gonçalves and
+# Resende (2014). The instances ta51 to ta80 are not included.
+#
+# Each instance table holds the reference upper bound (upper), the reference lower bound (lower)
+# and whether the two are equal (optimal), then one inline table per source, named by its
+# bibliography key, with the values that source prints:
+#
+#   upper        the best known upper bound it lists
+#   lower        the best known lower bound it lists
+#   found_upper  an upper bound it reports as newly found, printed in bold, if any
+#   where        the table and page that print the values
+#
+# The reference upper bound is the smallest upper bound any source prints, listed or newly found.
+# The reference lower bound is the largest lower bound any source prints. The loader,
+# dispatchatlas.benchmarks.bounds, checks both rules, the optimal flag, and that every instance
+# has at least two sources.
+
+# 15 jobs x 15 machines
+
+[ta01]
+upper = 1231
+lower = 1231
+optimal = true
+peng2015tabu = { upper = 1231, lower = 1231, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1231, lower = 1231, where = "Table A7, p. 243" }
+
+[ta02]
+upper = 1244
+lower = 1244
+optimal = true
+peng2015tabu = { upper = 1244, lower = 1244, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1244, lower = 1244, where = "Table A7, p. 243" }
+
+[ta03]
+upper = 1218
+lower = 1218
+optimal = true
+peng2015tabu = { upper = 1218, lower = 1218, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1218, lower = 1218, where = "Table A7, p. 243" }
+
+[ta04]
+upper = 1175
+lower = 1175
+optimal = true
+peng2015tabu = { upper = 1175, lower = 1175, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1175, lower = 1175, where = "Table A7, p. 243" }
+
+[ta05]
+upper = 1224
+lower = 1224
+optimal = true
+peng2015tabu = { upper = 1224, lower = 1224, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1224, lower = 1224, where = "Table A7, p. 243" }
+
+[ta06]
+upper = 1238
+lower = 1238
+optimal = true
+peng2015tabu = { upper = 1238, lower = 1238, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1238, lower = 1238, where = "Table A7, p. 243" }
+
+[ta07]
+upper = 1227
+lower = 1227
+optimal = true
+peng2015tabu = { upper = 1227, lower = 1227, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1227, lower = 1227, where = "Table A7, p. 243" }
+
+[ta08]
+upper = 1217
+lower = 1217
+optimal = true
+peng2015tabu = { upper = 1217, lower = 1217, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1217, lower = 1217, where = "Table A7, p. 243" }
+
+[ta09]
+upper = 1274
+lower = 1274
+optimal = true
+peng2015tabu = { upper = 1274, lower = 1274, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1274, lower = 1274, where = "Table A7, p. 243" }
+
+[ta10]
+upper = 1241
+lower = 1241
+optimal = true
+peng2015tabu = { upper = 1241, lower = 1241, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1241, lower = 1241, where = "Table A7, p. 243" }
+
+# 20 jobs x 15 machines
+
+[ta11]
+upper = 1357
+lower = 1323
+optimal = false
+peng2015tabu = { upper = 1357, lower = 1323, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1357, lower = 1323, where = "Table A7, p. 243" }
+
+[ta12]
+upper = 1367
+lower = 1351
+optimal = false
+peng2015tabu = { upper = 1367, lower = 1351, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1367, lower = 1351, where = "Table A7, p. 243" }
+
+[ta13]
+upper = 1342
+lower = 1282
+optimal = false
+peng2015tabu = { upper = 1342, lower = 1282, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1342, lower = 1282, where = "Table A7, p. 243" }
+
+[ta14]
+upper = 1345
+lower = 1345
+optimal = true
+peng2015tabu = { upper = 1345, lower = 1345, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1345, lower = 1345, where = "Table A7, p. 243" }
+
+[ta15]
+upper = 1339
+lower = 1304
+optimal = false
+peng2015tabu = { upper = 1339, lower = 1304, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1339, lower = 1304, where = "Table A7, p. 243" }
+
+[ta16]
+upper = 1360
+lower = 1304
+optimal = false
+peng2015tabu = { upper = 1360, lower = 1304, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1360, lower = 1302, where = "Table A7, p. 244" }
+
+[ta17]
+upper = 1462
+lower = 1462
+optimal = true
+peng2015tabu = { upper = 1462, lower = 1462, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1462, lower = 1462, where = "Table A7, p. 244" }
+
+[ta18]
+upper = 1396
+lower = 1369
+optimal = false
+peng2015tabu = { upper = 1396, lower = 1369, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1396, lower = 1369, where = "Table A7, p. 244" }
+
+[ta19]
+upper = 1332
+lower = 1304
+optimal = false
+peng2015tabu = { upper = 1332, lower = 1304, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1332, lower = 1297, where = "Table A7, p. 244" }
+
+[ta20]
+upper = 1348
+lower = 1318
+optimal = false
+peng2015tabu = { upper = 1348, lower = 1318, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1348, lower = 1318, where = "Table A7, p. 244" }
+
+# 20 jobs x 20 machines
+
+[ta21]
+upper = 1642
+lower = 1573
+optimal = false
+peng2015tabu = { upper = 1642, lower = 1573, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1643, lower = 1539, found_upper = 1642, where = "Table A7, p. 244" }
+
+[ta22]
+upper = 1600
+lower = 1542
+optimal = false
+peng2015tabu = { upper = 1600, lower = 1542, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1600, lower = 1511, where = "Table A7, p. 244" }
+
+[ta23]
+upper = 1557
+lower = 1474
+optimal = false
+peng2015tabu = { upper = 1557, lower = 1474, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1557, lower = 1472, where = "Table A7, p. 244" }
+
+[ta24]
+upper = 1644
+lower = 1606
+optimal = false
+peng2015tabu = { upper = 1644, lower = 1606, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1646, lower = 1602, where = "Table A7, p. 244" }
+
+[ta25]
+upper = 1595
+lower = 1518
+optimal = false
+peng2015tabu = { upper = 1595, lower = 1518, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1595, lower = 1504, where = "Table A7, p. 244" }
+
+[ta26]
+upper = 1643
+lower = 1558
+optimal = false
+peng2015tabu = { upper = 1643, lower = 1558, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1645, lower = 1539, found_upper = 1643, where = "Table A7, p. 244" }
+
+[ta27]
+upper = 1680
+lower = 1617
+optimal = false
+peng2015tabu = { upper = 1680, lower = 1617, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1680, lower = 1616, where = "Table A7, p. 244" }
+
+[ta28]
+upper = 1603
+lower = 1591
+optimal = false
+peng2015tabu = { upper = 1603, lower = 1591, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1603, lower = 1591, where = "Table A7, p. 244" }
+
+[ta29]
+upper = 1625
+lower = 1525
+optimal = false
+peng2015tabu = { upper = 1625, lower = 1525, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1625, lower = 1514, where = "Table A7, p. 244" }
+
+[ta30]
+upper = 1584
+lower = 1485
+optimal = false
+peng2015tabu = { upper = 1584, lower = 1485, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1584, lower = 1473, where = "Table A7, p. 244" }
+
+# 30 jobs x 15 machines
+
+[ta31]
+upper = 1764
+lower = 1764
+optimal = true
+peng2015tabu = { upper = 1764, lower = 1764, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1764, lower = 1764, where = "Table A7, p. 244" }
+
+[ta32]
+upper = 1785
+lower = 1774
+optimal = false
+peng2015tabu = { upper = 1785, lower = 1774, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1790, lower = 1774, found_upper = 1785, where = "Table A7, p. 244" }
+
+[ta33]
+upper = 1791
+lower = 1778
+optimal = false
+peng2015tabu = { upper = 1791, lower = 1778, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1791, lower = 1778, where = "Table A7, p. 244" }
+
+[ta34]
+upper = 1829
+lower = 1828
+optimal = false
+peng2015tabu = { upper = 1829, lower = 1828, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1829, lower = 1828, where = "Table A7, p. 244" }
+
+[ta35]
+upper = 2007
+lower = 2007
+optimal = true
+peng2015tabu = { upper = 2007, lower = 2007, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 2007, lower = 2007, where = "Table A7, p. 244" }
+
+[ta36]
+upper = 1819
+lower = 1819
+optimal = true
+peng2015tabu = { upper = 1819, lower = 1819, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1819, lower = 1819, where = "Table A7, p. 244" }
+
+[ta37]
+upper = 1771
+lower = 1771
+optimal = true
+peng2015tabu = { upper = 1771, lower = 1771, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1771, lower = 1771, where = "Table A7, p. 244" }
+
+[ta38]
+upper = 1673
+lower = 1673
+optimal = true
+peng2015tabu = { upper = 1673, lower = 1673, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1673, lower = 1673, where = "Table A7, p. 244" }
+
+[ta39]
+upper = 1795
+lower = 1795
+optimal = true
+peng2015tabu = { upper = 1795, lower = 1795, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1795, lower = 1795, where = "Table A7, p. 244" }
+
+[ta40]
+upper = 1669
+lower = 1631
+optimal = false
+peng2015tabu = { upper = 1669, lower = 1631, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1673, lower = 1631, found_upper = 1669, where = "Table A7, p. 244" }
+
+# 30 jobs x 20 machines
+
+[ta41]
+upper = 2006
+lower = 1874
+optimal = false
+peng2015tabu = { upper = 2006, lower = 1874, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 2006, lower = 1859, where = "Table A7, p. 244" }
+
+[ta42]
+upper = 1937
+lower = 1867
+optimal = false
+peng2015tabu = { upper = 1937, lower = 1867, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1945, lower = 1867, found_upper = 1937, where = "Table A7, p. 244" }
+
+[ta43]
+upper = 1846
+lower = 1809
+optimal = false
+peng2015tabu = { upper = 1848, lower = 1809, found_upper = 1846, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1848, lower = 1809, where = "Table A7, p. 244" }
+
+[ta44]
+upper = 1982
+lower = 1927
+optimal = false
+peng2015tabu = { upper = 1983, lower = 1927, found_upper = 1982, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1983, lower = 1927, where = "Table A7, p. 244" }
+
+[ta45]
+upper = 2000
+lower = 1997
+optimal = false
+peng2015tabu = { upper = 2000, lower = 1997, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 2000, lower = 1997, where = "Table A7, p. 244" }
+
+[ta46]
+upper = 2004
+lower = 1940
+optimal = false
+peng2015tabu = { upper = 2004, lower = 1940, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 2008, lower = 1940, found_upper = 2004, where = "Table A7, p. 244" }
+
+[ta47]
+upper = 1889
+lower = 1789
+optimal = false
+peng2015tabu = { upper = 1894, lower = 1789, found_upper = 1889, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1897, lower = 1789, found_upper = 1894, where = "Table A7, p. 244" }
+
+[ta48]
+upper = 1943
+lower = 1912
+optimal = false
+peng2015tabu = { upper = 1943, lower = 1912, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1945, lower = 1912, found_upper = 1943, where = "Table A7, p. 244" }
+
+[ta49]
+upper = 1963
+lower = 1915
+optimal = false
+peng2015tabu = { upper = 1964, lower = 1915, found_upper = 1963, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1966, lower = 1915, found_upper = 1964, where = "Table A7, p. 244" }
+
+[ta50]
+upper = 1923
+lower = 1807
+optimal = false
+peng2015tabu = { upper = 1924, lower = 1807, found_upper = 1923, where = "Table 8, p. 160" }
+goncalves2014extended = { upper = 1925, lower = 1807, where = "Table A7, p. 244" }

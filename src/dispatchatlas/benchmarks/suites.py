@@ -40,12 +40,30 @@ from dispatchatlas.benchmarks.taillard import (
 from dispatchatlas.core.errors import ConfigError
 from dispatchatlas.core.model import Problem
 
-__all__ = ["Bound", "Suite", "load", "suite", "suites"]
+__all__ = ["Bound", "BoundSource", "Suite", "load", "suite", "suites"]
 
 type Loader = Callable[[str, Path | None], Problem]
 """Builds one instance from its name and, for file suites, a directory."""
 
 _ORLIB = "https://people.brunel.ac.uk/~mastjjb/jeb/orlib/files/"
+
+
+@dataclass(frozen=True, slots=True)
+class BoundSource:
+    """One value of a bound, as one published source prints it.
+
+    Attributes:
+        source: Bibliography key of the work that prints the value.
+        value: The printed value.
+        where: Table and page that print it, for example ``"Table 8, p. 160"``.
+        found: Whether the work reports the value as an upper bound it found itself, as
+            against listing it as best known.
+    """
+
+    source: str
+    value: float
+    where: str
+    found: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +75,20 @@ class Bound:
         upper: Value of the best published schedule, if any.
         optimal: Whether ``upper`` is proven optimal.
         objective: Objective the bounds refer to.
+        upper_sources: The upper bounds that published sources print for the instance, each
+            with its source. Empty when the bound lists none. When there are any, ``upper``
+            is the smallest of their values.
+        lower_sources: The lower bounds that published sources print, each with its source.
+            Empty when the bound lists none. When there are any, ``lower`` is the largest of
+            their values.
     """
 
     lower: float | None = None
     upper: float | None = None
     optimal: bool = False
     objective: str = "makespan"
+    upper_sources: tuple[BoundSource, ...] = ()
+    lower_sources: tuple[BoundSource, ...] = ()
 
 
 @dataclass(frozen=True)

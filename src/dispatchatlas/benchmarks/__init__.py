@@ -12,8 +12,9 @@ Rebuild a published instance, or read one from a file::
     ft06 = load_instance("ft06.txt", format="orlib-job-shop")
 
 The submodules hold the rest: :mod:`~dispatchatlas.benchmarks.suites` (reference
-suites and their known bounds), :mod:`~dispatchatlas.benchmarks.catalog` (named
-instance sets written to disk with checksums),
+suites and their known bounds), :mod:`~dispatchatlas.benchmarks.bounds` (best known
+bounds with every source's printed values), :mod:`~dispatchatlas.benchmarks.catalog`
+(named instance sets written to disk with checksums),
 :mod:`~dispatchatlas.benchmarks.characterize` (instance features),
 :mod:`~dispatchatlas.benchmarks.continuum` (edge-fog-cloud platforms), and the
 readers that map published workloads onto such a platform:
