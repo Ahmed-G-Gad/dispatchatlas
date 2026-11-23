@@ -415,3 +415,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `werner-winkler-insertion`, the basic insertion heuristic of Werner and
   Winkler (1995) without beam search or iterative phase, with
   `insertion_costs`.
+- The four job-shop families take `distance_every` (1 by default), which
+  measures the phenotype distance on the first move and on every n-th move
+  after it, while the digest-based measures stay per evaluation.
+- Where `flock` is not implemented, as on a file system mounted without it, a
+  campaign directory is locked by the exclusive creation of `.lock.excl`; a
+  stale file of a dead process on the same host is reported, never removed.
+- The route digests of Taillard's job shops ta01 to ta80 are stored in the
+  library, and `check_taillard_job_shop` checks a rebuilt instance against
+  them, so a study can confirm from an installed wheel that it rebuilds the
+  instances the library was tested on.
