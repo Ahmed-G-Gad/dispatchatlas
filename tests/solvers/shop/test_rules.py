@@ -7,14 +7,11 @@ from collections.abc import Callable
 import pytest
 
 from dispatchatlas.core import (
-    Dependency,
     Problem,
-    Resource,
     Schedule,
     SolveResult,
     StopCriteria,
     StopReason,
-    Task,
     UnsupportedProblemError,
     check_schedule,
 )
@@ -24,7 +21,7 @@ from dispatchatlas.solvers.shop.rules import GtMostWorkRemaining, GtShortestProc
 from tests.helpers import random_problem, small_job_shop
 from tests.solvers.shop.contract import check_contract
 from tests.solvers.shop.instances import random_job_shop, ta01
-from tests.solvers.shop.oracles import naive_giffler_thompson
+from tests.solvers.shop.oracles import job_shop, naive_giffler_thompson
 
 type Rule = type[GtShortestProcessingTime] | type[GtMostWorkRemaining]
 
@@ -64,29 +61,6 @@ HAND_COMPUTED = [
         id="most-work-remaining",
     ),
 ]
-
-
-def _job_shop(name: str, routes: list[list[tuple[int, float]]], **release: float) -> Problem:
-    """Build a job shop: each route lists a job's ``(machine, time)`` pairs in order.
-
-    The task of a job's step is called ``j{job}-o{step}`` and takes the release
-    time given for that name, if any.
-    """
-    tasks: list[Task] = []
-    dependencies: list[Dependency] = []
-    for job, route in enumerate(routes):
-        for step, (machine, time) in enumerate(route):
-            task = f"j{job}-o{step}"
-            tasks.append(Task.on(task, f"m{machine}", time, release=release.get(task, 0.0)))
-            if step:
-                dependencies.append(Dependency(f"j{job}-o{step - 1}", task))
-    machines = 1 + max(machine for route in routes for machine, _ in route)
-    return Problem(
-        name,
-        tasks=tuple(tasks),
-        resources=tuple(Resource(f"m{machine}") for machine in range(machines)),
-        dependencies=tuple(dependencies),
-    )
 
 
 def _schedule(result: SolveResult) -> Schedule:
@@ -130,7 +104,7 @@ VALUES: dict[Rule, Callable[[JobShop, int, int], float]] = {
 
 def _shops() -> list[JobShop]:
     """Taillard's ta01, random job shops with and without releases and revisits, zero times."""
-    zero = _job_shop("zero", [[(0, 0), (1, 3)], [(0, 2), (1, 0)], [(1, 0), (0, 1)]])
+    zero = job_shop("zero", [[(0, 0), (1, 3)], [(0, 2), (1, 0)], [(1, 0), (0, 1)]])
     return [
         ta01(),
         JobShop.from_problem(zero),
@@ -172,7 +146,7 @@ def test_the_rules_choose_different_operations_when_their_values_differ() -> Non
     # j1-o0. Most work remaining counts the operation's own time: j0 has 5 + 1 = 6 left and j1 has
     # 1 + 3 = 4, so j0-o0 goes first, although it completes last; leaving the operation's own
     # time out would give 1 against 3, and the other order.
-    problem = _job_shop("own-time", [[(0, 5), (1, 1)], [(0, 1), (1, 3)]])
+    problem = job_shop("own-time", [[(0, 5), (1, 1)], [(0, 1), (1, 3)]])
     shortest = GtShortestProcessingTime().solve(problem, StopCriteria())
     assert _starts(problem, shortest) == (1, 6, 0, 1)
     most_work = GtMostWorkRemaining().solve(problem, StopCriteria())
@@ -182,10 +156,10 @@ def test_the_rules_choose_different_operations_when_their_values_differ() -> Non
 @pytest.mark.parametrize("rule", RULES)
 def test_equal_values_go_by_job_index(rule: Rule) -> None:
     # Three jobs of one task, all of 2 on one machine: the order is the job order.
-    problem = _job_shop("equal", [[(0, 2)], [(0, 2)], [(0, 2)]])
+    problem = job_shop("equal", [[(0, 2)], [(0, 2)], [(0, 2)]])
     assert _starts(problem, rule().solve(problem, StopCriteria())) == (0, 2, 4)
     # Two jobs of two tasks, each pair with the same value at every step: j0 first on m0.
-    problem = _job_shop("equal-two", [[(0, 2), (1, 2)], [(0, 2), (1, 2)]])
+    problem = job_shop("equal-two", [[(0, 2), (1, 2)], [(0, 2), (1, 2)]])
     assert _starts(problem, rule().solve(problem, StopCriteria())) == (0, 2, 2, 4)
 
 
@@ -196,7 +170,7 @@ def test_a_rule_chooses_only_among_the_operations_that_can_start_before_c_star(
     # j0-o0 (2) is released at 5, on m0, and its job has 12 left; j1-o0 (3) is on m0 too. Both
     # rules rank j0-o0 first, yet j1-o0 completes first, at 3, and j0-o0 cannot start before
     # then, so only j1-o0 is in the conflict set. Choosing j0-o0 would start j1-o0 at 7.
-    problem = _job_shop("release", [[(0, 2), (1, 10)], [(0, 3)]], **{"j0-o0": 5})
+    problem = job_shop("release", [[(0, 2), (1, 10)], [(0, 3)]], **{"j0-o0": 5})
     assert _starts(problem, rule().solve(problem, StopCriteria())) == (5, 7, 0)
 
 
