@@ -379,3 +379,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schedule's digest and the decode, observer and calibration times;
   `TrajectoryObserver` measures revisited schedules, unchanged moves and the
   Kendall tau distance of machine orders per move.
+- Bounds over time: `BoundPoint` and `SolveResult.bounds` hold the best
+  proven bound at each improvement. `cp-sat` records them from the bound
+  callback of OR-Tools where it has one, and otherwise from the bound it holds
+  with each solution, and states which in `extras["bound_callback"]`. A
+  result document and a run record hold them under `bounds` only when there
+  are some, so existing documents, records and hashes do not change; the
+  result hash covers the values of the bounds, not their times.
