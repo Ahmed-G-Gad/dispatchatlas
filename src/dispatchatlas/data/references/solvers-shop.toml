@@ -1,0 +1,65 @@
+# Sources of the job-shop solvers: schedule builders, representations, crossover,
+# swarm and local-search methods, and insertion heuristics.
+
+[balas1998guided]
+authors = "E. Balas and A. Vazacopoulos"
+year = 1998
+title = "Guided local search with shifting bottleneck for job shop scheduling"
+venue = "Management Science 44(2):262-275"
+doi = "10.1287/mnsc.44.2.262"
+
+[bierwirth1995generalized]
+authors = "C. Bierwirth"
+year = 1995
+title = "A generalized permutation approach to job shop scheduling with genetic algorithms"
+venue = "OR Spektrum 17(2-3):87-92"
+doi = "10.1007/BF01719250"
+
+[bratton2007defining]
+authors = "D. Bratton and J. Kennedy"
+year = 2007
+title = "Defining a standard for particle swarm optimization"
+venue = "2007 IEEE Swarm Intelligence Symposium (SIS), 120-127"
+doi = "10.1109/SIS.2007.368035"
+
+[giffler1960algorithms]
+authors = "B. Giffler and G. L. Thompson"
+year = 1960
+title = "Algorithms for solving production-scheduling problems"
+venue = "Operations Research 8(4):487-503"
+doi = "10.1287/opre.8.4.487"
+
+[nowicki1996fast]
+authors = "E. Nowicki and C. Smutnicki"
+year = 1996
+title = "A fast taboo search algorithm for the job shop problem"
+venue = "Management Science 42(6):797-813"
+doi = "10.1287/mnsc.42.6.797"
+
+[ono1996genetic]
+authors = "I. Ono, M. Yamamura and S. Kobayashi"
+year = 1996
+title = "A genetic algorithm for job-shop scheduling problems using job-based order crossover"
+venue = "Proceedings of IEEE International Conference on Evolutionary Computation (ICEC 1996), 547-552"
+doi = "10.1109/ICEC.1996.542658"
+
+[pan2008discrete]
+authors = "Q.-K. Pan, M. F. Tasgetiren and Y.-C. Liang"
+year = 2008
+title = "A discrete particle swarm optimization algorithm for the no-wait flowshop scheduling problem"
+venue = "Computers & Operations Research 35(9):2807-2839"
+doi = "10.1016/j.cor.2006.12.030"
+
+[werner1995insertion]
+authors = "F. Werner and A. Winkler"
+year = 1995
+title = "Insertion techniques for the heuristic solution of the job shop problem"
+venue = "Discrete Applied Mathematics 58(2):191-211"
+doi = "10.1016/0166-218X(93)E0127-K"
+
+[zhang2007tabu]
+authors = "C. Y. Zhang, P. G. Li, Z. L. Guan and Y. Q. Rao"
+year = 2007
+title = "A tabu search algorithm with a new neighborhood structure for the job shop scheduling problem"
+venue = "Computers & Operations Research 34(11):3229-3242"
+doi = "10.1016/j.cor.2005.12.002"

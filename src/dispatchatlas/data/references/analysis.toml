@@ -50,6 +50,13 @@ title = "Statistical Power Analysis for the Behavioral Sciences"
 venue = "2nd edition, Lawrence Erlbaum Associates, Hillsdale, NJ; reissued by Routledge in 2013"
 doi = "10.4324/9780203771587"
 
+[conover1999practical]
+authors = "W. J. Conover"
+year = 1999
+title = "Practical nonparametric statistics"
+venue = "3rd edition, Wiley, New York, ISBN 978-0-471-16068-7"
+url = "https://www.wiley.com/en-us/Practical+Nonparametric+Statistics%2C+3rd+Edition-p-9780471160687"
+
 [demsar2006statistical]
 authors = "J. Demšar"
 year = 2006
@@ -155,6 +162,13 @@ title = "The problem of m rankings"
 venue = "The Annals of Mathematical Statistics 10(3):275-287"
 doi = "10.1214/aoms/1177732186"
 
+[lakens2017equivalence]
+authors = "D. Lakens"
+year = 2017
+title = "Equivalence tests: A practical primer for t tests, correlations, and meta-analyses"
+venue = "Social Psychological and Personality Science 8(4):355-362"
+doi = "10.1177/1948550617697177"
+
 [mann1947test]
 authors = "H. B. Mann and D. R. Whitney"
 year = 1947
@@ -167,6 +181,13 @@ authors = "J. Romano, J. D. Kromrey, J. Coraggio and J. Skowronek"
 year = 2006
 title = "Appropriate statistics for ordinal level data: Should we really be using t-test and Cohen's d for evaluating group differences on the NSSE and other surveys?"
 venue = "Annual meeting of the Florida Association of Institutional Research"
+
+[schuirmann1987comparison]
+authors = "D. J. Schuirmann"
+year = 1987
+title = "A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability"
+venue = "Journal of Pharmacokinetics and Biopharmaceutics 15(6):657-680"
+doi = "10.1007/BF01068419"
 
 [shaffer1986modified]
 authors = "J. P. Shaffer"

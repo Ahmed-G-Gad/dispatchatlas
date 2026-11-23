@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FEATURES",
+    "SHAPES",
     "Dependency",
     "Link",
     "Metadata",
@@ -80,6 +81,24 @@ FEATURES: Mapping[str, str] = FrozenMap(
 
 Solvers declare the features they model in :attr:`SolverInfo.supports`, and
 campaigns refuse to pair a solver with a problem that has an unsupported one.
+"""
+
+SHAPES: Mapping[str, str] = FrozenMap(
+    {
+        "job-shop": (
+            "The tasks form chains, the jobs, and every task has one mode that runs it on "
+            "one machine."
+        ),
+    }
+)
+"""Names of the structural shapes a problem can have, with their meaning.
+
+A shape describes the whole problem, where a feature (see :data:`FEATURES`) marks one
+property of it. :attr:`Problem.shapes` lists the shapes a problem has. A solver that
+works on one shape only names it in :attr:`SolverInfo.shape`, and campaigns refuse to
+pair it with a problem that lacks the shape. A feature that the definition of a shape
+does not name, such as release times or lags, does not decide the shape; a solver
+leaves the features it does not model out of :attr:`SolverInfo.supports`.
 """
 
 
@@ -638,6 +657,21 @@ class Problem:
             found.add("permutation")
         return frozenset(found)
 
+    @cached_property
+    def shapes(self) -> frozenset[str]:
+        """The structural shapes the problem has. See :data:`SHAPES`.
+
+        A problem has ``"job-shop"`` when its dependencies join the tasks into disjoint
+        chains, the jobs, so that every task has at most one predecessor and at most one
+        successor, and every task has a single mode that demands a single resource, which
+        is a machine: one of the :attr:`exclusive_resources`, where tasks never overlap.
+        Release times, due dates, groups, and the other features do not decide the shape.
+        """
+        found: set[str] = set()
+        if _is_job_shop(self):
+            found.add("job-shop")
+        return frozenset(found)
+
     @property
     def size(self) -> int:
         """Number of tasks."""
@@ -720,6 +754,25 @@ def _topological_order(
             if remaining[following] == 0:
                 heapq.heappush(ready, following)
     return tuple(order) if len(order) == count else None
+
+
+def _is_job_shop(problem: Problem) -> bool:
+    """Return whether the tasks form chains in which every task runs on one machine."""
+    machines = problem.exclusive_resources
+    return all(
+        len(before) <= 1 and len(after) <= 1 and _runs_on_one_machine(task, machines)
+        for task, before, after in zip(
+            problem.tasks, problem.predecessors, problem.successors, strict=True
+        )
+    )
+
+
+def _runs_on_one_machine(task: Task, machines: frozenset[str]) -> bool:
+    """Return whether ``task`` has one mode that demands one resource, which is a machine."""
+    if len(task.modes) != 1:
+        return False
+    demands = task.modes[0].demands
+    return len(demands) == 1 and next(iter(demands)) in machines
 
 
 def _structural_issues(problem: Problem) -> list[str]:

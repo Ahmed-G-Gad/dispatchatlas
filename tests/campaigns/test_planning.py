@@ -18,15 +18,26 @@ from dispatchatlas.campaigns import (
     SolverSpec,
     SuiteSource,
     check_compatibility,
+    compatibility,
     plan,
 )
 from dispatchatlas.campaigns.compatibility import MANY_OBJECTIVES
 from dispatchatlas.campaigns.fairness import PARITIES, assess, parities
 from dispatchatlas.campaigns.planning import PlannedRun, run_id, run_seed
-from dispatchatlas.core import ConfigError, StopCriteria, problem_digest, save_problem
+from dispatchatlas.core import (
+    ConfigError,
+    Dependency,
+    Problem,
+    Resource,
+    SolverInfo,
+    StopCriteria,
+    Task,
+    problem_digest,
+    save_problem,
+)
 from dispatchatlas.references import reference
 from tests.campaigns.solvers import registry, tiny_campaign
-from tests.helpers import chain_problem, random_problem
+from tests.helpers import chain_problem, random_problem, small_job_shop
 
 REGISTRY = registry()
 TWO_PROTOCOLS = (
@@ -265,6 +276,29 @@ def test_a_campaign_whose_every_pair_is_excluded_is_refused(tmp_path: Path) -> N
     with pytest.raises(ConfigError, match="plans no runs"):
         plan(campaign, registry=REGISTRY)
     assert len(check_compatibility(campaign, registry=REGISTRY).exclusions) == 1
+
+
+def test_a_solver_that_needs_a_shape_is_excluded_from_problems_without_it() -> None:
+    fork = Problem(
+        "fork",
+        tasks=(Task.on("a", "m1", 1), Task.on("b", "m2", 1), Task.on("c", "m3", 1)),
+        resources=(Resource("m1"), Resource("m2"), Resource("m3")),
+        dependencies=(Dependency("a", "b"), Dependency("a", "c")),
+    )
+    needs = SolverInfo(
+        id="needs-shape",
+        name="Needs a shape",
+        family="local-search",
+        summary="Works on job shops only.",
+        shape="job-shop",
+    )
+    report = compatibility.assess([small_job_shop(), fork], [("needs-shape", needs)])
+    assert [(e.problem, e.solver, e.features) for e in report.exclusions] == [
+        ("fork", "needs-shape", ("job-shop",))
+    ]
+    assert "does not model job-shop" in report.exclusions[0].reason
+    assert report.excludes("fork", "needs-shape")
+    assert not report.excludes("small-job-shop", "needs-shape")
 
 
 def test_objective_caveats_are_recorded_with_their_source() -> None:

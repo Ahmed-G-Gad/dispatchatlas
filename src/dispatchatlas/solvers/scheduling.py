@@ -13,6 +13,7 @@ precedence with lags and transfers, capacities, and setup times:
 
 - **Precedence repair.** At each step the decoder takes the earliest-listed
   task whose predecessors are all scheduled, so any permutation decodes.
+  :attr:`Decoder.repairs` counts these passes.
 - **Insertion.** A task may fill an idle gap left earlier on its resources.
   Resources with setup times, and every resource of a permutation problem,
   append only, so their processing sequence equals the decoding sequence.
@@ -215,11 +216,17 @@ class Decoder:
         problem: The problem to decode for.
         insertion: Let tasks fill idle gaps on their resources. Ignored on
             resources with setup times and in permutation problems.
+
+    Attributes:
+        repairs: How many times :meth:`decode` has called
+            :func:`precedence_feasible`, which it does once per call. Tasks
+            placed through :meth:`builder` are never repaired.
     """
 
     def __init__(self, problem: Problem, *, insertion: bool = True) -> None:
         self.problem = problem
         self.insertion = insertion and not problem.permutation
+        self.repairs = 0
         resource_index = problem.resource_index
         self.capacity = [resource.capacity for resource in problem.resources]
         setup_resources = problem.setups.resources if problem.setups is not None else frozenset()
@@ -285,6 +292,7 @@ class Decoder:
         if problem.permutation:
             order = self.group_major(order)
         builder = Builder(self)
+        self.repairs += 1
         for task in precedence_feasible(problem, order):
             mode = -1 if modes is None else modes[task]
             if mode < 0:

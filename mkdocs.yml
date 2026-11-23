@@ -124,6 +124,7 @@ nav:
       - Multi-objective methods: api/solvers-multiobjective.md
       - Learning methods: api/solvers-learning.md
       - Exact and hybrid methods: api/solvers-exact.md
+      - Job shop methods: api/solvers-shop.md
       - Processes: api/processes.md
       - Campaigns: api/campaigns.md
       - Analysis: api/analysis.md

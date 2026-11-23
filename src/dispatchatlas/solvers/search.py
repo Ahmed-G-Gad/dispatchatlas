@@ -22,7 +22,9 @@ Typical use inside a solver::
 ``evaluate`` and ``next_iteration`` raise :class:`Exhausted` when a stop
 criterion fires; leaving the ``with`` block swallows it. Constructive solvers
 that build a schedule task by task hand it to :meth:`Search.submit` instead of
-decoding its order again, and schedules that change a parameter over the run
+decoding its order again. A solver whose builder is costly hands the builder
+itself to :meth:`Search.assess_built`, which calls it only when the budget
+allows another evaluation. Schedules that change a parameter over the run
 read :meth:`Search.progress`.
 
 A search created inside :func:`listening` also reports every new incumbent to
@@ -161,7 +163,8 @@ class Search:
 
     Raises:
         UnsupportedProblemError: If the problem has features the solver does not
-            declare in ``info.supports``.
+            declare in ``info.supports``, or lacks the shape the solver requires in
+            ``info.shape``.
         SolverError: If an iterative solver receives unbounded stop criteria.
     """
 
@@ -358,13 +361,54 @@ class Search:
             Exhausted: When the evaluation or time limit is reached before the
                 schedule is scored, or the target is reached by it.
         """
+        self._require_complete(decoded)
+        self._check_budget()
+        return self._count(decoded, order, modes)
+
+    def assess_built(
+        self, build: Callable[[], Decoded], order: Sequence[int] | None = None
+    ) -> Candidate:
+        """Build a complete schedule and score it like :meth:`submit`, checking the budget first.
+
+        :meth:`submit` takes a schedule that exists already, so a run that has used
+        its budget has built that schedule for nothing. This method calls ``build``
+        only after the budget check that :meth:`assess` makes, so a run at its
+        evaluation limit never builds. The schedule ``build`` returns counts as
+        one evaluation and updates the incumbent, the trace, and the archive exactly
+        as :meth:`submit` does. The time limit is checked once, before ``build``.
+
+        Args:
+            build: Called without arguments, at most once, to build the complete
+                schedule, as ``builder.decoded()`` returns it.
+            order: A priority list that yields the schedule, kept with the
+                candidate for later variation. Defaults to the placement order.
+
+        Returns:
+            The candidate.
+
+        Raises:
+            SolverError: If the schedule leaves a task unplaced.
+            Exhausted: When the evaluation or time limit is reached before ``build``
+                is called, or the target is reached by the schedule.
+        """
+        self._check_budget()
+        decoded = build()
+        self._require_complete(decoded)
+        return self._count(decoded, order, None)
+
+    def _require_complete(self, decoded: Decoded) -> None:
+        """Raise :class:`SolverError` when a schedule leaves a task unplaced."""
         missing = self.problem.size - len(decoded.sequence)
         if missing:
             raise SolverError(
                 f"solver {self.info.id!r} submitted a schedule that leaves {missing} of "
                 f"{self.problem.size} tasks unplaced"
             )
-        self._check_budget()
+
+    def _count(
+        self, decoded: Decoded, order: Sequence[int] | None, modes: Sequence[int] | None
+    ) -> Candidate:
+        """Count a complete schedule as one evaluation, score it, and consider it."""
         self.evaluator.evaluations += 1
         candidate = Candidate(
             list(decoded.sequence if order is None else order),

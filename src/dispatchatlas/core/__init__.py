@@ -17,6 +17,7 @@ from dispatchatlas.core.errors import (
 )
 from dispatchatlas.core.model import (
     FEATURES,
+    SHAPES,
     Dependency,
     Link,
     Mode,
@@ -79,6 +80,7 @@ from dispatchatlas.core.validation import (
 
 __all__ = [
     "FEATURES",
+    "SHAPES",
     "SOLVER_FAMILIES",
     "Assignment",
     "ConfigError",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from functools import partial
 from itertools import pairwise
 from typing import Any
 
@@ -10,7 +11,7 @@ import pytest
 
 from dispatchatlas.core import objectives as registry
 from dispatchatlas.core.errors import SolverError, UnsupportedProblemError
-from dispatchatlas.core.model import Problem, Resource, Task
+from dispatchatlas.core.model import Dependency, Problem, Resource, Task
 from dispatchatlas.core.objectives import Objective, evaluate, register_objective
 from dispatchatlas.core.pareto import dominates
 from dispatchatlas.core.solver import SolverInfo, Status, StopCriteria, StopReason, TracePoint
@@ -22,7 +23,7 @@ from dispatchatlas.solvers.operators import random_modes, random_topological_ord
 from dispatchatlas.solvers.rules import RandomSearch
 from dispatchatlas.solvers.scheduling import Decoded, Decoder
 from dispatchatlas.solvers.search import Exhausted, Improvement, Search, listening
-from tests.helpers import chain_problem, random_problem
+from tests.helpers import chain_problem, random_problem, small_job_shop
 
 
 @pytest.fixture
@@ -87,6 +88,23 @@ def test_unsupported_features_are_refused() -> None:
         Search(problem, StopCriteria(max_evaluations=1), 0, _info(supports={"precedence"}))
     assert "'setups'" in str(caught.value)
     assert "'network'" in str(caught.value)
+
+
+def test_a_problem_without_the_required_shape_is_refused() -> None:
+    fork = Problem(
+        "fork",
+        tasks=(Task.on("a", "m1", 1), Task.on("b", "m2", 1), Task.on("c", "m3", 1)),
+        resources=(Resource("m1"), Resource("m2"), Resource("m3")),
+        dependencies=(Dependency("a", "b"), Dependency("a", "c")),
+    )
+    assert "job-shop" not in fork.shapes
+    needs = _info(shape="job-shop")
+    Search(small_job_shop(), StopCriteria(max_evaluations=1), 0, needs)
+    with pytest.raises(UnsupportedProblemError, match="does not model features") as caught:
+        Search(fork, StopCriteria(max_evaluations=1), 0, needs)
+    assert "['job-shop']" in str(caught.value)
+    assert "problem 'fork'" in str(caught.value)
+    Search(fork, StopCriteria(max_evaluations=1), 0, _info())
 
 
 # --------------------------------------------------------------- incumbent
@@ -563,6 +581,153 @@ def test_submissions_enter_the_archive() -> None:
     assert vectors
     for vector in vectors:
         assert not any(dominates(other, vector) for other in vectors)
+
+
+# ---------------------------------------------------- schedules built on demand
+
+
+def test_assess_built_checks_budget_before_building() -> None:
+    search = Search(chain_problem(), StopCriteria(max_evaluations=2), 0, _info())
+    built_at: list[int] = []
+
+    def build() -> Decoded:
+        built_at.append(search.evaluations)
+        return _built(search, [0, 1, 2])
+
+    search.assess_built(build)
+    search.assess_built(build)
+    assert built_at == [0, 1]
+    with pytest.raises(Exhausted) as caught:
+        search.assess_built(build)
+    assert caught.value.reason is StopReason.EVALUATION_LIMIT
+    # The callback never ran at the limit, and the stop is the one assess raises.
+    assert built_at == [0, 1]
+    assert search.evaluations == 2
+    with pytest.raises(Exhausted) as assessed:
+        search.assess([0, 1, 2])
+    assert assessed.value.reason is caught.value.reason
+
+
+def test_assess_built_checks_the_time_limit_before_building() -> None:
+    search = Search(chain_problem(), StopCriteria(time_limit=1.0), 0, _info())
+    built = 0
+
+    def build() -> Decoded:
+        nonlocal built
+        built += 1
+        return _built(search, [0, 1, 2])
+
+    # Like assess, it lets a run evaluate once before the time limit applies.
+    search._started -= 10.0
+    search.assess_built(build)
+    assert built == 1
+    with pytest.raises(Exhausted) as caught:
+        search.assess_built(build)
+    assert caught.value.reason is StopReason.TIME_LIMIT
+    assert built == 1
+    assert search.evaluations == 1
+
+
+def _run_orders(
+    search: Search, orders: list[list[int]], *, on_demand: bool
+) -> list[tuple[Any, ...]]:
+    """Score ``orders`` placed by the search's builder, through ``assess_built`` or ``submit``."""
+    seen = []
+    for order in orders:
+        if on_demand:
+            candidate = search.assess_built(partial(_built, search, order))
+        else:
+            candidate = search.submit(_built(search, order))
+        seen.append((candidate.score, candidate.order, candidate.modes, candidate.decoded))
+    return seen
+
+
+def test_assess_built_counts_and_competes_like_submit() -> None:
+    problem = _deadline_problem("total_completion_time")
+    # Worse (it misses the deadline), better, equal, and worse again.
+    orders = [[1, 0], [0, 1], [0, 1], [1, 0]]
+    observed = []
+    for on_demand in (False, True):
+        search = Search(problem, StopCriteria(max_evaluations=9), 0, _info(), archive=True)
+        seen = _run_orders(search, orders, on_demand=on_demand)
+        assert search.best is not None
+        trace = [(p.evaluations, p.iteration, p.value, p.feasible) for p in search._trace]
+        front = [search.vector(member) for member in search.front()]
+        observed.append((seen, search.evaluations, search.best.order, trace, front))
+    assert observed[0] == observed[1]
+    seen, evaluations, best, trace, front = observed[1]
+    assert [score for score, *_ in seen] == [
+        Score(1.0, 7.0),
+        Score(0.0, 11.0),
+        Score(0.0, 11.0),
+        Score(1.0, 7.0),
+    ]
+    assert evaluations == 4
+    assert best == [0, 1]
+    assert trace == [(1, 0, 7.0, False), (2, 0, 11.0, True)]
+    assert front == [(11.0,)]
+
+
+def test_assess_built_keeps_the_candidate_the_builder_placed() -> None:
+    problem = random_problem(3, tasks=10, max_modes=2, pools=1)
+    order = list(problem.topological_order)
+    assessed = Search(problem, StopCriteria(max_evaluations=5), 0, _info()).assess(order)
+    search = Search(problem, StopCriteria(max_evaluations=5), 0, _info())
+    decoded = _built(search, order)
+    candidate = search.assess_built(lambda: decoded)
+    assert candidate.decoded is decoded
+    assert (candidate.score, candidate.decoded) == (assessed.score, assessed.decoded)
+    assert (candidate.order, candidate.modes) == (order, list(decoded.modes))
+    other = search.assess_built(lambda: decoded, list(reversed(order)))
+    assert (other.order, other.modes) == (list(reversed(order)), list(decoded.modes))
+    assert search.best is candidate
+    assert search.evaluations == 2
+    result = search.result()
+    assert result.schedule == decoded.schedule(problem)
+    assert result.evaluations == 2
+
+
+def test_assess_built_never_repairs_an_order() -> None:
+    problem = random_problem(3, tasks=8, max_modes=1, pools=0)
+    order = list(problem.topological_order)
+    search = Search(problem, StopCriteria(max_evaluations=9), 0, _info())
+    decoder = search.evaluator.decoder
+    search.assess_built(lambda: _built(search, order))
+    search.submit(_built(search, order))
+    assert decoder.repairs == 0
+    search.assess(order)
+    assert decoder.repairs == 1
+    assert search.evaluations == 3
+
+
+def test_assess_built_refuses_partial_schedules_after_building() -> None:
+    search = Search(chain_problem(), StopCriteria(max_evaluations=5), 0, _info())
+    calls = 0
+
+    def incomplete() -> Decoded:
+        nonlocal calls
+        calls += 1
+        builder = search.evaluator.decoder.builder()
+        builder.place(0, 0)
+        return builder.decoded()
+
+    with pytest.raises(SolverError, match="leaves 2 of 3 tasks unplaced"):
+        search.assess_built(incomplete)
+    assert calls == 1
+    assert search.evaluations == 0
+    assert search.best is None
+
+
+def test_assess_built_obeys_the_target() -> None:
+    search = Search(chain_problem(), StopCriteria(max_evaluations=1, target=5.0), 0, _info())
+    with pytest.raises(Exhausted) as caught:
+        search.assess_built(lambda: _built(search, [0, 1, 2]))
+    assert caught.value.reason is StopReason.TARGET_REACHED
+    assert search.best is not None
+    assert search.evaluations == 1
+    with pytest.raises(Exhausted) as again:
+        search.assess_built(lambda: pytest.fail("built at the evaluation limit"))
+    assert again.value.reason is StopReason.EVALUATION_LIMIT
 
 
 @pytest.mark.parametrize(

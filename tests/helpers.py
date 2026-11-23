@@ -26,6 +26,34 @@ def chain_problem() -> Problem:
     )
 
 
+def small_job_shop() -> Problem:
+    """Three jobs on three machines, each job a chain through every machine once.
+
+    Job ``j0`` visits machines ``m0``, ``m1``, ``m2`` for 3, 2, and 2; ``j1``
+    visits ``m0``, ``m2``, ``m1`` for 2, 1, and 4; ``j2`` visits ``m1``,
+    ``m0``, ``m2`` for 3, 2, and 3. The machines have 7, 9, and 6 units of
+    work and the longest job takes 8, yet the optimal makespan is 11.
+    """
+    routes = (
+        ((0, 3), (1, 2), (2, 2)),
+        ((0, 2), (2, 1), (1, 4)),
+        ((1, 3), (0, 2), (2, 3)),
+    )
+    tasks: list[Task] = []
+    dependencies: list[Dependency] = []
+    for job, route in enumerate(routes):
+        for step, (machine, duration) in enumerate(route):
+            tasks.append(Task.on(f"j{job}-o{step}", f"m{machine}", duration, group=f"j{job}"))
+            if step:
+                dependencies.append(Dependency(f"j{job}-o{step - 1}", f"j{job}-o{step}"))
+    return Problem(
+        "small-job-shop",
+        tasks=tuple(tasks),
+        resources=tuple(Resource(f"m{machine}") for machine in range(3)),
+        dependencies=tuple(dependencies),
+    )
+
+
 def random_problem(
     seed: int,
     *,

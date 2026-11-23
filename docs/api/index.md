@@ -21,8 +21,9 @@ documents every name in the module that defines it. The solvers are grouped
 by kind: [heuristics and local search](solvers-heuristics.md),
 [population and swarm methods](solvers-population.md),
 [multi-objective methods](solvers-multiobjective.md),
-[learning methods](solvers-learning.md), and
-[exact and hybrid methods](solvers-exact.md). The analysis has separate
+[learning methods](solvers-learning.md),
+[exact and hybrid methods](solvers-exact.md), and
+[job shop methods](solvers-shop.md). The analysis has separate
 pages for its [statistics](analysis-stats.md) and its
 [figures](analysis-figures.md).
 

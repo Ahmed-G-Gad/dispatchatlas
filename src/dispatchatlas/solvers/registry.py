@@ -50,6 +50,7 @@ BUILT_IN_MODULES: tuple[str, ...] = (
     "dispatchatlas.solvers.learning",
     "dispatchatlas.solvers.exact",
     "dispatchatlas.solvers.hybrid",
+    "dispatchatlas.solvers.shop",
 )
 """Modules whose ``register(registry)`` function adds the built-in solvers."""
 

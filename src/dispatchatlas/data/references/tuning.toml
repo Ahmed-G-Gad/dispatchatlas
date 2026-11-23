@@ -1,0 +1,15 @@
+# Sources of the automatic configuration of solvers: racing and iterated racing.
+
+[birattari2002racing]
+authors = "M. Birattari, T. Stützle, L. Paquete and K. Varrentrapp"
+year = 2002
+title = "A racing algorithm for configuring metaheuristics"
+venue = "In W. B. Langdon et al. (eds.), GECCO 2002: Proceedings of the Genetic and Evolutionary Computation Conference, Morgan Kaufmann, San Francisco, CA, 11-18"
+url = "https://iridia.ulb.ac.be/~stuetzle/publications/BirStuPaqVar02.pdf"
+
+[lopezibanez2016irace]
+authors = "M. López-Ibáñez, J. Dubois-Lacoste, L. Pérez Cáceres, M. Birattari and T. Stützle"
+year = 2016
+title = "The irace package: Iterated racing for automatic algorithm configuration"
+venue = "Operations Research Perspectives 3:43-58"
+doi = "10.1016/j.orp.2016.09.002"

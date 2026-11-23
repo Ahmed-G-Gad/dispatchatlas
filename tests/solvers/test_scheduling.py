@@ -58,6 +58,31 @@ def test_precedence_repair_keeps_priorities_where_possible():
     assert precedence_feasible(problem, [1, 2, 0]) == [2, 0, 1]
 
 
+def test_decode_counts_repairs():
+    problem = chain_problem()
+    decoder = Decoder(problem)
+    assert decoder.repairs == 0
+    decoder.decode([0, 1, 2])
+    assert decoder.repairs == 1
+    # An order that needs repair counts once, as an order that does not.
+    assert decoder.decode([1, 2, 0]).sequence == (2, 0, 1)
+    assert decoder.repairs == 2
+    decoder.schedule([2, 0, 1], [0, 0, 0])
+    assert decoder.repairs == 3
+    # Tasks a builder places are never repaired.
+    builder = decoder.builder()
+    for task in (0, 1, 2):
+        builder.place(task, 0)
+    assert builder.decoded().sequence == (0, 1, 2)
+    assert decoder.repairs == 3
+    # Each decoder counts its own decodes, and the evaluator's decoder counts evaluations.
+    assert Decoder(problem).repairs == 0
+    evaluator = Evaluator(problem)
+    for order in ([0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1]):
+        evaluator.evaluate(order)
+    assert evaluator.decoder.repairs == evaluator.evaluations == 4
+
+
 def test_insertion_fills_an_idle_gap():
     problem = Problem(
         "gap",

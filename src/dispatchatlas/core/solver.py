@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from dispatchatlas.core._frozen import FrozenMap
 from dispatchatlas.core.errors import ModelError
-from dispatchatlas.core.model import FEATURES, Scalar
+from dispatchatlas.core.model import FEATURES, SHAPES, Scalar
 
 if TYPE_CHECKING:
     from dispatchatlas.core.model import Problem
@@ -382,6 +382,9 @@ class SolverInfo:
         requires: Optional-dependency extras the solver needs, for example
             ``("exact",)``.
         parameters: Default values of the solver's parameters.
+        shape: The structural shape every problem must have for the solver to model
+            it, a key of :data:`~dispatchatlas.core.model.SHAPES`, or ``None`` for a
+            solver that needs none. A problem that lacks the shape is unsupported.
     """
 
     id: str
@@ -395,6 +398,7 @@ class SolverInfo:
     supports: frozenset[str] = frozenset(FEATURES)
     requires: tuple[str, ...] = ()
     parameters: Mapping[str, Any] = field(default_factory=dict, hash=False)
+    shape: str | None = None
 
     def __post_init__(self) -> None:
         if not _SLUG.match(self.id):
@@ -406,17 +410,27 @@ class SolverInfo:
         unknown = set(self.supports) - set(FEATURES)
         if unknown:
             raise ModelError(f"solver {self.id!r} declares unknown features {sorted(unknown)}")
+        if self.shape is not None and self.shape not in SHAPES:
+            raise ModelError(f"solver {self.id!r} declares unknown shape {self.shape!r}")
         object.__setattr__(self, "references", tuple(self.references))
         object.__setattr__(self, "supports", frozenset(self.supports))
         object.__setattr__(self, "requires", tuple(self.requires))
         object.__setattr__(self, "parameters", FrozenMap(self.parameters))
 
     def unsupported(self, problem: Problem) -> frozenset[str]:
-        """Return the features of ``problem`` this solver does not model."""
-        return problem.features - self.supports
+        """Return what keeps this solver from modelling ``problem``.
+
+        The result holds the features of ``problem`` that the solver does not model and,
+        when the solver requires a :attr:`shape` that ``problem`` lacks, the name of that
+        shape.
+        """
+        missing = problem.features - self.supports
+        if self.shape is not None and self.shape not in problem.shapes:
+            return missing | {self.shape}
+        return missing
 
     def accepts(self, problem: Problem) -> bool:
-        """Return whether this solver models every feature of ``problem``."""
+        """Return whether this solver models every feature of ``problem`` and its shape."""
         return not self.unsupported(problem)
 
 

@@ -9,6 +9,7 @@ replay identically from the same seed.
 from __future__ import annotations
 
 import importlib.util
+import math
 
 import pytest
 
@@ -24,7 +25,7 @@ from dispatchatlas.core import (
 from dispatchatlas.core.model import FEATURES
 from dispatchatlas.references import bibliography
 from dispatchatlas.solvers import default_registry
-from tests.helpers import chain_problem, random_problem
+from tests.helpers import chain_problem, random_problem, small_job_shop
 
 EXTRA_MODULES = {"exact": ("ortools", "pulp"), "gurobi": ("gurobipy",)}
 
@@ -50,12 +51,15 @@ def _problems() -> list[Problem]:
         random_problem(2, tasks=8, max_modes=2, pools=1),
         random_problem(3, tasks=8, max_modes=2, pools=0, network=True),
         random_problem(4, tasks=8, max_modes=1, pools=0, setups=True),
+        small_job_shop(),
     ]
 
 
 def _accepted(solver_id: str) -> list[Problem]:
     info = REGISTRY.info(solver_id)
-    return [problem for problem in _problems() if info.accepts(problem)]
+    # The enumeration decodes every order, so it refuses problems above its max_tasks.
+    largest = info.parameters.get("max_tasks", math.inf)
+    return [problem for problem in _problems() if info.accepts(problem) and problem.size <= largest]
 
 
 @pytest.mark.parametrize("solver_id", SOLVERS)
