@@ -436,3 +436,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   insertions scored exactly, a tabu list of reversed arcs with aspiration,
   and restarts; `critical_block_descent` gives the same neighbourhood as a
   local search for other methods.
+- `tuning.batch.process_run_batch` runs the experiments of iterated racing
+  in worker processes through `run_calls`, one row per experiment keyed by
+  its configuration's digest, its instance and its seed; a rerun after a kill
+  replays the recorded costs and runs only the rest, so a deterministic
+  `IteratedRacing` reaches the same result.
+- A campaign session may be given a deadline (`deadline_seconds`,
+  `--deadline-seconds`): no run starts whose time limit cannot end before it,
+  and the held-back runs stay pending for the next session.
+- `run_calls` locks its rows file by the exclusive creation of a lock file
+  where `flock` is not implemented, as the campaign store does.
