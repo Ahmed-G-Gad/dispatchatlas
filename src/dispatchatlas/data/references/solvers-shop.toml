@@ -50,6 +50,13 @@ title = "A genetic algorithm for job-shop scheduling problems using job-based or
 venue = "Proceedings of IEEE International Conference on Evolutionary Computation (ICEC 1996), 547-552"
 doi = "10.1109/ICEC.1996.542658"
 
+[pan2007discrete]
+authors = "Q.-K. Pan, M. F. Tasgetiren and Y.-C. Liang"
+year = 2007
+title = "A discrete particle swarm optimization algorithm for the permutation flowshop sequencing problem with makespan criterion"
+venue = "Research and Development in Intelligent Systems XXIII, Springer, 19-31"
+doi = "10.1007/978-1-84628-663-6_2"
+
 [pan2008discrete]
 authors = "Q.-K. Pan, M. F. Tasgetiren and Y.-C. Liang"
 year = 2008
