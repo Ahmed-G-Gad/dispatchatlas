@@ -25,12 +25,15 @@ import logging
 import math
 import random
 import sys
+import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from dispatchatlas.core import (
+    BoundPoint,
     ConfigError,
     Dependency,
     Link,
@@ -56,7 +59,7 @@ from dispatchatlas.solvers import exact as exact_package
 from dispatchatlas.solvers.evaluation import Evaluator
 from dispatchatlas.solvers.exact import CpSat, Enumeration, TimeIndexedMilp, register
 from dispatchatlas.solvers.exact import milp as milp_module
-from dispatchatlas.solvers.exact.common import decimal_scale, serial_horizon
+from dispatchatlas.solvers.exact.common import Clock, decimal_scale, exact_result, serial_horizon
 from dispatchatlas.solvers.registry import SolverRegistry
 from tests.helpers import chain_problem, random_problem
 
@@ -765,6 +768,212 @@ def test_cpsat_reports_a_missing_ortools(monkeypatch):
         monkeypatch.setitem(sys.modules, name, None)
     with pytest.raises(MissingDependencyError, match="ortools"):
         CpSat().solve(chain_problem(), GENEROUS)
+
+
+# ------------------------------------------------------------ bounds over time
+
+
+def assert_bounds_over_time(result: SolveResult) -> None:
+    """Check what the bounds over time of a result that has a bound must show.
+
+    They exist, rise at every point, are in time order and within the run, and end at the
+    result's bound, which never exceeds the objective value of the schedule.
+    """
+    values = [point.value for point in result.bounds]
+    times = [point.elapsed for point in result.bounds]
+    assert values, "a result with a bound has bounds over time"
+    assert values == sorted(set(values)), "the bounds rise at every point"
+    assert times == sorted(times)
+    assert times[0] >= 0.0
+    assert times[-1] <= result.elapsed
+    assert values[-1] == result.bound
+    if result.value is not None:
+        assert values[-1] <= result.value + 1e-9
+
+
+def test_exact_result_carries_the_bounds_it_is_given():
+    problem = chain_problem()
+    schedule = schedule_of(optimum(problem))
+    bounds = (BoundPoint(0.1, 3.0), BoundPoint(0.2, 5.0))
+    result = exact_result(
+        Enumeration.info,
+        problem,
+        "makespan",
+        status=Status.OPTIMAL,
+        schedule=schedule,
+        stop_reason=StopReason.COMPLETED,
+        elapsed=0.3,
+        bound=5.0,
+        bounds=list(bounds),
+    )
+    assert result.bounds == bounds
+    bare = exact_result(
+        Enumeration.info,
+        problem,
+        "makespan",
+        status=Status.OPTIMAL,
+        schedule=schedule,
+        stop_reason=StopReason.COMPLETED,
+        elapsed=0.3,
+        bound=5.0,
+    )
+    assert bare.bounds == ()
+
+
+@pytest.mark.exact
+@requires_ortools
+@pytest.mark.parametrize(
+    "problem",
+    [job_shop("ft06", FT06), random_job_shop(2, 6, 6), random_job_shop(5, 7, 5)],
+    ids=lambda problem: problem.id,
+)
+def test_cpsat_bounds_over_time_never_fall_and_end_at_the_bound(problem):
+    from ortools.sat.python import cp_model  # noqa: PLC0415 - needs the ortools package
+
+    result = CpSat(threads=1).solve(problem, GENEROUS)
+    assert result.status is Status.OPTIMAL
+    assert_bounds_over_time(result)
+    assert result.bounds[-1].value == pytest.approx(value_of(result))
+    # The extras say how the bounds were gathered: by the callback where OR-Tools has one.
+    assert result.extras["bound_callback"] is hasattr(cp_model.CpSolver(), "best_bound_callback")
+    # With one worker the bounds replay: only their times differ.
+    again = CpSat(threads=1).solve(problem, GENEROUS)
+    assert [point.value for point in again.bounds] == [point.value for point in result.bounds]
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_cpsat_falls_back_to_the_bound_of_each_solution_without_a_bound_callback(monkeypatch):
+    monkeypatch.setattr(
+        "dispatchatlas.solvers.exact._cpsat._report_bounds", lambda solver, monitor: False
+    )
+    result = CpSat().solve(random_job_shop(2, 6, 6), GENEROUS)
+    assert result.status is Status.OPTIMAL
+    assert result.extras["bound_callback"] is False
+    assert_bounds_over_time(result)
+    # One bound with each solution, and the final bound after the proof.
+    assert len(result.bounds) <= len(result.trace) + 1
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_cpsat_sets_a_bound_callback_only_on_a_solver_that_has_one():
+    from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - needs the ortools package
+
+    monitor = _cpsat._Monitor(_cpsat.ModelObjective(0, 0, 1), COMPLETE, Clock(None))
+
+    class Offering:
+        best_bound_callback: Any = None
+
+    class Lacking:
+        pass
+
+    offering = Offering()
+    assert _cpsat._report_bounds(cast("Any", offering), monitor) is True
+    assert offering.best_bound_callback == monitor.on_bound
+    lacking = Lacking()
+    assert _cpsat._report_bounds(cast("Any", lacking), monitor) is False
+    assert not hasattr(lacking, "best_bound_callback")
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_the_cpsat_monitor_records_only_the_finite_bounds_that_rise():
+    from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - needs the ortools package
+
+    monitor = _cpsat._Monitor(_cpsat.ModelObjective(0, 5, 10), COMPLETE, Clock(None))
+    for bound in (-math.inf, math.nan, 10.0, 10.0, 8.0, 15.0, math.inf):
+        monitor.on_bound(bound)
+    # Each bound is stated in problem units, as (bound + 5) / 10.
+    assert [point.value for point in monitor.bounds] == [1.5, 2.0]
+    times = [point.elapsed for point in monitor.bounds]
+    assert times == sorted(times)
+    assert all(time >= 0.0 for time in times)
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_the_cpsat_monitor_keeps_its_bounds_in_order_under_concurrent_callbacks():
+    from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - needs the ortools package
+
+    monitor = _cpsat._Monitor(_cpsat.ModelObjective(0, 0, 1), COMPLETE, Clock(None))
+    bounds = [float(bound) for bound in range(1, 2001)]
+
+    def feed(part):
+        for bound in part:
+            monitor.on_bound(bound)
+
+    workers = [threading.Thread(target=feed, args=(bounds[i::4],)) for i in range(4)]
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+    finally:
+        sys.setswitchinterval(interval)
+    values = [point.value for point in monitor.bounds]
+    times = [point.elapsed for point in monitor.bounds]
+    assert values == sorted(set(values))
+    assert times == sorted(times)
+    assert values[-1] == 2000.0
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_the_bounds_of_a_run_end_at_the_bound_it_proved():
+    from dispatchatlas.solvers.exact import _cpsat  # noqa: PLC0415 - needs the ortools package
+
+    rising = (BoundPoint(0.1, 3.0), BoundPoint(0.2, 4.0))
+    # The last callback already reported the proven bound.
+    assert _cpsat._ending_at(rising, 4.0, 0.5) == rising
+    # The proof came after the last callback: a point at the end of the run closes the series.
+    assert _cpsat._ending_at(rising, 6.0, 0.5) == (*rising, BoundPoint(0.5, 6.0))
+    assert _cpsat._ending_at((), 2.0, 0.5) == (BoundPoint(0.5, 2.0),)
+    # A bound above the proven one cannot hold, so it is dropped.
+    assert _cpsat._ending_at(rising, 3.5, 0.5) == (rising[0], BoundPoint(0.5, 3.5))
+    assert _cpsat._ending_at(rising, None, 0.5) == ()
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_cpsat_bounds_end_at_the_bound_of_a_run_stopped_after_one_solution():
+    result = CpSat().solve(random_job_shop(1, 8, 5), StopCriteria(max_evaluations=1))
+    assert result.evaluations == 1
+    assert_bounds_over_time(result)
+    assert bound_of(result) <= value_of(result)
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_cpsat_records_the_bound_of_a_run_that_found_no_schedule(monkeypatch):
+    from ortools.sat.python import cp_model  # noqa: PLC0415 - needs the ortools package
+
+    class Starved(cp_model.CpSolver):  # type: ignore[misc, unused-ignore]
+        """A solver whose deterministic time is spent before it finds a solution."""
+
+        def __init__(self):
+            super().__init__()
+            self.parameters.max_deterministic_time = 1e-6
+
+    monkeypatch.setattr(cp_model, "CpSolver", Starved)
+    result = CpSat().solve(random_job_shop(1, 10, 6), GENEROUS)
+    assert result.status is Status.UNKNOWN
+    assert result.schedule is None
+    assert result.stop_reason is StopReason.TIME_LIMIT
+    if result.bound is None:
+        assert result.bounds == ()
+    else:
+        assert_bounds_over_time(result)
+
+
+@pytest.mark.exact
+@requires_ortools
+def test_cpsat_reports_no_bounds_when_it_proves_infeasibility():
+    result = CpSat().solve(infeasible_problem(), GENEROUS)
+    assert result.status is Status.INFEASIBLE
+    assert (result.bound, result.bounds) == (None, ())
 
 
 # -------------------------------------------------------------------- milp

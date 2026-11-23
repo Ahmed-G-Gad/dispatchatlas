@@ -414,9 +414,10 @@ def describe(
         notes on every claim of the solver the checks contradict.
 
     Raises:
-        SolverError: If the elapsed time, or a time or a value of the trace,
-            is not a finite number. Such a result can be neither compared
-            with the clock of the engine nor stored in a record.
+        SolverError: If the elapsed time, or a time or a value of the trace or
+            of the bounds over time, is not a finite number. Such a result can
+            be neither compared with the clock of the engine nor stored in a
+            record.
     """
     _require_finite(result)
     notes: list[str] = []
@@ -470,6 +471,7 @@ def describe(
         front=tuple(point.values for point in result.front),
         schedule_digest=None if schedule is None else schedule_digest(schedule),
         extras=dict(result.extras),
+        bounds=result.bounds,
     )
     return outcome, schedule, tuple(notes)
 
@@ -690,7 +692,7 @@ def exception_error(error: BaseException, kind: ErrorKind = ErrorKind.EXCEPTION)
 
 
 def _require_finite(result: SolveResult) -> None:
-    """Raise when the elapsed time or a number of the trace of ``result`` is not finite."""
+    """Raise when the elapsed time, or a number of the trace or the bounds, is not finite."""
     if not math.isfinite(result.elapsed):
         raise SolverError(f"the solver reports an elapsed time of {result.elapsed!r} s")
     for index, point in enumerate(result.trace):
@@ -698,6 +700,11 @@ def _require_finite(result: SolveResult) -> None:
             raise SolverError(f"point {index} of the trace holds a time of {point.elapsed!r} s")
         if not math.isfinite(point.value):
             raise SolverError(f"point {index} of the trace holds a value of {point.value!r}")
+    for index, bound in enumerate(result.bounds):
+        if not math.isfinite(bound.elapsed):
+            raise SolverError(f"bound {index} holds a time of {bound.elapsed!r} s")
+        if not math.isfinite(bound.value):
+            raise SolverError(f"bound {index} holds a value of {bound.value!r}")
 
 
 def _measurement(

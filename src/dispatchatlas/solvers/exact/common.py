@@ -23,6 +23,7 @@ from dispatchatlas.core.model import Dependency, Problem, Scalar
 from dispatchatlas.core.objectives import evaluate, is_built_in
 from dispatchatlas.core.schedule import Schedule
 from dispatchatlas.core.solver import (
+    BoundPoint,
     SolveResult,
     SolverInfo,
     Status,
@@ -331,6 +332,7 @@ def exact_result(
     evaluations: int = 0,
     iterations: int = 0,
     trace: Sequence[TracePoint] = (),
+    bounds: Sequence[BoundPoint] = (),
     extras: Mapping[str, Scalar] | None = None,
 ) -> SolveResult:
     """Build the result of an exact solver after checking its schedule.
@@ -347,6 +349,8 @@ def exact_result(
         evaluations: Schedules the solver scored.
         iterations: Main-loop iterations, as the solver defines them.
         trace: Improvements of the incumbent over time.
+        bounds: Improvements of the proven bound over time. Their values must
+            never fall, and the last must equal ``bound``.
         extras: Backend facts such as its raw status.
 
     Returns:
@@ -380,4 +384,5 @@ def exact_result(
         bound=bound,
         trace=tuple(trace),
         extras=dict(extras or {}),
+        bounds=tuple(bounds),
     )

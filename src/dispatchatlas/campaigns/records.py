@@ -21,12 +21,12 @@ version:
 
 The **result hash** is the SHA-256 digest of the canonical JSON of
 :meth:`Outcome.hashed`: every outcome field except those that measure wall
-time (``elapsed`` and the elapsed column of the trace) and ``extras``, whose
-solver-specific facts carry no determinism guarantee. Nothing about the
-machine, the session, or the attempt enters it, so a replay on any machine
-compares results directly (see :mod:`~dispatchatlas.campaigns.replaying`). The
-schedule enters it through its digest, so a record with or without stored
-schedule rows hashes alike.
+time (``elapsed`` and the elapsed columns of the trace and of the bounds) and
+``extras``, whose solver-specific facts carry no determinism guarantee.
+Nothing about the machine, the session, or the attempt enters it, so a replay
+on any machine compares results directly (see
+:mod:`~dispatchatlas.campaigns.replaying`). The schedule enters it through its
+digest, so a record with or without stored schedule rows hashes alike.
 
 The **identity hash** is the SHA-256 digest of the canonical JSON of
 :meth:`RunRecord.identity`: the digest of the problem, the id and the
@@ -51,9 +51,10 @@ from dispatchatlas.core.errors import ConfigError, ModelError, SerializationErro
 from dispatchatlas.core.model import Scalar
 from dispatchatlas.core.schedule import Assignment, Schedule
 from dispatchatlas.core.serialization import digest
-from dispatchatlas.core.solver import Status, StopCriteria, StopReason, TracePoint
+from dispatchatlas.core.solver import BoundPoint, Status, StopCriteria, StopReason, TracePoint
 
 __all__ = [
+    "BOUND_COLUMNS",
     "FAILURE_SCHEMA",
     "RUN_SCHEMA",
     "SESSION_SCHEMA",
@@ -83,6 +84,9 @@ SESSION_SCHEMA = "dispatchatlas.session/1"
 
 TRACE_COLUMNS: tuple[str, ...] = ("elapsed", "evaluations", "iteration", "value", "feasible")
 """Column order of the rows of a recorded trace."""
+
+BOUND_COLUMNS: tuple[str, ...] = ("elapsed", "value")
+"""Column order of the rows of recorded bounds over time."""
 
 
 class Category(StrEnum):
@@ -179,6 +183,9 @@ class Outcome:
         schedule_digest: :func:`schedule_digest` of the schedule, or ``None``
             without one.
         extras: Solver-specific facts.
+        bounds: How the proven bound improved over time, for solvers that
+            report it, as ``SolveResult.bounds`` states it. The document of an
+            outcome holds it, under ``bounds``, only when it is not empty.
     """
 
     status: Status
@@ -197,6 +204,7 @@ class Outcome:
     front: tuple[tuple[float, ...], ...] = ()
     schedule_digest: str | None = None
     extras: Mapping[str, Scalar] = field(default_factory=dict, hash=False)
+    bounds: tuple[BoundPoint, ...] = ()
 
     def __post_init__(self) -> None:
         # Numbers are normalised on construction, so an outcome built from a
@@ -224,6 +232,7 @@ class Outcome:
             ),
             "front": tuple(tuple(float(v) for v in point) for point in self.front),
             "extras": dict(self.extras),
+            "bounds": tuple(BoundPoint(float(p.elapsed), float(p.value)) for p in self.bounds),
         }
         for name, value in values.items():
             object.__setattr__(self, name, value)
@@ -239,8 +248,12 @@ class Outcome:
         return self.stop_reason is not StopReason.TIME_LIMIT
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the outcome as a JSON-ready dictionary."""
-        return {
+        """Return the outcome as a JSON-ready dictionary.
+
+        The bounds over time are listed under ``bounds``, as ``[elapsed, value]``
+        rows, only when the outcome has some.
+        """
+        document: dict[str, Any] = {
             "status": self.status.value,
             "stop_reason": self.stop_reason.value,
             "objective": self.objective,
@@ -260,12 +273,17 @@ class Outcome:
             "schedule_digest": self.schedule_digest,
             "extras": dict(self.extras),
         }
+        if self.bounds:
+            document["bounds"] = [[p.elapsed, p.value] for p in self.bounds]
+        return document
 
     def hashed(self) -> dict[str, Any]:
         """Return the fields the result hash covers: all but wall times and extras."""
         document = self.to_dict()
         del document["elapsed"], document["extras"]
         document["trace"] = [row[1:] for row in document["trace"]]
+        if "bounds" in document:
+            document["bounds"] = [row[1:] for row in document["bounds"]]
         return document
 
     def result_hash(self) -> str:
@@ -285,6 +303,12 @@ class Outcome:
         """
         fields = _Fields(document, "an outcome")
         trace = tuple(_trace_point(row) for row in fields.array("trace"))
+        stated = fields.absent_or_raw("bounds")
+        bounds = (
+            ()
+            if stated is None
+            else tuple(_bound_point(row) for row in _list(stated, "the bounds of an outcome"))
+        )
         front = tuple(
             tuple(_number(value, "a front value") for value in _list(point, "a front point"))
             for point in fields.array("front")
@@ -314,6 +338,7 @@ class Outcome:
                 front=front,
                 schedule_digest=fields.optional_text("schedule_digest"),
                 extras=fields.mapping("extras"),
+                bounds=bounds,
             ),
         )
 
@@ -1236,6 +1261,14 @@ def _trace_point(row: object) -> TracePoint:
         _number(value, "a trace value"),
         feasible,
     )
+
+
+def _bound_point(row: object) -> BoundPoint:
+    items = _list(row, "a bound row")
+    if len(items) != len(BOUND_COLUMNS):
+        raise SerializationError(f"a bound row must list {', '.join(BOUND_COLUMNS)}")
+    elapsed, value = items
+    return BoundPoint(_number(elapsed, "a bound time"), _number(value, "a bound value"))
 
 
 def _schedule(rows: list[Any]) -> Schedule:

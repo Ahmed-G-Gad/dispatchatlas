@@ -11,6 +11,7 @@ equals the problem's objective value of the schedule read back from it.
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -22,6 +23,7 @@ from dispatchatlas.core.model import Problem, Resource, Scalar, SetupTimes
 from dispatchatlas.core.objectives import evaluate
 from dispatchatlas.core.schedule import Assignment, Schedule
 from dispatchatlas.core.solver import (
+    BoundPoint,
     SolveResult,
     SolverInfo,
     Status,
@@ -512,9 +514,12 @@ class IntervalModel:
 
 
 class _Monitor(cp_model.CpSolverSolutionCallback):  # type: ignore[misc, unused-ignore]
-    """Counts CP-SAT solutions, records the trace, and applies the stop criteria.
+    """Counts CP-SAT solutions, records the trace and the bounds, and applies the stop criteria.
 
-    Each improving solution CP-SAT reports is one evaluation and one iteration.
+    Each improving solution CP-SAT reports is one evaluation and one iteration. The monitor
+    also records, in the problem's units, each improvement of the best bound CP-SAT has
+    proven: the bound it holds with every solution, and, where OR-Tools has a bound
+    callback (see :func:`_report_bounds`), every improvement between solutions.
     """
 
     def __init__(self, objective: ModelObjective, stop: StopCriteria, clock: Clock) -> None:
@@ -524,13 +529,18 @@ class _Monitor(cp_model.CpSolverSolutionCallback):  # type: ignore[misc, unused-
         self.clock = clock
         self.solutions = 0
         self.trace: list[TracePoint] = []
+        self.bounds: list[BoundPoint] = []
         self.reason: StopReason | None = None
+        # CP-SAT may call the bound callback from another thread than the solution
+        # callback, so the comparison with the last bound and the append are one step.
+        self._bounds_lock = threading.Lock()
 
     def on_solution_callback(self) -> None:
-        """Record a new solution and stop the search if a criterion is met."""
+        """Record a new solution and its bound, and stop the search if a criterion is met."""
         self.solutions += 1
         value = self.objective.original(self.objective_value)
         self.trace.append(TracePoint(self.clock.elapsed, self.solutions, self.solutions, value))
+        self.on_bound(self.best_objective_bound)
         stop = self.stop
         if stop.target is not None and value <= stop.target:
             self.reason = StopReason.TARGET_REACHED
@@ -540,6 +550,53 @@ class _Monitor(cp_model.CpSolverSolutionCallback):  # type: ignore[misc, unused-
             self.reason = StopReason.ITERATION_LIMIT
         if self.reason is not None:
             self.stop_search()
+
+    def on_bound(self, bound: float) -> None:
+        """Record ``bound``, CP-SAT's best bound on the model's objective, if it improves.
+
+        A bound that is not finite is CP-SAT's lack of one and is skipped. A bound that does not
+        exceed the last one recorded is skipped too, so the recorded values only rise.
+        """
+        if not math.isfinite(bound):
+            return
+        value = self.objective.original(bound)
+        with self._bounds_lock:
+            if not self.bounds or value > self.bounds[-1].value:
+                self.bounds.append(BoundPoint(self.clock.elapsed, value))
+
+
+def _report_bounds(solver: cp_model.CpSolver, monitor: _Monitor) -> bool:
+    """Have ``solver`` pass every improvement of its bound to ``monitor``, if it can.
+
+    OR-Tools builds that offer a bound callback expose it as the attribute
+    ``best_bound_callback`` of the solver. The attribute is tested, never the version of the
+    package, so a build is used as it is.
+
+    Returns:
+        Whether the callback is set. Without it, the monitor still holds the bound of every
+        solution.
+    """
+    if not hasattr(solver, "best_bound_callback"):
+        return False
+    solver.best_bound_callback = monitor.on_bound
+    return True
+
+
+def _ending_at(
+    points: Sequence[BoundPoint], final: float | None, elapsed: float
+) -> tuple[BoundPoint, ...]:
+    """Return the recorded bounds as a series that ends at ``final``, the bound the run proved.
+
+    CP-SAT may improve its bound after its last callback, so a point at ``elapsed`` closes the
+    series when the last recorded bound is below ``final``. A recorded bound above ``final``
+    cannot hold and is dropped. Without a final bound there is no series.
+    """
+    if final is None:
+        return ()
+    bounds = [point for point in points if point.value <= final]
+    if not bounds or bounds[-1].value < final:
+        bounds.append(BoundPoint(elapsed, final))
+    return tuple(bounds)
 
 
 def solve(
@@ -611,7 +668,9 @@ def solve(
         parameters.log_to_stdout = False
         solver.log_callback = _LOG.info
     monitor = _Monitor(objective, stop, clock)
+    extras["bound_callback"] = _report_bounds(solver, monitor)
     status = solver.solve(model.model, monitor)
+    ended = clock.elapsed
     extras["raw_status"] = solver.status_name(status)
     extras["conflicts"] = solver.num_conflicts
     extras["branches"] = solver.num_branches
@@ -635,6 +694,7 @@ def solve(
         )
     bound = solver.best_objective_bound
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        reached = objective.original(bound) if math.isfinite(bound) else None
         return exact_result(
             info,
             problem,
@@ -643,9 +703,10 @@ def solve(
             schedule=None,
             stop_reason=monitor.reason or limited,
             elapsed=clock.elapsed,
-            bound=objective.original(bound) if math.isfinite(bound) else None,
+            bound=reached,
             evaluations=solutions,
             iterations=solutions,
+            bounds=_ending_at(monitor.bounds, reached, ended),
             extras=extras,
         )
     schedule = model.schedule(solver)
@@ -671,5 +732,6 @@ def solve(
         evaluations=solutions,
         iterations=solutions,
         trace=monitor.trace,
+        bounds=_ending_at(monitor.bounds, proven, ended),
         extras=extras,
     )

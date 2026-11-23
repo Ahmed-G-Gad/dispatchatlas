@@ -50,6 +50,7 @@ from dispatchatlas.core.serialization import (
     schedule_to_dict,
 )
 from dispatchatlas.core.solver import (
+    BoundPoint,
     FrontPoint,
     SolveResult,
     Status,
@@ -539,3 +540,65 @@ def test_result_files_are_json_objects_without_nan(tmp_path: Path) -> None:
     path.write_text("[]", encoding="utf-8")
     with pytest.raises(SerializationError, match="must be a JSON object"):
         load_result(path)
+
+
+# --------------------------------------------------------- bounds over time
+
+RESULT_DIGEST = "a483492003127e174e911aeb7ad66fb31b51724d05b1fe84b44a5e7e6cfe8190"
+"""SHA-256 of the canonical form of ``result_to_dict(_full_result())``, a result without bounds.
+
+It was computed before results could hold bounds. Changing it breaks the stored digests of
+result documents.
+"""
+
+RESULT_FILE_DIGEST = "a98ef89ac27ced73e83b6f6345a6a5d6f191ecdb9ccf670048d2bbd858c9fb02"
+"""SHA-256 of the bytes ``save_result`` writes for ``_full_result()``, computed as above."""
+
+BOUNDS = (BoundPoint(0.05, 3.0), BoundPoint(0.2, 4.5), BoundPoint(0.25, 5.0))
+
+
+def test_a_result_without_bounds_is_written_exactly_as_before(tmp_path: Path) -> None:
+    result = _full_result()
+    assert result.bounds == ()
+    document = result_to_dict(result)
+    assert "bounds" not in document
+    assert digest(document) == RESULT_DIGEST
+    path = save_result(result, tmp_path / "result.json")
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULT_FILE_DIGEST
+    assert load_result(path) == result
+
+
+def test_bounds_over_time_add_one_key_and_round_trip(tmp_path: Path) -> None:
+    result = _full_result(bounds=BOUNDS)
+    document = result_to_dict(result)
+    assert document["bounds"] == [[0.05, 3.0], [0.2, 4.5], [0.25, 5.0]]
+    others = {key: value for key, value in document.items() if key != "bounds"}
+    assert others == result_to_dict(_full_result())
+    assert digest(document) != RESULT_DIGEST
+    assert result_from_dict(json.loads(json.dumps(document, allow_nan=False))) == result
+    path = save_result(result, tmp_path / "bounded.json")
+    assert load_result(path).bounds == BOUNDS
+    assert load_result(path) == result
+    # A document that lists no bounds is a result without bounds, written without the key.
+    empty = result_from_dict(_result_document(bounds=[]))
+    assert empty == _full_result()
+    assert "bounds" not in result_to_dict(empty)
+
+
+@pytest.mark.parametrize(
+    ("bounds", "message"),
+    [
+        (5, "the bounds of a result must be a list"),
+        ([0.1, 3.0], "the bound row of a result must be a list"),
+        ([[0.1]], "a bound row of a result lists elapsed and value"),
+        ([[0.1, 3.0, 1]], "a bound row of a result lists elapsed and value"),
+        ([["soon", 3.0]], "the bound time of a result must be a finite number"),
+        ([[True, 3.0]], "the bound time of a result must be a finite number"),
+        ([[0.1, None]], "the bound value of a result must be a finite number"),
+        ([[0.1, math.inf]], "the bound value of a result must be a finite number"),
+    ],
+)
+def test_invalid_bounds_raise_serialization_errors(bounds: Any, message: str) -> None:
+    with pytest.raises(SerializationError) as caught:
+        result_from_dict(_result_document(bounds=bounds))
+    assert message in str(caught.value)

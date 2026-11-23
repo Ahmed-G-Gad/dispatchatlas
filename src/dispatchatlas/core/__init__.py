@@ -62,6 +62,7 @@ from dispatchatlas.core.serialization import (
 )
 from dispatchatlas.core.solver import (
     SOLVER_FAMILIES,
+    BoundPoint,
     FrontPoint,
     Solver,
     SolveResult,
@@ -83,6 +84,7 @@ __all__ = [
     "SHAPES",
     "SOLVER_FAMILIES",
     "Assignment",
+    "BoundPoint",
     "ConfigError",
     "Dependency",
     "DispatchAtlasError",

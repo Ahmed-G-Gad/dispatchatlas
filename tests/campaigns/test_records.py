@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from dispatchatlas.campaigns import Protocol
-from dispatchatlas.campaigns.execution import Failure, Task, attempt, classify, describe
+from dispatchatlas.campaigns.execution import (
+    Completion,
+    Failure,
+    Task,
+    attempt,
+    classify,
+    describe,
+)
 from dispatchatlas.campaigns.records import (
     Category,
     ErrorKind,
@@ -22,22 +32,39 @@ from dispatchatlas.campaigns.records import (
     settled,
 )
 from dispatchatlas.core import (
+    BoundPoint,
     ConfigError,
     MissingDependencyError,
     ModelError,
     Schedule,
     SerializationError,
     SolverError,
+    Status,
     StopCriteria,
     StopReason,
+    TracePoint,
     UnsupportedProblemError,
+    digest,
     problem_digest,
 )
 from dispatchatlas.solvers import default_registry
-from tests.helpers import chain_problem
+from tests.helpers import chain_problem, small_job_shop
 
 SOLVERS = default_registry(plugins=False)
 STOP = StopCriteria(max_evaluations=20)
+EARLIER = Path(__file__).parent / "data" / "earlier" / "tiny" / "runs"
+"""Run records written by the library before outcomes could hold bounds over time."""
+
+OUTCOME_DIGEST = "30e2ba95c7ddded2588023072b4c0c3a2a065db0b9bce57c63b121e2e693ccc6"
+"""SHA-256 of the canonical form of ``_unbounded().to_dict()``, computed before outcomes had bounds.
+
+Changing it changes the documents of stored records.
+"""
+
+OUTCOME_HASH = "87f36aef2bd5964f97ec3d76d071954c939212450293a9bcec4079b62ea48e0d"
+"""``_unbounded().result_hash()``, computed as above. Changing it breaks stored result hashes."""
+
+BOUNDS = (BoundPoint(0.01, 3.0), BoundPoint(0.02, 4.0))
 
 
 def _completed(solver_id: str = "random-search", seed: int = 3) -> tuple[Outcome, Schedule | None]:
@@ -103,6 +130,165 @@ def test_a_second_run_from_the_same_seed_has_the_same_result_hash() -> None:
     second, _ = _completed(seed=8)
     assert first.result_hash() == second.result_hash()
     assert first.hashed() == second.hashed()
+
+
+def _unbounded() -> Outcome:
+    """An outcome of a time-limited exact run, written out literally."""
+    return Outcome(
+        status=Status.FEASIBLE,
+        stop_reason=StopReason.TIME_LIMIT,
+        objective="makespan",
+        value=57.0,
+        objectives={"makespan": 57.0},
+        bound=55.0,
+        gap=2 / 57,
+        feasible=True,
+        violations=(),
+        evaluations=4,
+        iterations=4,
+        elapsed=1.5,
+        trace=(
+            TracePoint(0.1, 1, 1, 70.0),
+            TracePoint(0.4, 3, 3, 62.0),
+            TracePoint(1.2, 4, 4, 57.0),
+        ),
+        front=(),
+        schedule_digest="ab" * 32,
+        extras={"backend": "ortools-cp-sat"},
+    )
+
+
+def test_an_outcome_without_bounds_keeps_its_document_and_its_hash() -> None:
+    outcome = _unbounded()
+    document = outcome.to_dict()
+    assert outcome.bounds == ()
+    assert "bounds" not in document
+    assert "bounds" not in outcome.hashed()
+    assert digest(document) == OUTCOME_DIGEST
+    assert outcome.result_hash() == OUTCOME_HASH
+    assert Outcome.from_dict(document) == outcome
+
+
+def test_records_written_before_bounds_still_read_and_verify() -> None:
+    paths = sorted(EARLIER.rglob("*.json"))
+    assert len(paths) == 6
+    for path in paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        record = RunRecord.from_dict(document)
+        assert record.outcome.bounds == ()
+        assert record.outcome.to_dict() == document["outcome"]
+        assert record.outcome.result_hash() == document["result_hash"]
+        assert record.verify() == ()
+
+
+def test_bounds_over_time_enter_the_document_and_the_hash_without_their_times() -> None:
+    outcome, _ = _completed()
+    bounded = replace(outcome, bounds=BOUNDS)
+    document = bounded.to_dict()
+    assert document["bounds"] == [[0.01, 3.0], [0.02, 4.0]]
+    assert {key: value for key, value in document.items() if key != "bounds"} == outcome.to_dict()
+    assert bounded.hashed()["bounds"] == [[3.0], [4.0]]
+    assert Outcome.from_dict(json.loads(json.dumps(document))) == bounded
+    later = replace(bounded, bounds=tuple(replace(point, elapsed=1.0) for point in BOUNDS))
+    assert later.result_hash() == bounded.result_hash()
+    for changed in (
+        replace(bounded, bounds=BOUNDS[:1]),
+        replace(bounded, bounds=(BOUNDS[0], BoundPoint(0.02, 4.5))),
+        outcome,
+    ):
+        assert changed.result_hash() != bounded.result_hash()
+
+
+def test_a_record_with_bounds_round_trips_and_an_edited_bound_is_found() -> None:
+    outcome, schedule = _completed()
+    record = _record(replace(outcome, bounds=BOUNDS), schedule)
+    document = json.loads(json.dumps(record.to_dict()))
+    assert document["outcome"]["bounds"] == [[0.01, 3.0], [0.02, 4.0]]
+    assert RunRecord.from_dict(document) == record
+    assert record.verify() == ()
+    document["outcome"]["bounds"][1][1] = 4.5
+    assert RunRecord.from_dict(document).verify() == ("the outcome does not match the result hash",)
+
+
+def test_an_outcome_document_without_bounds_or_with_an_empty_list_has_none() -> None:
+    outcome, _ = _completed()
+    document = outcome.to_dict()
+    assert "bounds" not in document
+    assert Outcome.from_dict(document).bounds == ()
+    assert Outcome.from_dict({**document, "bounds": []}).bounds == ()
+
+
+@pytest.mark.parametrize(
+    ("bounds", "message"),
+    [
+        (5, "the bounds of an outcome must be a list"),
+        ([0.1], "a bound row must be a list"),
+        ([[0.1]], "a bound row must list elapsed, value"),
+        ([[0.1, 3.0, 1]], "a bound row must list elapsed, value"),
+        ([[None, 3.0]], "a bound time must be a number"),
+        ([[0.1, "3"]], "a bound value must be a number"),
+        ([[0.1, math.nan]], "a bound value must be finite"),
+    ],
+)
+def test_malformed_bounds_of_an_outcome_are_rejected(bounds: object, message: str) -> None:
+    outcome, _ = _completed()
+    with pytest.raises(SerializationError, match=message):
+        Outcome.from_dict({**outcome.to_dict(), "bounds": bounds})
+
+
+def test_describe_carries_the_bounds_of_a_result_into_its_outcome() -> None:
+    problem = chain_problem()
+    result = SOLVERS.create("random-search").solve(problem, STOP, 3)
+    outcome, _, notes = describe(problem, replace(result, bounds=BOUNDS))
+    assert notes == ()
+    assert outcome.bounds == BOUNDS
+    assert describe(problem, result)[0].bounds == ()
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        BoundPoint(math.nan, 3.0),
+        BoundPoint(math.inf, 3.0),
+        BoundPoint(0.1, math.nan),
+        BoundPoint(0.1, -math.inf),
+    ],
+)
+def test_a_bound_that_is_not_finite_cannot_be_recorded(point: BoundPoint) -> None:
+    problem = chain_problem()
+    result = SOLVERS.create("random-search").solve(problem, STOP, 3)
+    with pytest.raises(SolverError, match=r"bound 1 holds a (time|value) of"):
+        describe(problem, replace(result, bounds=(BOUNDS[0], point)))
+
+
+@pytest.mark.exact
+def test_the_bounds_of_a_cp_sat_attempt_reach_its_outcome_and_replay_to_one_hash() -> None:
+    pytest.importorskip("ortools")
+    problem = small_job_shop()
+
+    def run() -> Completion:
+        task = Task(
+            run_id="run-1",
+            attempt=1,
+            problem=problem,
+            digest=problem_digest(problem),
+            solver=SOLVERS.create("cp-sat"),
+            stop=StopCriteria(time_limit=60.0),
+            seed=1,
+        )
+        completion = attempt(task)
+        assert isinstance(completion, Completion)
+        return completion
+
+    first, second = run(), run()
+    outcome = first.outcome
+    assert outcome.bounds
+    assert outcome.bounds[-1].value == outcome.bound == 11.0
+    assert [point.value for point in outcome.bounds] == sorted({p.value for p in outcome.bounds})
+    assert outcome.bounds[-1].elapsed <= outcome.elapsed
+    assert Outcome.from_dict(json.loads(json.dumps(outcome.to_dict()))) == outcome
+    # The two attempts differ in the times of their bounds, which the result hash leaves out.
+    assert first.result_hash == second.result_hash
 
 
 def test_run_records_round_trip_and_verify() -> None:

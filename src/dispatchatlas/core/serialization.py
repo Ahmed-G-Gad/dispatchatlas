@@ -24,7 +24,8 @@ document holds every field of a :class:`~dispatchatlas.core.solver.SolveResult`,
 its schedules as schedule documents and its trace as ``[elapsed, evaluations,
 iteration, value, feasible]`` rows, and, when the writer knows them, how the
 run was made: the digest of the problem, the stop criteria, the seed, and the
-solver's parameters.
+solver's parameters. A result that has bounds over time also holds them under
+``bounds`` as ``[elapsed, value]`` rows; a result without them has no such key.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from dispatchatlas.core.model import (
 )
 from dispatchatlas.core.schedule import Assignment, Schedule
 from dispatchatlas.core.solver import (
+    BoundPoint,
     FrontPoint,
     SolveResult,
     Status,
@@ -280,10 +282,10 @@ def result_to_dict(
 ) -> dict[str, Any]:
     """Convert a solver result to a JSON-ready dictionary.
 
-    Every field of the result is written. The keyword arguments record how
-    the run was made, which the result itself does not say; each is written
-    only when given, as ``problem_digest``, ``stop``, ``seed``, and
-    ``parameters``.
+    Every field of the result is written, ``bounds`` only when the result has
+    bounds over time. The keyword arguments record how the run was made, which
+    the result itself does not say; each is written only when given, as
+    ``problem_digest``, ``stop``, ``seed``, and ``parameters``.
 
     Args:
         result: The result.
@@ -326,6 +328,8 @@ def result_to_dict(
         if result.schedule is None
         else schedule_to_dict(result.schedule, result.problem),
     }
+    if result.bounds:
+        document["bounds"] = [[point.elapsed, point.value] for point in result.bounds]
     if problem is not None:
         document["problem_digest"] = problem_digest(problem)
     if stop is not None:
@@ -372,6 +376,7 @@ def result_from_dict(document: Mapping[str, Any]) -> SolveResult:
             _text(name, "extra name"): _scalar(value, f"extra {name!r}")
             for name, value in _table(document.get("extras", {}), "extras").items()
         },
+        bounds=tuple(_bound_point(row) for row in _items(document.get("bounds", []), "bounds")),
     )
 
 
@@ -507,6 +512,15 @@ def _trace_point(row: object) -> TracePoint:
         _number(value, "trace value"),
         feasible,
     )
+
+
+def _bound_point(row: object) -> BoundPoint:
+    """Read an ``[elapsed, value]`` bound row."""
+    items = _items(row, "bound row")
+    if len(items) != 2:
+        raise SerializationError(f"a bound row of a result lists elapsed and value, got {row!r}")
+    elapsed, value = items
+    return BoundPoint(_number(elapsed, "bound time"), _number(value, "bound value"))
 
 
 def _front_point(item: object) -> FrontPoint:

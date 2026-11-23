@@ -13,6 +13,7 @@ import pytest
 
 from dispatchatlas.benchmarks import FamilyInfo
 from dispatchatlas.benchmarks import default_registry as family_registry
+from dispatchatlas.core import BoundPoint as ExportedBoundPoint
 from dispatchatlas.core._frozen import FrozenMap
 from dispatchatlas.core.errors import ModelError
 from dispatchatlas.core.model import FEATURES, Problem
@@ -21,6 +22,7 @@ from dispatchatlas.core.serialization import digest, schedule_to_dict
 from dispatchatlas.core.solver import (
     SCHEDULES,
     SOLVER_FAMILIES,
+    BoundPoint,
     FrontPoint,
     Solver,
     SolveResult,
@@ -330,6 +332,18 @@ def test_trace_and_front_points() -> None:
         point.value = 1.0  # type: ignore[misc]
 
 
+def test_bound_points_and_the_bounds_of_a_result() -> None:
+    point = BoundPoint(0.5, 42.0)
+    assert (point.elapsed, point.value) == (0.5, 42.0)
+    assert ExportedBoundPoint is BoundPoint
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        point.value = 1.0  # type: ignore[misc]
+    assert _result().bounds == ()
+    points = (point, BoundPoint(1.5, 44.0))
+    assert _result(bounds=points).bounds == points
+    assert _result(bounds=points) != _result()
+
+
 def test_status_and_stop_reason_values_are_stable() -> None:
     assert [reason.value for reason in StopReason] == [
         "completed",
@@ -386,6 +400,13 @@ def test_results_and_their_schedules_survive_pickle_and_deep_copies() -> None:
         assert digest(schedule_to_dict(again.schedule)) == digest(schedule_to_dict(result.schedule))
         assert again.front == result.front
         assert (again.status, again.stop_reason) == (result.status, result.stop_reason)
+
+
+def test_results_with_bounds_survive_pickle_and_deep_copies() -> None:
+    result = _result(bound=48.5, bounds=(BoundPoint(0.1, 40.0), BoundPoint(0.4, 48.5)))
+    for again in (pickle.loads(pickle.dumps(result)), copy.deepcopy(result)):
+        assert again == result
+        assert again.bounds == result.bounds
 
 
 def test_solver_and_family_metadata_pickle() -> None:

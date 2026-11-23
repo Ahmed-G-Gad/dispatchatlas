@@ -65,6 +65,14 @@ class CpSat:
     :func:`~dispatchatlas.core.validation.check_schedule`, and its objective
     value must equal the model's.
 
+    The ``bounds`` of the result record how the proven bound rose. Where the
+    installed OR-Tools offers a bound callback, they hold every improvement
+    CP-SAT reports, between solutions too; otherwise they hold the bound CP-SAT
+    has with each solution. Either way the last bound is the ``bound`` of the
+    result, and the entry ``bound_callback`` of its ``extras`` says which kind
+    the run recorded. A result without a bound, such as a proof of
+    infeasibility, has no bounds over time.
+
     Stop criteria: the time limit covers model building and search. Each
     improving solution CP-SAT reports counts as one evaluation and one
     iteration, so evaluation and iteration limits stop the search after that
@@ -131,7 +139,7 @@ class CpSat:
             seed: Ignored; the search is deterministic with one worker.
 
         Returns:
-            The result with CP-SAT's schedule, status, and bound.
+            The result with CP-SAT's schedule, status, bound, and bounds over time.
 
         Raises:
             UnsupportedProblemError: If the objective is not modelled, or a

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 __all__ = [
     "SCHEDULES",
     "SOLVER_FAMILIES",
+    "BoundPoint",
     "FrontPoint",
     "SolveResult",
     "Solver",
@@ -290,6 +291,20 @@ class TracePoint:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundPoint:
+    """The best proven bound on the primary objective, sampled when it improves.
+
+    Attributes:
+        elapsed: Seconds since the run started.
+        value: The bound proven by then, in the unit of the primary objective: a
+            lower bound for a minimised objective.
+    """
+
+    elapsed: float
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
 class FrontPoint:
     """One non-dominated solution of a multi-objective run.
 
@@ -321,6 +336,10 @@ class SolveResult:
         trace: Improvements of the best solution over time.
         front: Non-dominated solutions, for multi-objective solvers.
         extras: Solver-specific facts, such as a backend's raw status.
+        bounds: How the proven bound improved over time, for exact solvers that
+            report it: the best bound at each improvement, so the values never fall
+            for a minimised objective, and the last equals ``bound``. Empty for a
+            solver that does not report it.
     """
 
     solver: str
@@ -337,6 +356,7 @@ class SolveResult:
     trace: tuple[TracePoint, ...] = ()
     front: tuple[FrontPoint, ...] = ()
     extras: Mapping[str, Scalar] = field(default_factory=dict)
+    bounds: tuple[BoundPoint, ...] = ()
 
     @property
     def feasible(self) -> bool:
