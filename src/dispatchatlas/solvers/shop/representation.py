@@ -27,12 +27,18 @@ sequence move swaps two positions that hold different jobs, or moves the job at
 one position to another position where the sequence changes, so neither draws
 a null move. Whether the schedule changes is not imposed but measured, by the
 observers of :mod:`~dispatchatlas.solvers.shop.observers`: a key that passes
-only keys of its own job leaves the job sequence as it was.
+only keys of its own job leaves the job sequence as it was. The two kinds of key
+move are matched to the two sequence moves: one key redrawn moves one job to a
+random place, as an insert does, and two keys perturbed move two jobs, as a swap
+does, by a step that :func:`~dispatchatlas.solvers.shop.distance.calibrate_step`
+sets so that their median distance is the swap's.
 
-**Recombination.** :func:`parameterised_uniform_crossover` takes each key, and
-:func:`job_order_crossover` the positions of each job, from the first parent
-with probability ``inheritance``. Callers pass the fitter parent first in both
-representations.
+**Recombination.** :func:`parameterised_uniform_crossover` recombines keys and
+:func:`precedence_preservative_crossover` job sequences: in both, each key, or
+each gene of the child, comes from the first parent with probability
+``inheritance``. :func:`job_order_crossover`, which keeps the positions of whole
+jobs instead, is the other crossover of job sequences. Callers pass the fitter
+parent first in both representations.
 
 Every operator returns a new array, leaves its arguments as they were, and
 draws only from the generator it is given.
@@ -50,19 +56,23 @@ from numpy.typing import ArrayLike, NDArray
 
 from dispatchatlas.core.errors import ModelError, SolverError
 from dispatchatlas.solvers.shop.decoding import JobSequence, check_sequence, sequence_from_keys
+from dispatchatlas.solvers.shop.distance import occurrence_permutation
 from dispatchatlas.solvers.shop.instance import JobShop
 
 __all__ = [
     "KEY_MOVES",
+    "SEQUENCE_CROSSOVERS",
     "SEQUENCE_MOVES",
     "KeyMove",
     "KeyRepresentation",
     "Keys",
     "Representation",
+    "SequenceCrossover",
     "SequenceMove",
     "SequenceRepresentation",
     "job_order_crossover",
     "parameterised_uniform_crossover",
+    "precedence_preservative_crossover",
     "reflect",
 ]
 
@@ -75,11 +85,18 @@ type KeyMove = Literal["perturb", "redraw"]
 type SequenceMove = Literal["swap", "insert", "mixed"]
 """How a sequence move changes a job sequence, one of :data:`SEQUENCE_MOVES`."""
 
+type SequenceCrossover = Literal["ppx", "jox"]
+"""How two job sequences are recombined, one of :data:`SEQUENCE_CROSSOVERS`."""
+
 KEY_MOVES: tuple[KeyMove, ...] = ("perturb", "redraw")
 """The key moves :class:`KeyRepresentation` takes."""
 
 SEQUENCE_MOVES: tuple[SequenceMove, ...] = ("swap", "insert", "mixed")
 """The sequence moves :class:`SequenceRepresentation` takes."""
+
+SEQUENCE_CROSSOVERS: tuple[SequenceCrossover, ...] = ("ppx", "jox")
+"""The crossovers :class:`SequenceRepresentation` takes: :func:`precedence_preservative_crossover`
+and :func:`job_order_crossover`."""
 
 # Proposals a key move draws for a key before it moves the key to an adjacent
 # float, which only a step too small to change the key in floating point needs.
@@ -179,6 +196,77 @@ def job_order_crossover(
             ``inheritance`` lies outside [0, 1].
     """
     _check_inheritance(inheritance)
+    jobs, other, ordered = _parents(first, second)
+    kept = rng.random(int(ordered[-1]) + 1) < inheritance
+    child = jobs.astype(np.intp)
+    child[~kept[jobs]] = other[~kept[other]]
+    return child
+
+
+def precedence_preservative_crossover(
+    first: JobSequence, second: JobSequence, rng: np.random.Generator, inheritance: float
+) -> NDArray[np.intp]:
+    """Return a child whose every gene comes from ``first`` with probability ``inheritance``.
+
+    This is the precedence preservative crossover, PPX (Bierwirth, Mattfeld and
+    Kopfer 1996, doi:10.1007/3-540-61723-X_995). It first draws one uniform number
+    per position, and no other: a draw below ``inheritance`` names the first
+    parent, any other the second. The child is then built from left to right. At
+    each position it takes the leftmost gene left in the parent named, and the
+    leftmost occurrence of that job is deleted from both parents. The ``k``-th
+    occurrence of a job is its ``k``-th operation in either parent, so the child
+    holds every job as often as its parents do, and any two operations come in
+    the child in the order of one parent or the other.
+
+    Args:
+        first: The first parent, the fitter one by the caller's choice.
+        second: The second parent, a permutation of ``first``.
+        rng: The generator of the draws, as many as the parents have positions.
+        inheritance: The probability, in [0, 1], that a gene of the child comes
+            from ``first``.
+
+    Returns:
+        The child, a new array.
+
+    Raises:
+        ValueError: If the parents are not one row of the same job indices, or
+            ``inheritance`` lies outside [0, 1].
+    """
+    _check_inheritance(inheritance)
+    jobs, other, ordered = _parents(first, second)
+    takes_first = (rng.random(jobs.size) < inheritance).tolist()
+    # Each parent as the operations it lists, numbered as the slots of the sorted
+    # sequence: deleting the leftmost occurrence of a job from both parents marks
+    # the same operation taken in both, which their next readings skip.
+    sources = (
+        occurrence_permutation(jobs, ordered).tolist(),
+        occurrence_permutation(other, ordered).tolist(),
+    )
+    reading = [0, 0]
+    taken = bytearray(jobs.size)
+    child = [0] * jobs.size
+    for position, from_first in enumerate(takes_first):
+        parent = 0 if from_first else 1
+        source = sources[parent]
+        index = reading[parent]
+        while taken[source[index]]:
+            index += 1
+        reading[parent] = index
+        operation = source[index]
+        taken[operation] = 1
+        child[position] = operation
+    return ordered[child].astype(np.intp)
+
+
+def _parents(
+    first: JobSequence, second: JobSequence
+) -> tuple[NDArray[np.integer[Any]], NDArray[np.integer[Any]], NDArray[np.integer[Any]]]:
+    """Return the parents as arrays, and their sorted jobs, after checking they match.
+
+    Raises:
+        ValueError: If the parents are not one row of the same non-negative job
+            indices.
+    """
     jobs = np.asarray(first)
     other = np.asarray(second)
     if (
@@ -194,10 +282,7 @@ def job_order_crossover(
     ordered = np.sort(jobs)
     if ordered[0] < 0 or not np.array_equal(ordered, np.sort(other)):
         raise ValueError("the parents must hold the same non-negative job indices")
-    kept = rng.random(int(ordered[-1]) + 1) < inheritance
-    child = jobs.astype(np.intp)
-    child[~kept[jobs]] = other[~kept[other]]
-    return child
+    return jobs, other, ordered
 
 
 class Representation[G](ABC):
@@ -255,7 +340,9 @@ class Representation[G](ABC):
     def recombine(self, first: G, second: G, rng: np.random.Generator, inheritance: float) -> G:
         """Return a child of two solutions that favours ``first`` by ``inheritance``.
 
-        Callers pass the fitter parent first.
+        In both representations each key, or each gene of the child, comes from
+        ``first`` with probability ``inheritance``. Callers pass the fitter parent
+        first.
         """
 
     @abstractmethod
@@ -299,7 +386,26 @@ class KeyRepresentation(Representation[Keys]):
     again, so every chosen key changes; a step too small to change a key in
     floating point, after 64 proposals, moves it to the adjacent float towards
     the middle of [0, 1]. Recombination is
-    :func:`parameterised_uniform_crossover`.
+    :func:`parameterised_uniform_crossover`: each key of the child comes from the
+    first parent with probability ``inheritance``.
+
+    **The two kinds of key move**, each matched to a move of
+    :class:`SequenceRepresentation`:
+
+    - one key redrawn, ``key_move="redraw"`` with ``key_count=1``, the insert's
+      match. On random keys the key takes a uniformly random rank among the
+      others, so its job moves to a random place as an insert moves it, and the
+      distance the move goes has the insert's distribution, but for a chance of
+      one in the number of slots that the key keeps its rank. It has no step to
+      set.
+    - two keys perturbed, ``key_move="perturb"`` with ``key_count=2``, the swap's
+      match. Two jobs move, as in a swap, and
+      :func:`~dispatchatlas.solvers.shop.distance.calibrate_step` sets
+      ``key_step``, within (0, 1], so that the median distance of the move is the
+      swap's.
+
+    ``key_count`` defaults to the count of the kind: one key for ``"redraw"`` and
+    two for ``"perturb"``, or one when the shop has a single operation.
 
     Args:
         shop: The job shop.
@@ -307,7 +413,8 @@ class KeyRepresentation(Representation[Keys]):
         key_step: The standard deviation of a perturbation, positive and finite.
             Only ``"perturb"`` reads it; :func:`~dispatchatlas.solvers.shop.distance.calibrate_step`
             sets it so that a key move goes as far as a move of the job sequences.
-        key_count: How many keys a move changes, from 1 to the number of slots.
+        key_count: How many keys a move changes, from 1 to the number of slots,
+            or ``None`` for the count of the kind.
 
     Attributes:
         key_move: How a move changes its keys.
@@ -324,12 +431,14 @@ class KeyRepresentation(Representation[Keys]):
         shop: JobShop,
         key_move: KeyMove = "perturb",
         key_step: float = 0.1,
-        key_count: int = 1,
+        key_count: int | None = None,
     ) -> None:
         if key_move not in KEY_MOVES:
             raise ValueError(f"unknown key move {key_move!r}; expected one of {list(KEY_MOVES)}")
         if not (math.isfinite(key_step) and key_step > 0.0):
             raise ValueError(f"key_step must be positive and finite, got {key_step!r}")
+        if key_count is None:
+            key_count = min(1 if key_move == "redraw" else 2, shop.size)
         try:
             count = operator.index(key_count)
         except TypeError:
@@ -391,7 +500,10 @@ class KeyRepresentation(Representation[Keys]):
     def recombine(
         self, first: Keys, second: Keys, rng: np.random.Generator, inheritance: float
     ) -> Keys:
-        """Return :func:`parameterised_uniform_crossover` of the two parents' keys."""
+        """Return :func:`parameterised_uniform_crossover` of the two parents' keys.
+
+        Each key of the child comes from ``first`` with probability ``inheritance``.
+        """
         return parameterised_uniform_crossover(first, second, rng, inheritance)
 
     def follow(self, genotype: Keys, sequence: JobSequence) -> Keys:
@@ -452,8 +564,15 @@ class SequenceRepresentation(Representation[NDArray[np.intp]]):
     of two positions that hold the same job, or an insert whose job passes only
     occurrences of itself. Each move is therefore uniform over the swaps, or the
     inserts, that change the sequence. ``"mixed"`` first draws a swap or an
-    insert with probability one half each. Recombination is
-    :func:`job_order_crossover`.
+    insert with probability one half each. The insert's match among the key
+    moves is one key redrawn, and the swap's two keys perturbed by a calibrated
+    step (:class:`KeyRepresentation`).
+
+    Recombination is :func:`precedence_preservative_crossover`, with
+    ``crossover="ppx"``, in which each gene of the child comes from the first
+    parent with probability ``inheritance``, as each key does in the keys'
+    crossover; or :func:`job_order_crossover`, with ``crossover="jox"``, in which
+    each job keeps its positions in the first parent with that probability.
 
     A job shop of one job has a single job sequence, which no move changes:
     :meth:`move` refuses it, and a family evaluates that sequence and stops.
@@ -461,24 +580,36 @@ class SequenceRepresentation(Representation[NDArray[np.intp]]):
     Args:
         shop: The job shop.
         move: ``"swap"``, ``"insert"``, or ``"mixed"``.
+        crossover: ``"ppx"`` or ``"jox"``.
 
     Attributes:
         move_kind: The move, as ``move`` named it.
+        crossover: The crossover.
 
     Raises:
-        ValueError: If ``move`` is unknown.
+        ValueError: If ``move`` or ``crossover`` is unknown.
     """
 
-    def __init__(self, shop: JobShop, move: SequenceMove = "swap") -> None:
+    def __init__(
+        self, shop: JobShop, move: SequenceMove = "swap", crossover: SequenceCrossover = "ppx"
+    ) -> None:
         if move not in SEQUENCE_MOVES:
             raise ValueError(
                 f"unknown sequence move {move!r}; expected one of {list(SEQUENCE_MOVES)}"
             )
+        if crossover not in SEQUENCE_CROSSOVERS:
+            raise ValueError(
+                f"unknown crossover {crossover!r}; expected one of {list(SEQUENCE_CROSSOVERS)}"
+            )
         super().__init__(shop)
         self.move_kind: SequenceMove = move
+        self.crossover: SequenceCrossover = crossover
 
     def __repr__(self) -> str:
-        return f"SequenceRepresentation(shop={self.shop!r}, move={self.move_kind!r})"
+        return (
+            f"SequenceRepresentation(shop={self.shop!r}, move={self.move_kind!r}, "
+            f"crossover={self.crossover!r})"
+        )
 
     def from_keys(self, keys: ArrayLike) -> NDArray[np.intp]:
         """Return the job sequence the keys sort into.
@@ -533,8 +664,15 @@ class SequenceRepresentation(Representation[NDArray[np.intp]]):
         rng: np.random.Generator,
         inheritance: float,
     ) -> NDArray[np.intp]:
-        """Return :func:`job_order_crossover` of the two parents."""
-        return job_order_crossover(first, second, rng, inheritance)
+        """Return the crossover of the two parents, PPX unless ``crossover`` is ``"jox"``.
+
+        With PPX each gene of the child comes from ``first`` with probability
+        ``inheritance``; with JOX each job keeps its positions in ``first`` with
+        that probability.
+        """
+        if self.crossover == "jox":
+            return job_order_crossover(first, second, rng, inheritance)
+        return precedence_preservative_crossover(first, second, rng, inheritance)
 
     def follow(
         self,

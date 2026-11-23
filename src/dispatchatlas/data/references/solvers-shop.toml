@@ -15,6 +15,13 @@ title = "A generalized permutation approach to job shop scheduling with genetic 
 venue = "OR Spektrum 17(2-3):87-92"
 doi = "10.1007/BF01719250"
 
+[bierwirth1996permutation]
+authors = "C. Bierwirth, D. C. Mattfeld and H. Kopfer"
+year = 1996
+title = "On permutation representations for scheduling problems"
+venue = "Parallel Problem Solving from Nature - PPSN IV, Lecture Notes in Computer Science 1141:310-318"
+doi = "10.1007/3-540-61723-X_995"
+
 [bratton2007defining]
 authors = "D. Bratton and J. Kennedy"
 year = 2007

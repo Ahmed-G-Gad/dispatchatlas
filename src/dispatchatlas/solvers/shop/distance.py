@@ -13,11 +13,12 @@ sequence by one, and two key vectors that sort into the same job sequence are at
 distance zero, whichever slots of a job hold which of its keys.
 
 :func:`move_distances` measures how far one move of a representation takes
-random solutions. :func:`calibrate_step` sets the step of the keys' move so that
-its median distance equals a target, the median distance of the move of the job
-sequences, so that the two representations of a family move by steps of the
-same median size. Both draw from streams derived from their own seed, never from
-those of a run.
+random solutions. :func:`calibrate_step` sets the step of the keys' perturbation
+of two keys so that its median distance equals the median distance of the job
+sequences' swap, so that the two representations of a family move by steps of
+the same median size; the keys' other move, one key redrawn, goes as far as an
+insert without a step to set. Both draw from streams derived from their own
+seed, never from those of a run.
 """
 
 from __future__ import annotations
@@ -180,8 +181,8 @@ def move_distances(
 def calibrate_step(
     make: Callable[[float], Representation[Any]],
     target_median: float,
-    low: float,
-    high: float,
+    low: float = 0.001,
+    high: float = 1.0,
     *,
     samples: int,
     seed: int,
@@ -189,30 +190,42 @@ def calibrate_step(
 ) -> float:
     """Return a step whose move has a median distance within ``tolerance`` of a target.
 
-    ``make(step)`` builds the representation to calibrate, such as a
+    ``make(step)`` builds the representation to calibrate, a
     :class:`~dispatchatlas.solvers.shop.representation.KeyRepresentation` whose
-    ``key_step`` is ``step``. The median of :func:`move_distances` over
-    ``samples`` random solutions is measured at ``low`` and ``high``, which must
-    bracket the target, and then at the geometric midpoint of the bracket, which
-    shrinks towards the target, until a median lies within ``tolerance`` of it.
-    Every measurement uses the same ``seed``, so each step is measured on the same
-    solutions with the same draws, and the result is the same on every call.
+    ``key_step`` is ``step``. It serves the keys' match of the swap: two keys
+    perturbed, calibrated to the median of :func:`move_distances` of the job
+    sequences' swap. The insert's match, one key redrawn, has no step to set. The
+    median of :func:`move_distances` over ``samples`` random solutions is measured
+    at ``low`` and ``high``, which must bracket the target, and then at the
+    geometric midpoint of the bracket, which shrinks towards the target, until a
+    median lies within ``tolerance`` of it. Every measurement uses the same
+    ``seed``, so each step is measured on the same solutions with the same draws,
+    and the result is the same on every call.
+
+    **The bracket.** A step is a standard deviation in the units of the keys, and
+    steps lie in (0, 1]: past 1 a reflected key is close to uniform, so a longer
+    step adds noise but no distance. The median of two perturbed keys rises with
+    the step and levels off near step 1. On Taillard's job shops its level lies 5
+    to 10 per cent above the median of a swap, which it crosses at a step between
+    about 0.5 and 0.8. The margin is small beside the sampling error of a median,
+    about ``1.2 / sqrt(samples)`` of its value: on ta01, where the margin is
+    smallest, 10,001 solutions per median make it about three times the error of
+    the difference between the two medians. With a few hundred, sampling error
+    can put the target outside the bracket, and the calibration raises
+    :class:`ValueError` rather than return a step that misses it.
 
     A perturbed key changes the distance by one each time it passes a key of
     another job, so the median of an odd number of distances moves in whole
     steps and a tolerance of one half finds a step whenever the bracket holds the
-    target. The median need not grow with the step everywhere, since reflection
-    at the bounds folds long steps back, and how far it reaches depends on how
-    many keys a move changes: one changed key moves one job past others, as an
-    insert does, while a swap moves two jobs, so the median of a swap may lie
-    beyond every step of a move that changes one key.
+    target. One perturbed key moves one job, and its median stays below that of
+    a swap, which moves two.
 
     Args:
         make: Builds the representation of a step.
         target_median: The median distance to reach, such as the median of
-            :func:`move_distances` of the job sequences' move.
+            :func:`move_distances` of the job sequences' swap.
         low: The smallest step tried, positive.
-        high: The largest step tried, above ``low``.
+        high: The largest step tried, above ``low`` and at most 1.
         samples: The number of random solutions per measurement, at least 1.
         seed: The non-negative seed of every measurement.
         tolerance: How far from the target a median may lie, at least 0.
@@ -225,8 +238,8 @@ def calibrate_step(
             ``high`` do not bracket the target, or no step within the bracket
             gives a median within ``tolerance`` of it.
     """
-    if not (math.isfinite(low) and math.isfinite(high) and 0.0 < low < high):
-        raise ValueError(f"the steps must satisfy 0 < low < high, got {low!r} and {high!r}")
+    if not (math.isfinite(low) and math.isfinite(high) and 0.0 < low < high <= 1.0):
+        raise ValueError(f"the steps must satisfy 0 < low < high <= 1, got {low!r} and {high!r}")
     if not (math.isfinite(target_median) and target_median >= 0.0):
         raise ValueError(f"target_median must be finite and non-negative, got {target_median!r}")
     if not (math.isfinite(tolerance) and tolerance >= 0.0):

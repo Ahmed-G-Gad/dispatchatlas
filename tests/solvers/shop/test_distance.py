@@ -226,7 +226,7 @@ def test_calibration_recovers_a_step_from_its_median() -> None:
 
     for known in (0.02, 0.1, 0.3):
         target = _median(make(known), 51, 4)
-        step = calibrate_step(make, target, 1e-4, 2.0, samples=51, seed=4, tolerance=0.5)
+        step = calibrate_step(make, target, 1e-4, 1.0, samples=51, seed=4, tolerance=0.5)
         assert abs(_median(make(step), 51, 4) - target) <= 0.5
 
 
@@ -235,15 +235,15 @@ def test_calibration_does_not_draw_from_a_runs_streams() -> None:
     search = Search(shop.problem, StopCriteria(max_evaluations=5), 7, INFO)
     run = ShopRun(search, shop, "active", KeyRepresentation(shop))
     states = (run.control.bit_generator.state, run.operators.bit_generator.state)
-    calibrate_step(
+    # The bracket is the default one, steps from 0.001 to 1.
+    step = calibrate_step(
         lambda step: KeyRepresentation(shop, "perturb", step),
         20.0,
-        1e-3,
-        2.0,
         samples=21,
         seed=1,
         tolerance=0.5,
     )
+    assert 0.001 < step < 1.0
     assert (run.control.bit_generator.state, run.operators.bit_generator.state) == states
 
 
@@ -256,7 +256,7 @@ def test_calibration_refuses_a_target_its_bracket_cannot_reach() -> None:
             lambda step: KeyRepresentation(shop, "perturb", step, 1),
             target,
             0.01,
-            10.0,
+            1.0,
             samples=51,
             seed=2,
             tolerance=0.5,
@@ -283,6 +283,7 @@ def test_calibration_says_when_no_step_meets_the_tolerance() -> None:
         ({"low": 0.0}, "0 < low < high"),
         ({"low": 2.0, "high": 1.0}, "0 < low < high"),
         ({"high": float("inf")}, "0 < low < high"),
+        ({"high": 1.5}, "high <= 1"),
         ({"target_median": -1.0}, "target_median"),
         ({"target_median": float("nan")}, "target_median"),
         ({"tolerance": -0.5}, "tolerance"),

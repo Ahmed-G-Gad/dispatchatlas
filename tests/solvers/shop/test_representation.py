@@ -22,6 +22,7 @@ from dispatchatlas.solvers.shop.representation import (
     SequenceRepresentation,
     job_order_crossover,
     parameterised_uniform_crossover,
+    precedence_preservative_crossover,
     reflect,
 )
 from tests.helpers import small_job_shop
@@ -222,21 +223,55 @@ def test_a_sequence_move_is_refused_for_one_job_whose_keys_still_move() -> None:
 
 @pytest.mark.parametrize("make", SHOPS)
 @pytest.mark.parametrize("key_move", KEY_MOVES)
-@pytest.mark.parametrize("key_count", [1, 3])
+@pytest.mark.parametrize("key_count", [None, 1, 2, 3])
 def test_key_moves_change_exactly_their_keys(
-    make: Callable[[], JobShop], key_move: KeyMove, key_count: int
+    make: Callable[[], JobShop], key_move: KeyMove, key_count: int | None
 ) -> None:
     shop = make()
     representation = KeyRepresentation(shop, key_move, 0.05, key_count)
+    expected = key_count or {"redraw": 1, "perturb": 2}[key_move]
+    assert representation.key_count == expected
     rng = np.random.default_rng(9)
     keys = representation.initial(rng)
     for _ in range(DRAWS):
         before = keys.copy()
         moved = representation.move(keys, rng)
         assert np.array_equal(keys, before), "the move changed its argument"
-        assert np.count_nonzero(moved != keys) == key_count
+        assert np.count_nonzero(moved != keys) == expected
         assert ((moved >= 0.0) & (moved <= 1.0)).all()
         keys = moved
+
+
+def test_the_key_moves_default_to_the_count_of_their_kind() -> None:
+    # One key redrawn matches the insert, two keys perturbed the swap.
+    shop = ta01()
+    assert KeyRepresentation(shop, "redraw").key_count == 1
+    assert KeyRepresentation(shop, "perturb").key_count == 2
+    assert KeyRepresentation(shop).key_count == 2
+    single = JobShop.from_problem(
+        Problem("one-operation", tasks=(Task.on("a0", "m0", 2),), resources=(Resource("m0"),))
+    )
+    assert KeyRepresentation(single, "perturb").key_count == 1
+
+
+def test_one_redrawn_key_moves_its_job_as_an_insert_does() -> None:
+    # The key at rank i, given a value between the keys of ranks j - 1 and j among
+    # the others, moves the job at position i of the sequence to position j.
+    shop = ta01()
+    representation = KeyRepresentation(shop, "redraw")
+    rng = np.random.default_rng(67)
+    for _ in range(200):
+        keys = representation.initial(rng)
+        sequence = representation.sequence(keys).tolist()
+        ranked = np.argsort(keys, kind="stable")
+        source, target = (int(position) for position in rng.choice(shop.size, 2, replace=False))
+        others = np.delete(keys[ranked], source)
+        low = others[target - 1] if target > 0 else 0.0
+        high = others[target] if target < others.size else 1.0
+        moved = keys.copy()
+        moved[ranked[source]] = (low + high) / 2.0
+        sequence.insert(target, sequence.pop(source))
+        assert representation.sequence(moved).tolist() == sequence
 
 
 def test_perturbed_keys_are_reflected_into_the_unit_interval_not_clipped() -> None:
@@ -321,9 +356,11 @@ def test_key_representations_refuse_bad_parameters(
         KeyRepresentation(_small(), **parameters)  # type: ignore[arg-type]
 
 
-def test_sequence_representations_refuse_an_unknown_move() -> None:
+def test_sequence_representations_refuse_an_unknown_move_or_crossover() -> None:
     with pytest.raises(ValueError, match="unknown sequence move"):
         SequenceRepresentation(_small(), "reverse")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unknown crossover"):
+        SequenceRepresentation(_small(), crossover="ox")  # type: ignore[arg-type]
 
 
 # ------------------------------------------------------------ recombination
@@ -343,7 +380,7 @@ def test_job_order_crossover_follows_its_definition(
     make: Callable[[], JobShop], inheritance: float
 ) -> None:
     shop = make()
-    representation = SequenceRepresentation(shop)
+    representation = SequenceRepresentation(shop, crossover="jox")
     rng = np.random.default_rng(13)
     for _ in range(300):
         first, second = representation.initial(rng), representation.initial(rng)
@@ -388,15 +425,131 @@ def test_the_crossovers_refuse_parents_that_do_not_match() -> None:
     rng = np.random.default_rng(0)
     with pytest.raises(ValueError, match="shapes"):
         parameterised_uniform_crossover([0.1, 0.2], [0.3], rng, 0.5)
-    with pytest.raises(ValueError, match="same non-negative job indices"):
-        job_order_crossover([0, 0, 1], [0, 1, 1], rng, 0.5)
-    with pytest.raises(ValueError, match="rows of job indices"):
-        job_order_crossover([0.0, 1.0], [1.0, 0.0], rng, 0.5)  # type: ignore[list-item]
+    for crossover in (job_order_crossover, precedence_preservative_crossover):
+        with pytest.raises(ValueError, match="same non-negative job indices"):
+            crossover([0, 0, 1], [0, 1, 1], rng, 0.5)
+        with pytest.raises(ValueError, match="rows of job indices"):
+            crossover([0.0, 1.0], [1.0, 0.0], rng, 0.5)  # type: ignore[list-item]
     for inheritance in (-0.1, 1.5, float("nan")):
         with pytest.raises(ValueError, match="inheritance"):
             job_order_crossover([0, 1], [1, 0], rng, inheritance)
         with pytest.raises(ValueError, match="inheritance"):
+            precedence_preservative_crossover([0, 1], [1, 0], rng, inheritance)
+        with pytest.raises(ValueError, match="inheritance"):
             parameterised_uniform_crossover([0.1], [0.2], rng, inheritance)
+
+
+def _operations(sequence: list[int]) -> list[tuple[int, int]]:
+    """The operations a job sequence lists: its k-th occurrence of job j is ``(j, k)``."""
+    seen: dict[int, int] = {}
+    operations = []
+    for job in sequence:
+        operations.append((job, seen.get(job, 0)))
+        seen[job] = seen.get(job, 0) + 1
+    return operations
+
+
+def _precedence_reference(first: list[int], second: list[int], mask: list[bool]) -> list[int]:
+    """PPX as its definition reads: take the leftmost gene left in the parent the mask
+    names, and delete the leftmost occurrence of its job from both parents."""
+    left, right = list(first), list(second)
+    child = []
+    for from_first in mask:
+        job = (left if from_first else right)[0]
+        child.append(job)
+        left.remove(job)
+        right.remove(job)
+    return child
+
+
+@pytest.mark.parametrize("make", SHOPS)
+@pytest.mark.parametrize("inheritance", [0.2, 0.5, 0.9])
+def test_precedence_preservative_crossover_follows_its_definition(
+    make: Callable[[], JobShop], inheritance: float
+) -> None:
+    shop = make()
+    representation = SequenceRepresentation(shop)
+    rng = np.random.default_rng(43)
+    for _ in range(300):
+        first, second = representation.initial(rng), representation.initial(rng)
+        before = (first.copy(), second.copy())
+        replay = copy.deepcopy(rng)
+        child = representation.recombine(first, second, rng, inheritance)
+        # One mask, one draw per position, and nothing else drawn.
+        mask = (replay.random(shop.size) < inheritance).tolist()
+        assert replay.bit_generator.state == rng.bit_generator.state
+        assert child.tolist() == _precedence_reference(first.tolist(), second.tolist(), mask)
+        assert child.dtype == np.intp
+        assert np.array_equal(np.sort(child), shop.slot_job)
+        assert np.array_equal(first, before[0])
+        assert np.array_equal(second, before[1])
+
+
+@pytest.mark.parametrize(
+    "make", [pytest.param(_small, id="3x3"), pytest.param(_uneven, id="uneven")]
+)
+def test_every_precedence_of_a_ppx_child_comes_from_a_parent(make: Callable[[], JobShop]) -> None:
+    shop = make()
+    representation = SequenceRepresentation(shop)
+    rng = np.random.default_rng(47)
+    for _ in range(400):
+        first, second = representation.initial(rng), representation.initial(rng)
+        child = precedence_preservative_crossover(first, second, rng, float(rng.random()))
+        places = [
+            {operation: place for place, operation in enumerate(_operations(parent.tolist()))}
+            for parent in (first, second)
+        ]
+        operations = _operations(child.tolist())
+        assert sorted(operations) == sorted(places[0])
+        for earlier, later in itertools.combinations(operations, 2):
+            assert any(place[earlier] < place[later] for place in places), (earlier, later)
+
+
+def test_ppx_with_inheritance_one_or_zero_copies_a_parent() -> None:
+    shop = ta01()
+    representation = SequenceRepresentation(shop)
+    rng = np.random.default_rng(53)
+    for _ in range(20):
+        first, second = representation.initial(rng), representation.initial(rng)
+        assert np.array_equal(precedence_preservative_crossover(first, second, rng, 1.0), first)
+        assert np.array_equal(precedence_preservative_crossover(first, second, rng, 0.0), second)
+
+
+def test_ppx_draws_one_mask_whatever_the_parents() -> None:
+    shop = _uneven()
+    representation = SequenceRepresentation(shop)
+    sequence = representation.initial(np.random.default_rng(0))
+    pairs = [
+        (sequence, sequence),
+        (sequence, sequence[::-1].copy()),
+        (shop.slot_job, sequence),
+        (representation.initial(np.random.default_rng(1)), sequence),
+    ]
+    for first, second in pairs:
+        for inheritance in (0.0, 0.3, 1.0):
+            rng = np.random.default_rng(59)
+            precedence_preservative_crossover(first, second, rng, inheritance)
+            expected = np.random.default_rng(59)
+            expected.random(shop.size)
+            assert rng.bit_generator.state == expected.bit_generator.state
+
+
+def test_the_sequence_crossover_is_ppx_unless_jox_is_named() -> None:
+    shop = ta01()
+    rng = np.random.default_rng(61)
+    first, second = (
+        SequenceRepresentation(shop).initial(rng),
+        SequenceRepresentation(shop).initial(rng),
+    )
+    for crossover, function in (
+        ("ppx", precedence_preservative_crossover),
+        ("jox", job_order_crossover),
+    ):
+        representation = SequenceRepresentation(shop, crossover=crossover)  # type: ignore[arg-type]
+        replay = copy.deepcopy(rng)
+        child = representation.recombine(first, second, rng, 0.6)
+        assert np.array_equal(child, function(first, second, replay, 0.6))
+    assert SequenceRepresentation(shop).crossover == "ppx"
 
 
 # ------------------------------------------------------------------- follow
