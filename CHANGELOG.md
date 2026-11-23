@@ -409,3 +409,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   differs by necessity, a constriction swarm reflected into [0, 1] on keys and
   the discrete swarm of Pan, Tasgetiren and Liang (2007) on job sequences, so
   the pair is a weaker match than the other families.
+- Job-shop dispatching rules `gt-shortest-processing-time` and
+  `gt-most-work-remaining`, run by the Giffler and Thompson procedure from one
+  rank per operation (`giffler_thompson_ranked`), and
+  `werner-winkler-insertion`, the basic insertion heuristic of Werner and
+  Winkler (1995) without beam search or iterative phase, with
+  `insertion_costs`.

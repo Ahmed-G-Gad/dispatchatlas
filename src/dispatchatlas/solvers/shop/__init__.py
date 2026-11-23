@@ -19,6 +19,8 @@ from dispatchatlas.core.solver import Solver
 from dispatchatlas.solvers.registry import SolverRegistry
 from dispatchatlas.solvers.shop.annealing import ShopAnnealing
 from dispatchatlas.solvers.shop.genetic import ShopSteadyStateGa
+from dispatchatlas.solvers.shop.insertion import WernerWinklerInsertion
+from dispatchatlas.solvers.shop.rules import GtMostWorkRemaining, GtShortestProcessingTime
 from dispatchatlas.solvers.shop.sampling import ShopRandomSampling
 from dispatchatlas.solvers.shop.swarm import ShopParticleSwarm
 
@@ -30,6 +32,9 @@ _SOLVERS: tuple[Callable[..., Solver], ...] = (
     ShopAnnealing,
     ShopSteadyStateGa,
     ShopParticleSwarm,
+    GtShortestProcessingTime,
+    GtMostWorkRemaining,
+    WernerWinklerInsertion,
 )
 
 

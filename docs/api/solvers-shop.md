@@ -30,3 +30,7 @@ Solvers that require the job-shop shape: tasks that form chains, the jobs, each 
 ::: dispatchatlas.solvers.shop.genetic
 
 ::: dispatchatlas.solvers.shop.swarm
+
+::: dispatchatlas.solvers.shop.rules
+
+::: dispatchatlas.solvers.shop.insertion
