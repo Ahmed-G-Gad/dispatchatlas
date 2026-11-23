@@ -11,6 +11,8 @@ from ``numpy.random.default_rng(seed)``.
   Mann-Whitney, Friedman, Iman-Davenport, and Nemenyi.
 - :mod:`~dispatchatlas.analysis.stats.equivalence`: two one-sided tests of equivalence
   within a margin, and the four outcomes they give with a test of a difference.
+- :mod:`~dispatchatlas.analysis.stats.location`: the Hodges-Lehmann shift of paired differences
+  and its exact signed-rank interval.
 - :mod:`~dispatchatlas.analysis.stats.effect_sizes`: A12, Cliff's delta,
   Cohen's d and d_z, and the paired win share.
 - :mod:`~dispatchatlas.analysis.stats.bootstrap`: BCa and percentile intervals.
@@ -61,6 +63,11 @@ from dispatchatlas.analysis.stats.equivalence import (
     tost_paired_t,
     tost_signed_rank,
 )
+from dispatchatlas.analysis.stats.location import (
+    SignedRankInterval,
+    hodges_lehmann_shift,
+    signed_rank_interval,
+)
 from dispatchatlas.analysis.stats.nonparametric import (
     Alternative,
     FriedmanResult,
@@ -107,6 +114,7 @@ __all__ = [
     "MannWhitneyResult",
     "PowerAssessment",
     "Sense",
+    "SignedRankInterval",
     "TostPairedTResult",
     "TostResult",
     "TostSignedRankResult",
@@ -128,6 +136,7 @@ __all__ = [
     "equivalence_report",
     "f_sf",
     "friedman_test",
+    "hodges_lehmann_shift",
     "iman_davenport",
     "mann_whitney_u",
     "midranks",
@@ -144,6 +153,7 @@ __all__ = [
     "required_paired_count",
     "shaffer_hypothesis_counts",
     "sign_test",
+    "signed_rank_interval",
     "strictly_better",
     "t_ppf",
     "t_sf",

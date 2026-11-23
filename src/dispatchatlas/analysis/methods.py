@@ -282,6 +282,16 @@ _METHODS: tuple[Method, ...] = (
         f"{_STATS}.nonparametric.FriedmanResult",
     ),
     Method(
+        "hodges-lehmann-shift",
+        "Hodges-Lehmann shift",
+        "effect-size",
+        "The median of the Walsh averages of the paired differences, the estimate of their "
+        "centre that the signed-rank test implies.",
+        (_PAIRED, "the differences are symmetric about their centre"),
+        ("hodges1963estimates",),
+        f"{_STATS}.location.hodges_lehmann_shift",
+    ),
+    Method(
         "bootstrap-bca",
         "Bias-corrected and accelerated bootstrap interval",
         "interval",
@@ -298,6 +308,23 @@ _METHODS: tuple[Method, ...] = (
         ("independent observations",),
         ("efron1987better", "hyndman1996sample"),
         f"{_STATS}.bootstrap.bootstrap_interval",
+    ),
+    Method(
+        "signed-rank-interval",
+        "Signed-rank interval of the shift",
+        "interval",
+        "The shifts that neither one-sided Wilcoxon signed-rank test of the shifted differences "
+        "rejects, found by bisection over the Walsh averages; with Pratt's treatment of zeros it "
+        "lies inside an equivalence margin exactly when the two one-sided signed-rank tests of "
+        "equivalence reject.",
+        (_PAIRED, "the differences are symmetric about their median"),
+        (
+            "hodges1963estimates",
+            "wilcoxon1945individual",
+            "pratt1959remarks",
+            "schuirmann1987comparison",
+        ),
+        f"{_STATS}.location.signed_rank_interval",
     ),
     Method(
         "bayesian-sign-test",
