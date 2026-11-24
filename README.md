@@ -115,8 +115,9 @@ explains its options with `--help`.
   resource-constrained projects; random task graphs on heterogeneous
   processors; and request offloading, workflows, and stream pipelines on an
   edge-fog-cloud continuum.
-- **10 published suites**: Taillard's flow, job, and open shops, rebuilt
-  offline from their published seeds, and the OR-Library job and flow shops,
+- **11 published suites**: Taillard's flow, job, and open shops, rebuilt
+  offline from their published seeds, the job shops of Demirkol, Mehta and
+  Uzsoy, which ship with the package, and the OR-Library job and flow shops,
   Brandimarte's flexible job shops, and PSPLIB J30 to J120, read from the files
   you download. Readers for the OR-Library, FJS, PSPLIB, WfCommons, and Pegasus
   DAX formats, and a streaming reader for the batch jobs of the Alibaba 2018

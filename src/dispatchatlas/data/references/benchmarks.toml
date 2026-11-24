@@ -43,6 +43,13 @@ title = "Local search heuristics for the single machine total weighted tardiness
 venue = "INFORMS Journal on Computing 10(3):341-350"
 doi = "10.1287/ijoc.10.3.341"
 
+[demirkol1998benchmarks]
+authors = "E. Demirkol, S. Mehta and R. Uzsoy"
+year = 1998
+title = "Benchmarks for shop scheduling problems"
+venue = "European Journal of Operational Research 109(1):137-141"
+doi = "10.1016/S0377-2217(97)00019-2"
+
 [fisher1963probabilistic]
 authors = "H. Fisher and G. L. Thompson"
 year = 1963

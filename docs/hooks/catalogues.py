@@ -230,7 +230,12 @@ def suite_table(page: str) -> str:
         "| --- | --- | ---: | --- |",
     ]
     for suite in rows:
-        loads = "offline, from the published seeds" if suite.generated else "from downloaded files"
+        if suite.generated:
+            loads = "offline, from the published seeds"
+        elif suite.bundled:
+            loads = "offline, from files in the package"
+        else:
+            loads = "from downloaded files"
         lines.append(
             f"| [`{suite.id}`](#{suite.id}) | {suite.problem_class} | {len(suite.instances)} | "
             f"{loads} |"
@@ -255,7 +260,7 @@ def suite_table(page: str) -> str:
                 f"{optimal} of them proven optimal"
             )
         lines.append(f"- **Sources**: {_sources(suite.references, page)}")
-        directory = "" if suite.generated else " --directory downloads"
+        directory = "" if suite.offline else " --directory downloads"
         lines += ["", "```bash", f"dispatchatlas suites load {suite.id} {first}{directory}", "```"]
     return "\n".join(lines)
 

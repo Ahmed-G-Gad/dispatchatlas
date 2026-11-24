@@ -12,6 +12,7 @@ EXPECTED = {
     "taillard-flow-shop": ("flow-shop", 120, True),
     "taillard-job-shop": ("job-shop", 80, True),
     "taillard-open-shop": ("open-shop", 60, True),
+    "demirkol-job-shop": ("job-shop", 80, False),
     "orlib-job-shop": ("job-shop", 82, False),
     "orlib-flow-shop": ("flow-shop", 31, False),
     "brandimarte": ("flexible-job-shop", 10, False),
@@ -35,11 +36,13 @@ def test_suite_records_are_complete(suite_id):
     assert len(set(item.instances)) == count
     assert item.generated is generated
     assert item.source.startswith("https://")
+    assert item.offline is (generated or suite_id == "demirkol-job-shop")
+    assert item.bundled is (suite_id == "demirkol-job-shop")
     assert item.name
     assert item.references
     for key in item.references:
         assert key in bibliography()
-    assert (item.files is None) is generated
+    assert (item.files is None) is item.offline
 
 
 def test_instance_names_follow_the_sources():
@@ -72,9 +75,10 @@ def test_open_shop_bounds_come_from_the_seed_table():
         ("taillard-flow-shop", "TA120", "ta120", 10_000),
         ("taillard-job-shop", "ta80", "ta80", 2000),
         ("taillard-open-shop", "tai7x7-4", "tai7x7-4", 49),
+        ("demirkol-job-shop", "DMU80", "dmu80", 1000),
     ],
 )
-def test_generated_suites_load_offline(suite_id, instance, problem_id, size):
+def test_generated_and_bundled_suites_load_offline(suite_id, instance, problem_id, size):
     problem = suites.load(suite_id, instance)
     assert (problem.id, problem.size) == (problem_id, size)
 

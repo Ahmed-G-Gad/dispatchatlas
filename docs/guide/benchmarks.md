@@ -231,11 +231,40 @@ bound = suites.suite("taillard-open-shop").bounds["tai4x4-1"]
 print(bound.lower, bound.upper, bound.optimal)  # 186 193 True
 ```
 
+## Demirkol's instances and dated bounds
+
+Demirkol, Mehta and Uzsoy (1998) published 80 job shops, `dmu01` to `dmu80`, of 20 to 50
+jobs on 15 or 20 machines. They are data, not generator output, so the package ships the
+files, checks each instance against a stored route digest when it loads, and reads them
+offline:
+
+```python
+from dispatchatlas.benchmarks import demirkol_job_shop, suites
+
+dmu41 = demirkol_job_shop("dmu41")  # 20 jobs, 15 machines, two machine sets
+same = suites.load("demirkol-job-shop", "dmu41")
+```
+
+`dispatchatlas.benchmarks.compilations` records two dated compilations of best known
+bounds for `ta01` to `ta80` and `dmu01` to `dmu80`, each as it stood on its date. They stay
+separate: `compilation_bounds` returns what one lists, and `best_known` returns the tighter
+upper and lower bound of the two with the compilation that lists each, and the trivial lower
+bound of the instance, the larger of the greatest machine load and the greatest job length:
+
+```python
+from dispatchatlas.benchmarks.compilations import best_known, upper_equals_trivial_lower_bound
+
+known = best_known("taillard-job-shop")["ta73"]
+print(known.upper, known.upper_sources, known.trivial_lower)
+print(upper_equals_trivial_lower_bound("taillard-job-shop", "ta73"))
+```
+
 ## Published suites
 
 `dispatchatlas.benchmarks.suites` describes each published instance set: its
 instances, where they come from, the works that define them, and any bounds
-published with them. Taillard's suites are **generated**. The OR-Library job
+published with them. Taillard's suites are **generated**, and Demirkol's are **bundled** with the package.
+The OR-Library job
 and flow shops, Brandimarte's flexible job shops, and the PSPLIB projects are
 **file** suites: the library does not bundle their files, and reads them from
 a directory where you downloaded them from the suite's source.

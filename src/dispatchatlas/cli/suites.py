@@ -29,8 +29,9 @@ def register(commands: Commands) -> None:
         "suites",
         "List the published benchmark suites and load their instances.",
         "List the published benchmark suites and load their instances. Generated suites "
-        "(Taillard's) are rebuilt from their published seeds; file suites are read from "
-        "files you download from the suite's source.",
+        "(Taillard's) are rebuilt from their published seeds; bundled suites (Demirkol's) are "
+        "read from files that ship with the package; file suites are read from files you "
+        "download from the suite's source.",
     )
     add_command(group, "list", _list, "List the published suites.")
     show = add_command(
@@ -69,6 +70,7 @@ def _describe(item: Suite) -> dict[str, Any]:
         "name": item.name,
         "problem_class": item.problem_class,
         "generated": item.generated,
+        "bundled": item.bundled,
         "instances": list(item.instances),
         "source": item.source,
         "files": item.files,
@@ -124,7 +126,7 @@ def _show(arguments: argparse.Namespace) -> int:
 
 def _load(arguments: argparse.Namespace) -> int:
     item = suite(arguments.suite)
-    if not item.generated and arguments.directory is None:
+    if not item.offline and arguments.directory is None:
         raise CommandError(
             f"suite {item.id!r} is read from files: download {item.files} from {item.source}",
             hint="pass --directory D, the directory that holds the downloaded files",
@@ -135,4 +137,6 @@ def _load(arguments: argparse.Namespace) -> int:
 
 
 def _kind(item: Suite) -> str:
-    return "generated offline" if item.generated else "downloaded files"
+    if item.generated:
+        return "generated offline"
+    return "bundled files" if item.bundled else "downloaded files"

@@ -418,6 +418,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The four job-shop families take `distance_every` (1 by default), which
   measures the phenotype distance on the first move and on every n-th move
   after it, while the digest-based measures stay per evaluation.
+- `shop-steady-state-ga` takes `local_search` (off by default), which makes it
+  a Baldwinian memetic algorithm. The N5 critical-block descent improves the
+  schedule each genotype decodes to, and the genotype is left unchanged. Every
+  neighbour that the descent evaluates counts toward the budget. To count them,
+  `critical_block_descent` takes `count_neighbours`.
 - Where `flock` is not implemented, as on a file system mounted without it, a
   campaign directory is locked by the exclusive creation of `.lock.excl`; a
   stale file of a dead process on the same host is reported, never removed.
@@ -425,6 +430,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library, and `check_taillard_job_shop` checks a rebuilt instance against
   them, so a study can confirm from an installed wheel that it rebuilds the
   instances the library was tested on.
+- The 80 job shops of Demirkol, Mehta and Uzsoy (1998), `dmu01` to `dmu80`,
+  ship with the package as the suite `demirkol-job-shop` (`demirkol_job_shop`,
+  `check_demirkol_job_shop`). Each file is checked for its shape and against a
+  stored route digest when it loads. A suite has the new flags `bundled` and
+  `offline`, and `suites list` and `suites show` report them.
+- `dispatchatlas.benchmarks.compilations` records two dated compilations of best
+  known bounds for ta01 to ta80 and dmu01 to dmu80, ScheduleOpt's `bks.json`
+  (commit af68a647, 2026-11-21) and Optimizizer's tables (update of 2026-11-08),
+  kept separate. `best_known` returns the tighter upper and lower bound with the
+  compilation that lists each, and the trivial lower bound of every instance,
+  the larger of the greatest machine load and the greatest job length;
+  `upper_equals_trivial_lower_bound` says whether the upper bound reaches it.
 - The Hodges-Lehmann shift and its exact signed-rank interval
   (`hodges_lehmann_shift`, `signed_rank_interval`): the shifts that neither
   one-sided signed-rank test rejects, with the coverage attained. With Pratt's

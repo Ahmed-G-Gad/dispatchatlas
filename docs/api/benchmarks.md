@@ -28,9 +28,13 @@ Benchmark families, published suites, instance-file readers, catalogs, and insta
 
 ::: dispatchatlas.benchmarks.taillard
 
+::: dispatchatlas.benchmarks.demirkol
+
 ::: dispatchatlas.benchmarks.suites
 
 ::: dispatchatlas.benchmarks.bounds
+
+::: dispatchatlas.benchmarks.compilations
 
 ::: dispatchatlas.benchmarks.formats
     options:

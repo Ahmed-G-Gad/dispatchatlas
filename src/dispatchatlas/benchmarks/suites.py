@@ -1,10 +1,12 @@
 """Published benchmark suites: their instances, sources, references, and loaders.
 
-A :class:`Suite` describes one published instance set. Two kinds exist:
+A :class:`Suite` describes one published instance set. Three kinds exist:
 
 - **Generated** suites, Taillard's (1993) flow, job, and open shops, are
   rebuilt exactly from their published seeds by
   :mod:`dispatchatlas.benchmarks.taillard`, so they load offline.
+- **Bundled** suites, the job shops of Demirkol, Mehta and Uzsoy (1998), are data that the
+  package ships, read by :mod:`dispatchatlas.benchmarks.demirkol`, so they load offline too.
 - **File** suites, the OR-Library job and flow shops, Brandimarte's flexible
   job shops, and the PSPLIB projects, are read from files that the user
   downloads from :attr:`Suite.source` into a directory. The library does not
@@ -25,6 +27,11 @@ from functools import cache, partial
 from pathlib import Path
 from types import MappingProxyType
 
+from dispatchatlas.benchmarks.demirkol import (
+    DEMIRKOL_SOURCE,
+    demirkol_instances,
+    demirkol_job_shop,
+)
 from dispatchatlas.benchmarks.formats import (
     read_fjs,
     read_orlib_flow_shop,
@@ -107,9 +114,11 @@ class Suite:
         loader: Builds an instance from its name and, for file suites, the
             directory that holds the downloaded files.
         files: What to download from :attr:`source` into the directory passed
-            to :meth:`load`. ``None`` for suites generated offline.
+            to :meth:`load`. ``None`` for suites that load offline, generated or bundled.
         bounds: Bounds published with the instances, keyed by instance name.
         notes: Further facts about the suite.
+        bundled: Whether the instance files ship inside the package, so that loading needs
+            no directory and no seeds.
     """
 
     id: str
@@ -122,10 +131,16 @@ class Suite:
     files: str | None = None
     bounds: Mapping[str, Bound] = field(default_factory=dict, hash=False, compare=False)
     notes: str = ""
+    bundled: bool = False
 
     @property
     def generated(self) -> bool:
-        """Whether the instances are generated offline rather than read from files."""
+        """Whether the instances are generated offline from published seeds."""
+        return self.files is None and not self.bundled
+
+    @property
+    def offline(self) -> bool:
+        """Whether an instance loads without a directory, being generated or bundled."""
         return self.files is None
 
     def load(self, instance: str, directory: str | Path | None = None) -> Problem:
@@ -148,7 +163,7 @@ class Suite:
                 f"suite {self.id!r} has no instance {instance!r}; "
                 f"its {len(self.instances)} instances run from {first} to {last}"
             )
-        if self.generated:
+        if self.offline:
             return self.loader(name, None)
         if directory is None:
             raise ConfigError(
@@ -162,7 +177,7 @@ class Suite:
 
 
 def suites() -> tuple[Suite, ...]:
-    """Return every suite: the generated ones first, then the file suites."""
+    """Return every suite: the generated ones first, then the bundled ones, then the file suites."""
     return tuple(_registry().values())
 
 
@@ -294,6 +309,19 @@ def _registry() -> Mapping[str, Suite]:
             ),
             notes="60 instances from 4 jobs x 4 machines to 20 x 20, generated exactly "
             "from the published seeds. The bounds are those listed with the seeds.",
+        ),
+        Suite(
+            id="demirkol-job-shop",
+            name="Demirkol job shops",
+            problem_class="job-shop",
+            instances=demirkol_instances(),
+            source=DEMIRKOL_SOURCE,
+            references=("demirkol1998benchmarks",),
+            loader=partial(_generated, build=demirkol_job_shop),
+            bundled=True,
+            notes="80 job shops from 20 jobs x 15 machines to 50 x 20, processing times 1 to "
+            "200: dmu01-dmu40 with random routings and dmu41-dmu80 with two machine sets, "
+            "five instances of each size, read from files that ship with the package.",
         ),
         Suite(
             id="orlib-job-shop",

@@ -1,0 +1,180 @@
+# Optimizizer: lower and upper bounds on the optimal makespan of ta01 to ta80 and dmu01
+# to dmu80, as its Taillard and Demirkol tables list them. Both pages print
+# "Last update: November 08, 2026". The pages state no licence.
+# Read from https://optimizizer.com/TA.php (40,260 bytes, SHA-256
+# ecdb855dd2bff371274b45ffd807b435aeb76a357e4f0cb67be22b0091fdaa20) and
+# https://optimizizer.com/DMU.php (43,374 bytes, SHA-256
+# 947a204b47fd733d789157336e1f0bb6332e698c2bcef018e713483dfbb6f7f0).
+
+[compilation]
+id = "optimizizer-2026-11-08"
+name = "Optimizizer best known bounds"
+url = "https://optimizizer.com/"
+file = "TA.php and DMU.php"
+version = "Last update: November 08, 2026"
+date = "2026-11-08"
+retrieved = "2026-11-24"
+
+[bounds]
+
+ta01 = { lower = 1231, upper = 1231 }
+ta02 = { lower = 1244, upper = 1244 }
+ta03 = { lower = 1218, upper = 1218 }
+ta04 = { lower = 1175, upper = 1175 }
+ta05 = { lower = 1224, upper = 1224 }
+ta06 = { lower = 1238, upper = 1238 }
+ta07 = { lower = 1227, upper = 1227 }
+ta08 = { lower = 1217, upper = 1217 }
+ta09 = { lower = 1274, upper = 1274 }
+ta10 = { lower = 1241, upper = 1241 }
+ta11 = { lower = 1357, upper = 1357 }
+ta12 = { lower = 1367, upper = 1367 }
+ta13 = { lower = 1342, upper = 1342 }
+ta14 = { lower = 1345, upper = 1345 }
+ta15 = { lower = 1339, upper = 1339 }
+ta16 = { lower = 1360, upper = 1360 }
+ta17 = { lower = 1462, upper = 1462 }
+ta18 = { lower = 1393, upper = 1396 }
+ta19 = { lower = 1332, upper = 1332 }
+ta20 = { lower = 1348, upper = 1348 }
+ta21 = { lower = 1642, upper = 1642 }
+ta22 = { lower = 1585, upper = 1600 }
+ta23 = { lower = 1541, upper = 1557 }
+ta24 = { lower = 1644, upper = 1644 }
+ta25 = { lower = 1584, upper = 1595 }
+ta26 = { lower = 1615, upper = 1643 }
+ta27 = { lower = 1673, upper = 1680 }
+ta28 = { lower = 1603, upper = 1603 }
+ta29 = { lower = 1606, upper = 1625 }
+ta30 = { lower = 1543, upper = 1584 }
+ta31 = { lower = 1764, upper = 1764 }
+ta32 = { lower = 1774, upper = 1783 }
+ta33 = { lower = 1790, upper = 1791 }
+ta34 = { lower = 1828, upper = 1828 }
+ta35 = { lower = 2007, upper = 2007 }
+ta36 = { lower = 1819, upper = 1819 }
+ta37 = { lower = 1771, upper = 1771 }
+ta38 = { lower = 1673, upper = 1673 }
+ta39 = { lower = 1795, upper = 1795 }
+ta40 = { lower = 1652, upper = 1670 }
+ta41 = { lower = 1912, upper = 2006 }
+ta42 = { lower = 1887, upper = 1939 }
+ta43 = { lower = 1809, upper = 1846 }
+ta44 = { lower = 1952, upper = 1978 }
+ta45 = { lower = 1997, upper = 1997 }
+ta46 = { lower = 1966, upper = 2002 }
+ta47 = { lower = 1816, upper = 1889 }
+ta48 = { lower = 1915, upper = 1937 }
+ta49 = { lower = 1934, upper = 1960 }
+ta50 = { lower = 1837, upper = 1923 }
+ta51 = { lower = 2760, upper = 2760 }
+ta52 = { lower = 2756, upper = 2756 }
+ta53 = { lower = 2717, upper = 2717 }
+ta54 = { lower = 2839, upper = 2839 }
+ta55 = { lower = 2679, upper = 2679 }
+ta56 = { lower = 2781, upper = 2781 }
+ta57 = { lower = 2943, upper = 2943 }
+ta58 = { lower = 2885, upper = 2885 }
+ta59 = { lower = 2655, upper = 2655 }
+ta60 = { lower = 2723, upper = 2723 }
+ta61 = { lower = 2868, upper = 2868 }
+ta62 = { lower = 2869, upper = 2869 }
+ta63 = { lower = 2755, upper = 2755 }
+ta64 = { lower = 2702, upper = 2702 }
+ta65 = { lower = 2725, upper = 2725 }
+ta66 = { lower = 2845, upper = 2845 }
+ta67 = { lower = 2825, upper = 2825 }
+ta68 = { lower = 2784, upper = 2784 }
+ta69 = { lower = 3071, upper = 3071 }
+ta70 = { lower = 2995, upper = 2995 }
+ta71 = { lower = 5464, upper = 5464 }
+ta72 = { lower = 5181, upper = 5181 }
+ta73 = { lower = 5568, upper = 5568 }
+ta74 = { lower = 5339, upper = 5339 }
+ta75 = { lower = 5392, upper = 5392 }
+ta76 = { lower = 5342, upper = 5342 }
+ta77 = { lower = 5436, upper = 5436 }
+ta78 = { lower = 5394, upper = 5394 }
+ta79 = { lower = 5358, upper = 5358 }
+ta80 = { lower = 5183, upper = 5183 }
+
+dmu01 = { lower = 2563, upper = 2563 }
+dmu02 = { lower = 2706, upper = 2706 }
+dmu03 = { lower = 2731, upper = 2731 }
+dmu04 = { lower = 2658, upper = 2669 }
+dmu05 = { lower = 2749, upper = 2749 }
+dmu06 = { lower = 3188, upper = 3244 }
+dmu07 = { lower = 2995, upper = 3046 }
+dmu08 = { lower = 3188, upper = 3188 }
+dmu09 = { lower = 3092, upper = 3092 }
+dmu10 = { lower = 2984, upper = 2984 }
+dmu11 = { lower = 3396, upper = 3430 }
+dmu12 = { lower = 3418, upper = 3492 }
+dmu13 = { lower = 3681, upper = 3681 }
+dmu14 = { lower = 3394, upper = 3394 }
+dmu15 = { lower = 3343, upper = 3343 }
+dmu16 = { lower = 3734, upper = 3744 }
+dmu17 = { lower = 3717, upper = 3811 }
+dmu18 = { lower = 3844, upper = 3844 }
+dmu19 = { lower = 3697, upper = 3764 }
+dmu20 = { lower = 3619, upper = 3699 }
+dmu21 = { lower = 4380, upper = 4380 }
+dmu22 = { lower = 4725, upper = 4725 }
+dmu23 = { lower = 4668, upper = 4668 }
+dmu24 = { lower = 4648, upper = 4648 }
+dmu25 = { lower = 4164, upper = 4164 }
+dmu26 = { lower = 4647, upper = 4647 }
+dmu27 = { lower = 4848, upper = 4848 }
+dmu28 = { lower = 4692, upper = 4692 }
+dmu29 = { lower = 4691, upper = 4691 }
+dmu30 = { lower = 4732, upper = 4732 }
+dmu31 = { lower = 5640, upper = 5640 }
+dmu32 = { lower = 5927, upper = 5927 }
+dmu33 = { lower = 5728, upper = 5728 }
+dmu34 = { lower = 5385, upper = 5385 }
+dmu35 = { lower = 5635, upper = 5635 }
+dmu36 = { lower = 5621, upper = 5621 }
+dmu37 = { lower = 5851, upper = 5851 }
+dmu38 = { lower = 5713, upper = 5713 }
+dmu39 = { lower = 5747, upper = 5747 }
+dmu40 = { lower = 5577, upper = 5577 }
+dmu41 = { lower = 3130, upper = 3248 }
+dmu42 = { lower = 3321, upper = 3390 }
+dmu43 = { lower = 3393, upper = 3441 }
+dmu44 = { lower = 3386, upper = 3475 }
+dmu45 = { lower = 3181, upper = 3266 }
+dmu46 = { lower = 3740, upper = 4035 }
+dmu47 = { lower = 3684, upper = 3939 }
+dmu48 = { lower = 3583, upper = 3763 }
+dmu49 = { lower = 3515, upper = 3706 }
+dmu50 = { lower = 3588, upper = 3729 }
+dmu51 = { lower = 4042, upper = 4151 }
+dmu52 = { lower = 4170, upper = 4297 }
+dmu53 = { lower = 4234, upper = 4378 }
+dmu54 = { lower = 4271, upper = 4360 }
+dmu55 = { lower = 4180, upper = 4258 }
+dmu56 = { lower = 4729, upper = 4934 }
+dmu57 = { lower = 4444, upper = 4643 }
+dmu58 = { lower = 4449, upper = 4701 }
+dmu59 = { lower = 4346, upper = 4607 }
+dmu60 = { lower = 4447, upper = 4721 }
+dmu61 = { lower = 5014, upper = 5159 }
+dmu62 = { lower = 5160, upper = 5244 }
+dmu63 = { lower = 5232, upper = 5296 }
+dmu64 = { lower = 5148, upper = 5225 }
+dmu65 = { lower = 5121, upper = 5158 }
+dmu66 = { lower = 5512, upper = 5690 }
+dmu67 = { lower = 5650, upper = 5774 }
+dmu68 = { lower = 5493, upper = 5735 }
+dmu69 = { lower = 5500, upper = 5682 }
+dmu70 = { lower = 5619, upper = 5868 }
+dmu71 = { lower = 6103, upper = 6204 }
+dmu72 = { lower = 6430, upper = 6448 }
+dmu73 = { lower = 6013, upper = 6132 }
+dmu74 = { lower = 6128, upper = 6196 }
+dmu75 = { lower = 6046, upper = 6186 }
+dmu76 = { lower = 6463, upper = 6708 }
+dmu77 = { lower = 6517, upper = 6739 }
+dmu78 = { lower = 6638, upper = 6744 }
+dmu79 = { lower = 6709, upper = 6899 }
+dmu80 = { lower = 6459, upper = 6621 }

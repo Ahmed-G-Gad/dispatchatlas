@@ -1,0 +1,180 @@
+# ScheduleOpt JSPLib: lower and upper bounds on the optimal makespan of ta01 to ta80 and
+# dmu01 to dmu80, as the file bks.json lists them at one commit of the repository. The
+# repository states the licence CC-BY-SA-4.0; the values are credited to it.
+# Read from https://raw.githubusercontent.com/ScheduleOpt/benchmarks/af68a647c1d62a342b596d23dcb57011715f3ffd/jobshop/solutions/bks.json
+# (507,515 bytes, SHA-256 b1f6a9fbc38b428ff23bb71e0f8f06b330eca9c43d4997b60f6d92b322e9cec0).
+# The collection names a Taillard job shop ta01js; here it is ta01.
+
+[compilation]
+id = "scheduleopt-2026-11-21"
+name = "ScheduleOpt JSPLib"
+url = "https://github.com/ScheduleOpt/benchmarks"
+file = "jobshop/solutions/bks.json"
+version = "af68a647c1d62a342b596d23dcb57011715f3ffd"
+date = "2026-11-21"
+retrieved = "2026-11-24"
+licence = "CC-BY-SA-4.0"
+
+[bounds]
+
+ta01 = { lower = 1231, upper = 1231 }
+ta02 = { lower = 1244, upper = 1244 }
+ta03 = { lower = 1218, upper = 1218 }
+ta04 = { lower = 1175, upper = 1175 }
+ta05 = { lower = 1224, upper = 1224 }
+ta06 = { lower = 1238, upper = 1238 }
+ta07 = { lower = 1227, upper = 1227 }
+ta08 = { lower = 1217, upper = 1217 }
+ta09 = { lower = 1274, upper = 1274 }
+ta10 = { lower = 1241, upper = 1241 }
+ta11 = { lower = 1357, upper = 1357 }
+ta12 = { lower = 1367, upper = 1367 }
+ta13 = { lower = 1342, upper = 1342 }
+ta14 = { lower = 1345, upper = 1345 }
+ta15 = { lower = 1339, upper = 1339 }
+ta16 = { lower = 1360, upper = 1360 }
+ta17 = { lower = 1462, upper = 1462 }
+ta18 = { lower = 1396, upper = 1396 }
+ta19 = { lower = 1332, upper = 1332 }
+ta20 = { lower = 1348, upper = 1348 }
+ta21 = { lower = 1642, upper = 1642 }
+ta22 = { lower = 1600, upper = 1600 }
+ta23 = { lower = 1557, upper = 1557 }
+ta24 = { lower = 1644, upper = 1644 }
+ta25 = { lower = 1595, upper = 1595 }
+ta26 = { lower = 1643, upper = 1643 }
+ta27 = { lower = 1680, upper = 1680 }
+ta28 = { lower = 1603, upper = 1603 }
+ta29 = { lower = 1625, upper = 1625 }
+ta30 = { lower = 1562, upper = 1584 }
+ta31 = { lower = 1764, upper = 1764 }
+ta32 = { lower = 1774, upper = 1783 }
+ta33 = { lower = 1791, upper = 1791 }
+ta34 = { lower = 1828, upper = 1828 }
+ta35 = { lower = 2007, upper = 2007 }
+ta36 = { lower = 1819, upper = 1819 }
+ta37 = { lower = 1771, upper = 1771 }
+ta38 = { lower = 1673, upper = 1673 }
+ta39 = { lower = 1795, upper = 1795 }
+ta40 = { lower = 1658, upper = 1669 }
+ta41 = { lower = 1926, upper = 2005 }
+ta42 = { lower = 1900, upper = 1937 }
+ta43 = { lower = 1809, upper = 1846 }
+ta44 = { lower = 1961, upper = 1978 }
+ta45 = { lower = 1997, upper = 1997 }
+ta46 = { lower = 1976, upper = 2002 }
+ta47 = { lower = 1827, upper = 1889 }
+ta48 = { lower = 1921, upper = 1937 }
+ta49 = { lower = 1938, upper = 1960 }
+ta50 = { lower = 1848, upper = 1923 }
+ta51 = { lower = 2760, upper = 2760 }
+ta52 = { lower = 2756, upper = 2756 }
+ta53 = { lower = 2717, upper = 2717 }
+ta54 = { lower = 2839, upper = 2839 }
+ta55 = { lower = 2679, upper = 2679 }
+ta56 = { lower = 2781, upper = 2781 }
+ta57 = { lower = 2943, upper = 2943 }
+ta58 = { lower = 2885, upper = 2885 }
+ta59 = { lower = 2655, upper = 2655 }
+ta60 = { lower = 2723, upper = 2723 }
+ta61 = { lower = 2868, upper = 2868 }
+ta62 = { lower = 2869, upper = 2869 }
+ta63 = { lower = 2755, upper = 2755 }
+ta64 = { lower = 2702, upper = 2702 }
+ta65 = { lower = 2725, upper = 2725 }
+ta66 = { lower = 2845, upper = 2845 }
+ta67 = { lower = 2825, upper = 2825 }
+ta68 = { lower = 2784, upper = 2784 }
+ta69 = { lower = 3071, upper = 3071 }
+ta70 = { lower = 2995, upper = 2995 }
+ta71 = { lower = 5464, upper = 5464 }
+ta72 = { lower = 5181, upper = 5181 }
+ta73 = { lower = 5568, upper = 5568 }
+ta74 = { lower = 5339, upper = 5339 }
+ta75 = { lower = 5392, upper = 5392 }
+ta76 = { lower = 5342, upper = 5342 }
+ta77 = { lower = 5436, upper = 5436 }
+ta78 = { lower = 5394, upper = 5394 }
+ta79 = { lower = 5358, upper = 5358 }
+ta80 = { lower = 5183, upper = 5183 }
+
+dmu01 = { lower = 2563, upper = 2563 }
+dmu02 = { lower = 2706, upper = 2706 }
+dmu03 = { lower = 2731, upper = 2731 }
+dmu04 = { lower = 2669, upper = 2669 }
+dmu05 = { lower = 2749, upper = 2749 }
+dmu06 = { lower = 3244, upper = 3244 }
+dmu07 = { lower = 3046, upper = 3046 }
+dmu08 = { lower = 3188, upper = 3188 }
+dmu09 = { lower = 3092, upper = 3092 }
+dmu10 = { lower = 2984, upper = 2984 }
+dmu11 = { lower = 3402, upper = 3430 }
+dmu12 = { lower = 3481, upper = 3492 }
+dmu13 = { lower = 3681, upper = 3681 }
+dmu14 = { lower = 3394, upper = 3394 }
+dmu15 = { lower = 3343, upper = 3343 }
+dmu16 = { lower = 3734, upper = 3744 }
+dmu17 = { lower = 3733, upper = 3811 }
+dmu18 = { lower = 3844, upper = 3844 }
+dmu19 = { lower = 3707, upper = 3764 }
+dmu20 = { lower = 3632, upper = 3699 }
+dmu21 = { lower = 4380, upper = 4380 }
+dmu22 = { lower = 4725, upper = 4725 }
+dmu23 = { lower = 4668, upper = 4668 }
+dmu24 = { lower = 4648, upper = 4648 }
+dmu25 = { lower = 4164, upper = 4164 }
+dmu26 = { lower = 4647, upper = 4647 }
+dmu27 = { lower = 4848, upper = 4848 }
+dmu28 = { lower = 4692, upper = 4692 }
+dmu29 = { lower = 4691, upper = 4691 }
+dmu30 = { lower = 4732, upper = 4732 }
+dmu31 = { lower = 5640, upper = 5640 }
+dmu32 = { lower = 5927, upper = 5927 }
+dmu33 = { lower = 5728, upper = 5728 }
+dmu34 = { lower = 5385, upper = 5385 }
+dmu35 = { lower = 5635, upper = 5635 }
+dmu36 = { lower = 5621, upper = 5621 }
+dmu37 = { lower = 5851, upper = 5851 }
+dmu38 = { lower = 5713, upper = 5713 }
+dmu39 = { lower = 5747, upper = 5747 }
+dmu40 = { lower = 5577, upper = 5577 }
+dmu41 = { lower = 3176, upper = 3248 }
+dmu42 = { lower = 3339, upper = 3390 }
+dmu43 = { lower = 3441, upper = 3441 }
+dmu44 = { lower = 3414, upper = 3475 }
+dmu45 = { lower = 3217, upper = 3266 }
+dmu46 = { lower = 3780, upper = 4035 }
+dmu47 = { lower = 3714, upper = 3939 }
+dmu48 = { lower = 3628, upper = 3763 }
+dmu49 = { lower = 3543, upper = 3706 }
+dmu50 = { lower = 3618, upper = 3729 }
+dmu51 = { lower = 4070, upper = 4151 }
+dmu52 = { lower = 4203, upper = 4297 }
+dmu53 = { lower = 4248, upper = 4378 }
+dmu54 = { lower = 4277, upper = 4360 }
+dmu55 = { lower = 4191, upper = 4258 }
+dmu56 = { lower = 4755, upper = 4934 }
+dmu57 = { lower = 4462, upper = 4643 }
+dmu58 = { lower = 4484, upper = 4701 }
+dmu59 = { lower = 4366, upper = 4607 }
+dmu60 = { lower = 4468, upper = 4721 }
+dmu61 = { lower = 5038, upper = 5159 }
+dmu62 = { lower = 5176, upper = 5244 }
+dmu63 = { lower = 5245, upper = 5296 }
+dmu64 = { lower = 5155, upper = 5225 }
+dmu65 = { lower = 5122, upper = 5158 }
+dmu66 = { lower = 5526, upper = 5685 }
+dmu67 = { lower = 5661, upper = 5774 }
+dmu68 = { lower = 5513, upper = 5733 }
+dmu69 = { lower = 5511, upper = 5682 }
+dmu70 = { lower = 5633, upper = 5868 }
+dmu71 = { lower = 6129, upper = 6204 }
+dmu72 = { lower = 6434, upper = 6448 }
+dmu73 = { lower = 6107, upper = 6132 }
+dmu74 = { lower = 6168, upper = 6196 }
+dmu75 = { lower = 6123, upper = 6186 }
+dmu76 = { lower = 6479, upper = 6708 }
+dmu77 = { lower = 6520, upper = 6739 }
+dmu78 = { lower = 6643, upper = 6744 }
+dmu79 = { lower = 6720, upper = 6899 }
+dmu80 = { lower = 6460, upper = 6621 }
