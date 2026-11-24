@@ -24,6 +24,7 @@ from dispatchatlas.solvers.shop.family import (
     check_moves,
     make_representation,
 )
+from dispatchatlas.solvers.shop.graph import machine_orders
 from dispatchatlas.solvers.shop.instance import JOB_SHOP_FEATURES, JobShop
 from dispatchatlas.solvers.shop.observers import TrajectoryObserver
 from dispatchatlas.solvers.shop.representation import (
@@ -32,12 +33,11 @@ from dispatchatlas.solvers.shop.representation import (
     SequenceCrossover,
     SequenceMove,
 )
-from dispatchatlas.solvers.shop.run import ShopRun
+from dispatchatlas.solvers.shop.run import Evaluated, ShopRun
+from dispatchatlas.solvers.shop.tabu import critical_block_descent
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from dispatchatlas.solvers.shop.run import Evaluated
 
 __all__ = ["ShopSteadyStateGa"]
 
@@ -112,6 +112,35 @@ class ShopSteadyStateGa:
     that many evaluations, whether the limit falls inside the initial population or after it,
     and an iteration limit counts children.
 
+    **Local search.** With ``local_search``, the run is a Baldwinian memetic algorithm: every
+    evaluated genotype, a member of the initial population or a child, is decoded by the
+    builder as above, and the machine orders of its schedule then go to
+    :func:`~dispatchatlas.solvers.shop.tabu.critical_block_descent`, the descent of
+    :class:`~dispatchatlas.solvers.shop.brkga.ShopBrkga`. It is a best-improvement descent
+    over the N5 swaps of the blocks of a critical path: each step applies the swap of the
+    lowest exact makespan when that is below the current makespan, and the descent ends
+    when no swap is, or when the budget ends. The descent reads the schedule, never the
+    genotype, so it is the same in both representations: equal schedules are improved
+    alike. The genotype is not changed, and nothing is written back into it: the individual
+    keeps its genotype and its decoded job sequence, and takes the improved schedule, a
+    semi-active one, and its score, which rank it in the tournaments and in the replacement.
+    A descent steers by the makespan, so under another objective it can end in a schedule
+    of a worse score; the individual then keeps the schedule it decoded to. A child's
+    parent for the observer is its first parent, with that parent's improved schedule.
+
+    **Counting with the local search.** Every neighbour that the descent evaluates exactly
+    counts as one evaluation of the run's budget, through the run's search like a decode,
+    and updates the incumbent and the trace; the observer sees it as a move of the schedule
+    its step starts from. The swap a step applies is one of those neighbours and is not
+    counted again. An evaluation limit therefore bounds the decodes and the evaluations of
+    the local search together, and the incumbent is the best schedule that any decode or
+    any neighbour built. The estimates that rank the swaps and end the scan of a step are
+    not counted, and neither is a swap whose exact heads reveal a cycle, which builds no
+    schedule. A run can end inside a descent; the individual being improved then enters no
+    population. An iteration limit still counts children. The extras of the result add
+    ``descent_evaluations``, the evaluations of the local search, and ``descent_moves``,
+    the swaps it applied.
+
     Besides the measures of the run and of its
     :class:`~dispatchatlas.solvers.shop.observers.TrajectoryObserver`, which sees every member
     of the initial population and every child, as a move of its first parent, the extras of
@@ -139,6 +168,8 @@ class ShopSteadyStateGa:
         distance_every: The observer measures the phenotype distance of the first move and of
             every ``distance_every``-th one after it, an integer of at least 1. Its other
             measures count every evaluation, and no decision of the search depends on it.
+        local_search: Improve the schedule of every evaluated genotype by the critical-block
+            descent, without changing the genotype; off by default.
     """
 
     representation: RepresentationName = "sequence"
@@ -153,6 +184,7 @@ class ShopSteadyStateGa:
     sequence_move: SequenceMove = "insert"
     sequence_crossover: SequenceCrossover = "ppx"
     distance_every: int = 1
+    local_search: bool = False
 
     info: ClassVar[SolverInfo] = SolverInfo(
         id="shop-steady-state-ga",
@@ -166,6 +198,7 @@ class ShopSteadyStateGa:
             "bierwirth1995generalized",
             "bierwirth1996permutation",
             "ono1996genetic",
+            "nowicki1996fast",
         ),
         supports=JOB_SHOP_FEATURES,
         shape="job-shop",
@@ -184,6 +217,8 @@ class ShopSteadyStateGa:
         _check_probability("crossover_rate", self.crossover_rate)
         _check_probability("mutation_rate", self.mutation_rate)
         _check_probability("inheritance", self.inheritance)
+        if not isinstance(self.local_search, bool):
+            raise ValueError(f"local_search must be true or false, got {self.local_search!r}")
 
     def solve(self, problem: Problem, stop: StopCriteria, seed: int = 0) -> SolveResult:
         """Evolve the population, one child per iteration, until a stop criterion fires."""
@@ -199,17 +234,29 @@ class ShopSteadyStateGa:
         )
         observer = TrajectoryObserver(shop, self.distance_every)
         run = ShopRun(search, shop, self.builder, representation, observer)
+        tally = _Tally()
         with search:
             # The whole population is drawn before any other draw from the operator stream.
             genotypes = [representation.initial(run.operators) for _ in range(self.population_size)]
-            members = [run.evaluate(genotypes[0])]
+            members = [self._individual(run, genotypes[0], None, tally)]
             if shop.jobs > 1:
-                members.extend(run.evaluate(genotype) for genotype in genotypes[1:])
-                self._breed(run, _Population(members))
+                members.extend(
+                    self._individual(run, genotype, None, tally) for genotype in genotypes[1:]
+                )
+                self._breed(run, _Population(members), tally)
         run.finish()
+        if self.local_search:
+            search.extras.update(descent_evaluations=tally.evaluations, descent_moves=tally.moves)
         return search.result()
 
-    def _breed[G](self, run: ShopRun[G], population: _Population[G]) -> None:
+    def _individual[G](
+        self, run: ShopRun[G], genotype: G, parent: Evaluated[G] | None, tally: _Tally
+    ) -> Evaluated[G]:
+        """Evaluate a genotype and, with the local search, improve its schedule."""
+        evaluated = run.evaluate(genotype, parent=parent)
+        return _improve(run, evaluated, tally) if self.local_search else evaluated
+
+    def _breed[G](self, run: ShopRun[G], population: _Population[G], tally: _Tally) -> None:
         """Breed one child per iteration into ``population`` until the search is exhausted."""
         search, representation, operators, control = (
             run.search,
@@ -235,12 +282,43 @@ class ShopSteadyStateGa:
                     )
                 if mutating < self.mutation_rate:
                     genotype = representation.move(genotype, operators)
-                child = run.evaluate(genotype, parent=parent)
+                child = self._individual(run, genotype, parent, tally)
                 children += 1
                 replaced += population.admit(child)
         finally:
             if children:
                 search.extras["replacement_share"] = replaced / children
+
+
+def _improve[G](run: ShopRun[G], decoded: Evaluated[G], tally: _Tally) -> Evaluated[G]:
+    """Return the individual with the schedule that the descent makes of its decoded one.
+
+    The genotype and the job sequence stay. Every neighbour the descent evaluates counts
+    through the run, and ``tally`` takes the evaluations and the swaps down, the evaluations
+    even when the budget ends inside the descent. The individual keeps its decoded schedule
+    when the improved one scores worse, which another objective than the makespan allows.
+    """
+    shop, search = run.shop, run.search
+    counted = search.evaluations
+    try:
+        descent = critical_block_descent(
+            shop, machine_orders(shop, decoded.decoded), run, parent=decoded, count_neighbours=True
+        )
+    finally:
+        tally.evaluations += search.evaluations - counted
+    tally.moves += descent.moves
+    score = search.evaluator.score(descent.decoded)
+    if score > decoded.score:
+        return decoded
+    return Evaluated(decoded.genotype, decoded.sequence, score, descent.decoded)
+
+
+@dataclass(slots=True)
+class _Tally:
+    """What the local search of a run did, for the extras of the result."""
+
+    evaluations: int = 0
+    moves: int = 0
 
 
 class _Population[G]:

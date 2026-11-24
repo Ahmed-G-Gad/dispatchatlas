@@ -868,6 +868,7 @@ def test_the_genetic_algorithm_registers_and_is_created_by_its_id() -> None:
         "sequence_move",
         "sequence_crossover",
         "distance_every",
+        "local_search",
     }
     with pytest.raises(ConfigError, match="population_size"):
         registry.create("shop-steady-state-ga", population_size=1)
@@ -903,6 +904,8 @@ def test_the_genetic_algorithm_registers_and_is_created_by_its_id() -> None:
         ({"key_step": "0.5"}, "key_step"),
         ({"sequence_move": "reverse"}, "unknown sequence move"),
         ({"sequence_crossover": "ox"}, "unknown crossover"),
+        ({"local_search": 1}, "local_search"),
+        ({"local_search": "n5"}, "local_search"),
     ],
 )
 def test_the_genetic_algorithm_refuses_bad_parameters(

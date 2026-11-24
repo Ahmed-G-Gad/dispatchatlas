@@ -383,6 +383,18 @@ result = solve(ta01, "shop-simulated-annealing", max_evaluations=500, seed=7, di
 print(result.extras["observed_moves"], result.extras["measured_moves"])
 ```
 
+`shop-steady-state-ga` with `local_search=True` is a Baldwinian memetic
+algorithm, a matched pair like the plain one. Every evaluated genotype is
+decoded, and the schedule is improved by `critical_block_descent`, a
+best-improvement descent over the N5 swaps of a critical path. The descent works
+on the schedule, never on the genotype, so it is the same in both
+representations. The individual takes the improved schedule's score as its
+fitness and keeps its genotype unchanged. Every neighbour the descent evaluates
+exactly counts as one evaluation, so an evaluation limit bounds the decodes and
+the local search together. The extras add `descent_evaluations` and
+`descent_moves`. The option is off by default, and a run without it is the
+plain algorithm.
+
 ### Context methods
 
 Five solvers stand beside the families, as context for what the families

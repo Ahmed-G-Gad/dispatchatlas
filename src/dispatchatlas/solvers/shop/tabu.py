@@ -41,7 +41,8 @@ restart begins from count one evaluation each. The estimates and the
 exact scorings of the candidates of N7 are not counted, so an evaluation limit
 does not bound the work this method does between two evaluations, and in the study
 the wall-clock time of a run limits it. :func:`critical_block_descent` counts the
-same way, for the local search of other methods.
+same way, for the local search of other methods, or, on request, counts every
+neighbour it evaluates exactly.
 """
 
 from __future__ import annotations
@@ -327,6 +328,7 @@ def critical_block_descent(
     run: ShopRun[Any],
     *,
     parent: Evaluated[Any] | None = None,
+    count_neighbours: bool = False,
 ) -> Descent:
     """Improve machine orders by best-improvement descent over the N5 neighbourhood.
 
@@ -348,18 +350,33 @@ def critical_block_descent(
     :class:`~dispatchatlas.solvers.search.Exhausted` from the first swap the descent
     would apply, as any evaluation does.
 
+    With ``count_neighbours`` the descent counts every neighbour it evaluates instead:
+    each swap whose exact heads it recomputes is built and counted as one evaluation
+    through the run's search, which updates the incumbent and the trace with it, and the
+    observer sees it as a move of the orders the step starts from. The swap a step
+    applies is the counted neighbour of the lowest makespan, which is not counted again.
+    The swaps it applies are the same as without the option; only the counting differs.
+    The estimates are not counted, and neither is a swap whose exact heads reveal a
+    cycle, which builds no schedule. A run at its budget raises
+    :class:`~dispatchatlas.solvers.search.Exhausted` from the first neighbour the descent
+    would evaluate, so an evaluation limit bounds the work of the descent.
+
     Args:
         shop: The job shop.
         orders: The machine orders to improve, as
             :func:`~dispatchatlas.solvers.shop.graph.machine_orders` returns them.
         run: The run whose search counts the evaluations; it must belong to ``shop``.
         parent: The evaluation that ``orders`` come from, which the observer compares
-            the first applied swap with, or ``None``.
+            the first applied swap, or every neighbour of the first step, with, or
+            ``None``.
+        count_neighbours: Count every neighbour evaluated exactly, not only the
+            swaps applied.
 
     Returns:
         The final orders, their semi-active schedule, its makespan, and the number of
-        swaps applied, which is the number of evaluations counted. With no swap
-        applied, the schedule is built from the heads of ``orders``, uncounted.
+        swaps applied, which without ``count_neighbours`` is the number of evaluations
+        counted. With no swap applied, the schedule is built from the heads of
+        ``orders``, uncounted.
 
     Raises:
         ValueError: If ``run`` belongs to another job shop.
@@ -374,9 +391,14 @@ def critical_block_descent(
         raise ModelError("the machine orders and the jobs form a cycle")
     moves = 0
     evaluated: Evaluated[Any] | None = None
-    while (better := _best_swap(shop, position)) is not None:
-        evaluated = _count(run, better, parent)
-        parent, position, moves = evaluated, better, moves + 1
+    if count_neighbours:
+        while (counted := _best_counted_swap(run, position, parent)) is not None:
+            position, evaluated = counted
+            parent, moves = evaluated, moves + 1
+    else:
+        while (better := _best_swap(shop, position)) is not None:
+            evaluated = _count(run, better, parent)
+            parent, position, moves = evaluated, better, moves + 1
     decoded = decoded_from_heads(shop, position.heads) if evaluated is None else evaluated.decoded
     return Descent(
         tuple(tuple(order) for order in position.orders), decoded, position.makespan, moves
@@ -523,13 +545,8 @@ def _critical_swaps(shop: JobShop, position: _Position) -> list[Move]:
     return swaps
 
 
-def _best_swap(shop: JobShop, position: _Position) -> _Position | None:
-    """Return the orders of the N5 swap that lowers the makespan most, or ``None``.
-
-    The swaps are ranked by their estimates, and a swap is recomputed exactly only
-    while its estimate is below the best makespan found, the current one at first.
-    The first of equal swaps in that order wins.
-    """
+def _ranked_swaps(shop: JobShop, position: _Position) -> list[tuple[float, Move]]:
+    """Return the N5 swaps of a critical path of a position with their estimates, lowest first."""
     orders = position.orders
     ranked: list[tuple[float, Move]] = []
     for move in n5_moves(shop, orders, critical_blocks(shop, orders, position.heads)):
@@ -538,14 +555,51 @@ def _best_swap(shop: JobShop, position: _Position) -> _Position | None:
             (swap_estimate(shop, orders[machine], place, position.heads, position.tails), move)
         )
     ranked.sort()
+    return ranked
+
+
+def _best_swap(shop: JobShop, position: _Position) -> _Position | None:
+    """Return the orders of the N5 swap that lowers the makespan most, or ``None``.
+
+    The swaps are ranked by their estimates, and a swap is recomputed exactly only
+    while its estimate is below the best makespan found, the current one at first.
+    The first of equal swaps in that order wins.
+    """
     best: _Position | None = None
     bound = position.makespan
-    for estimate, move in ranked:
+    for estimate, move in _ranked_swaps(shop, position):
         if estimate >= bound:
             break
-        following = _position(shop, _moved(orders, move))
+        following = _position(shop, _moved(position.orders, move))
         if following is not None and following.makespan < bound:
             best, bound = following, following.makespan
+    return best
+
+
+def _best_counted_swap(
+    run: ShopRun[Any], position: _Position, parent: Evaluated[Any] | None
+) -> tuple[_Position, Evaluated[Any]] | None:
+    """Return the swap that :func:`_best_swap` picks, counting every neighbour it recomputes.
+
+    Each swap recomputed exactly, in the order and with the bound of :func:`_best_swap`,
+    is counted as one evaluation and shown to the observer as a move of ``parent``.
+
+    Returns:
+        The orders of the best swap with its counted evaluation, or ``None`` when no
+        swap lowers the makespan.
+    """
+    shop = run.shop
+    best: tuple[_Position, Evaluated[Any]] | None = None
+    bound = position.makespan
+    for estimate, move in _ranked_swaps(shop, position):
+        if estimate >= bound:
+            break
+        following = _position(shop, _moved(position.orders, move))
+        if following is None:
+            continue
+        evaluated = _count(run, following, parent)
+        if following.makespan < bound:
+            best, bound = (following, evaluated), following.makespan
     return best
 
 
