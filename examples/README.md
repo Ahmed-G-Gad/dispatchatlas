@@ -5,7 +5,7 @@ script's docstring explains what it does, step by step.
 
 | Script | Shows |
 | --- | --- |
-| `quickstart.py` | a generated job shop solved by three solvers, with every schedule checked against every constraint |
+| `quickstart.py` | a generated job shop posed to three solvers, with every schedule checked against every constraint |
 | `compare_solvers.py` | heuristics on a small flow shop against the optimum that `enumeration` proves, with paired seeds |
 | `campaign_analysis.py` | a campaign run, analysed, compared with baselines, written as a bundle, and replayed, all through the Python API |
 | `multi_objective_placement.py` | requests placed on an edge-fog-cloud continuum under response time and energy, with the fronts compared by hypervolume |
