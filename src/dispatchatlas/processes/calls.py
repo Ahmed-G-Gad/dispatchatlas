@@ -496,7 +496,7 @@ def run_calls(
             "started_utc": _utc_now(),
             "stamp": stamp_fields,
             "workers": len(slots_cpus),
-            "cpus": list(slots_cpus),
+            "cpus": list(chosen[: len(slots_cpus)]),
             "pin": pin,
         }
         runs_path = Path(f"{stem}.runs.jsonl")
@@ -876,8 +876,12 @@ def _check_same_run(record: Mapping[str, Any], runs: Path, rows: Path) -> None:
             old_stamp = first.get("stamp") or {}
             for name in sorted(set(old_stamp) | set(stamp)):
                 _note_change(changes, f"stamp {name}", old_stamp.get(name), stamp.get(name))
-            for name in ("workers", "cpus"):
-                _note_change(changes, name, first.get(name), record[name])
+            _note_change(changes, "workers", first.get("workers"), record["workers"])
+            old_cpus = first.get("cpus")
+            # Runs begun before the record named the slots' processors, whatever the pinning,
+            # hold ``None`` for each slot of an unpinned run: they name nothing to compare.
+            if not (isinstance(old_cpus, list) and all(cpu is None for cpu in old_cpus)):
+                _note_change(changes, "cpus", old_cpus, record["cpus"])
     elif stamp and rows.exists():
         missing = object()
         seen: dict[str, Any] = {}

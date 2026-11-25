@@ -316,6 +316,19 @@ def _unpinned(slots: int) -> dict[str, Any]:
     return {"cpus": list(range(slots)), "pin": False}
 
 
+def test_a_resume_on_other_processors_is_refused_without_pinning(tmp_path: Path) -> None:
+    # An unpinned run still names its processors, so a changed set is a changed run.
+    rows = tmp_path / "rows.jsonl"
+    _run([_echo(0)], rows, cpus=[0, 1], pin=False)
+    before = rows.read_bytes()
+    with pytest.raises(ConfigError, match=r"cpus: \[0, 1\] then, \[2, 3\] now"):
+        _run([_echo(1)], rows, cpus=[2, 3], pin=False)
+    with pytest.raises(ConfigError, match=r"cpus: \[0, 1\] then, \[1, 0\] now"):
+        _run([_echo(1)], rows, cpus=[1, 0], pin=False)
+    assert rows.read_bytes() == before
+    assert _run([_echo(1)], rows, cpus=[0, 1], pin=False).rows_written == 1
+
+
 @posix_only
 def test_a_run_ends_where_the_platform_has_no_waitid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

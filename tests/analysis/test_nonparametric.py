@@ -1166,7 +1166,10 @@ def test_two_sided_results_are_unchanged_by_the_new_arguments(
     ):
         assert (result.alternative, result.zero_method) == ("two-sided", "wilcox")
         found = (result.statistic, result.p_value, result.pairs, result.zeros, result.method)
-        assert found == (statistic, p_value, pairs, zeros, method)
+        # The normal approximation goes through libm's erfc, which differs in the last digits
+        # between platforms; every other method is exact arithmetic and keeps its bits.
+        wanted = pytest.approx(p_value, rel=1e-12) if method == "normal" else p_value
+        assert found == (statistic, wanted, pairs, zeros, method)
 
 
 def test_the_result_keeps_its_five_fields_in_order_and_adds_two_defaulted_ones_last():

@@ -514,7 +514,9 @@ def test_the_check_derives_the_notes_of_a_run_from_its_cap(reached: Path, tmp_pa
     (path,) = (path for path in _records(directory) if read(path).provenance.time_cap == 60.0)
     record = read(path)
     # The run stopped for its time limit, the cap of 60 seconds, after one second.
-    outcome = replace(record.outcome, stop_reason=StopReason.TIME_LIMIT, elapsed=1.0)
+    # The trace is cut to that second, so the times the real run took on a slow host stay within it.
+    trace = tuple(replace(point, elapsed=min(point.elapsed, 1.0)) for point in record.outcome.trace)
+    outcome = replace(record.outcome, stop_reason=StopReason.TIME_LIMIT, elapsed=1.0, trace=trace)
     facts = observations(
         outcome, replace(record.protocol.stop, time_limit=60.0), 1.0, iterative=True
     )
