@@ -373,8 +373,15 @@ class Builder:
             return False
         return all(self.modes[before] >= 0 for before, _, _ in self._decoder.incoming[task])
 
-    def earliest(self, task: int, mode: int) -> tuple[float, float]:
+    def earliest(self, task: int, mode: int, *, not_before: float = 0.0) -> tuple[float, float]:
         """Return the earliest ``(start, finish)`` of ``task`` in ``mode`` now.
+
+        Args:
+            task: Task index.
+            mode: Mode index.
+            not_before: A start time the task may not precede, in addition to
+                its release time and its predecessors. An online scheduler
+                passes the current time, so that nothing is placed in the past.
 
         Raises:
             ModelError: If the mode is invalid or a predecessor is unplaced.
@@ -384,7 +391,7 @@ class Builder:
         if not 0 <= mode < len(options):
             raise ModelError(f"mode {mode} is invalid for task {decoder.task_ids[task]!r}")
         duration, demands, location = options[mode]
-        ready = decoder.release[task]
+        ready = max(decoder.release[task], not_before)
         for before, lag, number in decoder.incoming[task]:
             if self.modes[before] < 0:
                 raise ModelError(
@@ -399,17 +406,20 @@ class Builder:
         start = self._fit(task, ready, duration, demands)
         return start, start + duration
 
-    def best(self, task: int, allowed: Sequence[int] | None = None) -> tuple[float, float, int]:
+    def best(
+        self, task: int, allowed: Sequence[int] | None = None, *, not_before: float = 0.0
+    ) -> tuple[float, float, int]:
         """Return ``(start, finish, mode)`` of the mode that finishes ``task`` first.
 
         Args:
             task: Task index.
             allowed: Candidate modes. Defaults to every mode.
+            not_before: Passed to :meth:`earliest`.
         """
         candidates = range(len(self._decoder.modes[task])) if allowed is None else allowed
         best: tuple[float, float, int] | None = None
         for mode in candidates:
-            start, finish = self.earliest(task, mode)
+            start, finish = self.earliest(task, mode, not_before=not_before)
             if best is None or finish < best[1] - EPSILON:
                 best = (start, finish, mode)
         if best is None:
