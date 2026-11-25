@@ -112,14 +112,15 @@ def test_the_fork_with_one_placement_per_second_under_the_dispatcher():
 def test_recovery_of_the_fork_after_its_failure_and_its_repair():
     # Forecasts of the workflow's response under online EFT at one placement per
     # second. Just after the arrival: a n1 [0, 2), b n1 [2, 5), c n1 [5, 6): 6
-    # (forecasts start from the dispatch rule at once). Just before the failure at
-    # 3: a runs [2, 4) on n1, then b n1 [4, 7) and c n1 [7, 8): 8. Just after: a
-    # restarts on n2 alone, a [3, 7), b [7, 10), c [10, 15): 15. At the adoption at 7: b [8, 11), c [11, 16): 16; 16 again
-    # just before the repair, 11 just after it (c on n1 [10, 11)), and at the
-    # adoption at 14 the workflow has finished, at 13. The failure's cohort never
-    # returns within 5% of 8: censored at the end of the run, 14, after 11
-    # seconds, with a degradation of (15-8)*4 + (16-8)*3 + (11-8)*4 = 64. The
-    # repair's cohort is at 11 against 16 at once: recovered after 0 seconds.
+    # (forecasts use the dispatch rule at once). Just before the failure at 3: a
+    # runs [2, 4) on n1, then b n1 [4, 7) and c n1 [7, 8): 8. Just after: a
+    # restarts on n2 alone, a [3, 7), b [7, 10), c [10, 15): 15. At the adoption
+    # at 7: b [8, 11), c [11, 16): 16; 16 again just before the repair, 11 just
+    # after it (c on n1 [10, 11)), and at the adoption at 14 the workflow has
+    # finished, at 13. The failure's cohort never returns within 5% of 8: it is
+    # censored at the end of the run, 14, after 11 seconds, with a degradation of
+    # (15-8)*4 + (16-8)*3 + (11-8)*4 = 64. The repair's cohort is at 11 against 16
+    # at once: recovered after 0 seconds.
     result = run_online(TwoNodes(), fork_trace(), OnlineEft(), clock=SLOW, tolerance=0.05)
     assert [(row[0], row[1], row[2]) for row in result.forecasts] == [
         (0.0, "post", 6.0),
