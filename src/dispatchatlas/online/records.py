@@ -8,8 +8,9 @@ document. Every line ends with a line feed.
 
 :class:`RecordWriter` writes the file to a temporary name beside the target
 and renames it into place when the job closes it, so a reader never sees a
-partial file at the target. Each run is flushed as it is written, so the
-temporary file of a job that dies keeps the runs it had finished.
+partial file at the target. Each run is flushed as it is written; a job that
+fails with an exception closes the temporary file, which keeps the runs it
+had finished, and leaves it in place.
 :func:`read_records` refuses a file whose stream or last line is cut, or
 whose line is not a JSON object, a torn line, rather than return part of it.
 The gzip header carries no time or name, so equal runs give equal bytes.
@@ -95,7 +96,12 @@ class RecordWriter:
         return self.path
 
     def abandon(self) -> Path:
-        """Close the stream and leave the runs written so far in :attr:`temporary`."""
+        """Close the file without moving it: :attr:`temporary` keeps the runs written so far.
+
+        The closed temporary file is a complete record file that
+        :func:`read_records` reads. A job killed before it closes leaves a cut
+        stream instead, which the reader refuses.
+        """
         self._stream.close()
         self._raw.close()
         return self.temporary

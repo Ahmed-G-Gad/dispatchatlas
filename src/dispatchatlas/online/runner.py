@@ -366,7 +366,7 @@ class _Simulation:
         self.starts: list[tuple[float, int, int]] = []
         self.running: list[tuple[float, int, int]] = []
         self.queue: list[tuple[tuple[float, float, int], int]] = []
-        self.answering: tuple[int, float, float, int] | None = None
+        self.answering: tuple[int, float, float, tuple[int, ...]] | None = None
         self.pass_: _Pass | None = None
         self.passes = 0
         self.in_force: Plan | None = None
@@ -586,10 +586,10 @@ class _Simulation:
     def _thread_step(self) -> None:
         now = self.now
         if self.answering is not None:
-            task, began, done, cost = self.answering
+            task, began, done, allowed = self.answering
             if done <= now + _TOLERANCE:
                 self.answering = None
-                self._answer(task, began, cost)
+                self._answer(task, began, allowed)
             return
         while self.queue:
             _, task = heapq.heappop(self.queue)
@@ -602,7 +602,7 @@ class _Simulation:
             charged = self.clock.counted(cost)
             self.answer_placements += cost
             self.answer_charged += charged
-            self.answering = (task, now, now + charged, cost)
+            self.answering = (task, now, now + charged, allowed)
             return
         current = self.pass_
         if current is not None and current.remaining <= _TOLERANCE:
@@ -612,11 +612,13 @@ class _Simulation:
                 self._adopt(current.plan)
             current.row["outcome"] = current.outcome.value
 
-    def _answer(self, task: int, began: float, cost: int) -> None:
+    def _answer(self, task: int, began: float, ranked: tuple[int, ...]) -> None:
         if self.status[task] is not TaskStatus.READY or task in self.entries:
             return
-        allowed = self.model.allowed(task, self.down)
+        # The answer ranks the nodes it was charged for that are still up.
+        allowed = tuple(m for m in ranked if self.model.mode_nodes[task][m].isdisjoint(self.down))
         if not allowed:
+            heapq.heappush(self.queue, (self.model.key(task, self.ready_since[task]), task))
             return
         start, _, mode = earliest_finish(self.reserved, task, allowed, self.now)
         self.reserved.place(task, mode, start)
@@ -629,7 +631,7 @@ class _Simulation:
                 self.now,
                 mode,
                 start,
-                cost,
+                len(ranked),
             ]
         )
 
