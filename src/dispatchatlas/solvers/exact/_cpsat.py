@@ -130,6 +130,7 @@ class IntervalModel:
         self.intervals: list[list[cp_model.IntervalVar]] = []
         self._uses: dict[tuple[int, str], cp_model.IntVar] = {}
         self._makespan: cp_model.IntVar | None = None
+        self.transfer_pairs = 0
         self._add_tasks()
         self._add_resources()
         self._add_dependencies()
@@ -205,6 +206,7 @@ class IntervalModel:
             self.model.add(self.starts[after] >= self.ends[before] + lag + least)
             for (source, target), transfer in sorted(transfers.items()):
                 if transfer > least:
+                    self.transfer_pairs += 1
                     both: list[cp_model.BoolVarT] = [
                         self.chosen[before][source],
                         self.chosen[after][target],
@@ -599,6 +601,26 @@ def _ending_at(
     return tuple(bounds)
 
 
+def _unlocated_transfers(problem: Problem) -> int:
+    """Count the dependencies that carry data across a network but have a mode without a location.
+
+    The data model prices a transfer only between two located modes, so such a pair
+    exchanges its data at no cost and no delay. The count lets a caller see that the
+    model treats those pairs as co-located.
+    """
+    if problem.network is None:
+        return 0
+    index = problem.task_index
+    count = 0
+    for dependency in problem.dependencies:
+        if dependency.data <= 0.0:
+            continue
+        pair = (problem.tasks[index[dependency.before]], problem.tasks[index[dependency.after]])
+        if any(mode.location is None for task in pair for mode in task.modes):
+            count += 1
+    return count
+
+
 def solve(
     problem: Problem,
     stop: StopCriteria,
@@ -643,6 +665,10 @@ def solve(
         "relative_gap": relative_gap,
         "time_scale": scale,
         "horizon": horizon / scale,
+        "transfer_pairs": model.transfer_pairs,
+        "unlocated_transfers": _unlocated_transfers(problem),
+        "model_variables": len(model.model.proto.variables),
+        "model_constraints": len(model.model.proto.constraints),
     }
     remaining = clock.remaining()
     if remaining is not None and remaining <= 0.0:

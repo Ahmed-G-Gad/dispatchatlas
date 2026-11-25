@@ -57,6 +57,21 @@ class CpSat:
     energy or cost coefficients are scaled the same way. A problem that needs
     more decimals is refused rather than rounded.
 
+    Continuum placement is modelled as it is posed: a task's modes are its
+    candidate nodes, and a node of capacity above one is a cumulative
+    resource. A dependency that carries data waits for the transfer time of
+    the pair of chosen nodes, zero when both tasks run on one node. The model
+    states each distinct transfer time above the smallest as a conditional
+    precedence enforced when both mode literals hold, so co-location needs no
+    extra variable. The network has no contention: links carry any number of
+    transfers at once, as the schedule checker assumes. A mode without a
+    location exchanges its data at no delay; the ``unlocated_transfers`` entry of the result's
+    ``extras`` counts the dependencies this affects, ``transfer_pairs`` the
+    conditional precedences, and ``model_variables`` and ``model_constraints``
+    the size of the model. ``mean_response_time`` is the mean over the
+    groups, the workflows, of the completion of the group less its earliest
+    release.
+
     Statuses are CP-SAT's own proofs. ``OPTIMAL`` means CP-SAT proved the
     schedule optimal, ``FEASIBLE`` that it stopped earlier, with ``bound``
     holding its proven lower bound, ``INFEASIBLE`` that it proved no schedule

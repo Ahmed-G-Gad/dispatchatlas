@@ -473,3 +473,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `solvers list`, `solvers show` with its JSON document, and the solver
   catalogue state the shape that a solver requires (`SolverInfo.shape`), such as
   `job-shop`, when it has one. A solver without a shape is listed as it was.
+- `cp-sat` documents and tests its model of workflow placement on the edge-fog-cloud
+  continuum as the exact baseline: node choice as modes, node capacities above one
+  as cumulative resources, communication delays that depend on the pair of chosen
+  nodes and are zero when co-located, releases, and the mean response time of several
+  workflows. Its result's `extras` now also hold `transfer_pairs`,
+  `unlocated_transfers`, `model_variables`, and `model_constraints`. The model is
+  unchanged, and the default stays one worker.
