@@ -376,7 +376,6 @@ class _Simulation:
         self.pass_: _Pass | None = None
         self.passes = 0
         self.in_force: Plan | None = None
-        self.fresh = False
         self.version = 0
         self.now = 0.0
         self.thread_last = 0.0
@@ -554,7 +553,6 @@ class _Simulation:
         }
         self.entries = keep
         self._rebuild_reserved()
-        self.fresh = False
         self.queue = [
             (model.key(task, self.ready_since[task]), task)
             for task, status in enumerate(self.status)
@@ -774,7 +772,6 @@ class _Simulation:
             self._add_entry(task, mode, builder.starts[task], "plan")
         self.reserved = builder
         self.in_force = plan
-        self.fresh = True
         self.queue = []
         self._forecast("adopt")
 
