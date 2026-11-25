@@ -37,9 +37,7 @@ trace = arrivals.merged(availability_events(nodes, outages, seed=1, horizon=10 *
 clock = PlanningClock("counted", rate=1e4)  # 10,000 placements per second
 runs = [
     run_online(static, trace, OnlineEft(), clock=clock, seed=1),
-    run_online(
-        static, trace, WarmRestart("tabu-search"), clock=clock, budget=Budget(2000), seed=1
-    ),
+    run_online(static, trace, WarmRestart("tabu-search"), clock=clock, budget=Budget(2000), seed=1),
 ]
 for run in runs:
     assert check_run(online_problem(static, trace), trace, run) == ()
