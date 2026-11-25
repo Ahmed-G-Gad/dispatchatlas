@@ -139,6 +139,12 @@ explains its options with `--help`.
 - **9 objectives**: makespan, total completion time, total flow time, mean
   response time, total tardiness, maximum lateness, tardy tasks, energy, and
   cost. A plugin can register more.
+- **Online scheduling**: workflows that arrive over time and nodes that fail
+  and recover, as seeded traces; planners charged for their computation in
+  simulated time, deterministically by counted placements or by measured wall
+  time; the greedy online earliest-finish reference and the warm restart of
+  any solver; every raw record of a run, with response times and the recovery
+  after each event, in one compressed file per job.
 - **Campaigns** described in TOML or JSON: every solver on every problem under
   every stopping protocol, paired seeds, worker processes with hard time
   limits and retries, one JSON record per run, resumption, and replay.

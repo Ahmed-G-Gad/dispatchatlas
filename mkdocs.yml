@@ -106,6 +106,7 @@ nav:
       - Benchmarks: guide/benchmarks.md
       - Solvers: guide/solvers.md
       - Campaigns: guide/campaigns.md
+      - Online scheduling: guide/online.md
       - Pinned child processes: guide/processes.md
       - Analysis: guide/analyzing.md
   - Command line: cli.md
@@ -125,6 +126,7 @@ nav:
       - Learning methods: api/solvers-learning.md
       - Exact and hybrid methods: api/solvers-exact.md
       - Job shop methods: api/solvers-shop.md
+      - Online scheduling: api/online.md
       - Processes: api/processes.md
       - Campaigns: api/campaigns.md
       - Tuning: api/tuning.md

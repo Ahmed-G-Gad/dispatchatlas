@@ -4,9 +4,9 @@
   ranks every task to plan again, in the order the tasks fall due (ties by
   the run's priority, by default HEFT's upward rank), each on the node that
   finishes it earliest given the tasks before it. It is the greedy reference:
-  run with free planning it commits every task where the dispatcher alone
-  would, at the same time, and every planner that seeds with it and never
-  searches commits exactly where it does.
+  every planner that seeds with it and never searches commits exactly where
+  it does, and on a trace of arrivals with free planning it commits every
+  task where the dispatcher alone would, at the same time.
 - :class:`WarmRestart`: re-runs a registered static solver at every decision
   point under the budget, on the :class:`~dispatchatlas.online.planning.Residual`
   problem, and keeps the plan in force unless the solver's plan is strictly

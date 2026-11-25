@@ -480,3 +480,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflows. Its result's `extras` now also hold `transfer_pairs`,
   `unlocated_transfers`, `model_variables`, and `model_constraints`. The model is
   unchanged, and the default stays one worker.
+- An `online` package that runs an online scheduling loop as a deterministic
+  discrete-event simulation. A `Trace` holds the sorted, immutable arrivals of
+  workflows and the failures and repairs of nodes, with a SHA-256 content
+  digest; seeded generators draw Poisson arrivals at a rate or an offered
+  load (`rate_for_load`), arrivals at given submit times, and outages from an
+  alternating renewal of exponential or Weibull up and down times, each from a
+  stream of its own so methods compared on a trace meet the same events. A
+  task commits when it starts and its reservation never moves; a failure
+  loses the attempts running on the node, whose tasks restart from scratch,
+  and the node takes nothing until its repair. A `Planner` returns an order
+  and a node for every uncommitted task at each decision point, within a
+  `Budget` of placements and seconds, charged in simulated time by a
+  `PlanningClock`: `counted` at a stated rate of placements per second, for
+  reproducible runs, or `measured` wall time. A plan takes effect only once
+  its charge has elapsed; an event withdraws the plan in force and overtakes
+  the pass in progress, a pass that exceeds its budget loses its window, and
+  until a fresh plan is adopted the ready tasks are answered one by one by the
+  earliest-finish rule, ahead of the pass. `OnlineEft`, the greedy reference,
+  and `WarmRestart` of a registered static solver on the residual problem are
+  built in. `run_online` keeps every raw record: events, passes with their
+  placements, charge, outcome, estimates, and anytime curve, answers,
+  attempts, workflow response times, forecasts, and the recovery after each
+  event, its time and integrated degradation (`recovery`). `RecordWriter`,
+  `write_records`, and `read_records` keep one gzip-compressed JSON-lines file
+  per job, written atomically and read strictly, and `check_run` checks an
+  executed schedule independently of the runner.
+- `Builder.earliest` and `Builder.best` take a `not_before` time below which
+  no task is placed.

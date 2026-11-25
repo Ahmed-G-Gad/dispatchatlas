@@ -24,7 +24,8 @@ time is charged in simulated time (see
   nodes and reserves the node that finishes it earliest, given the committed
   tasks and the earlier answers; the task starts there unless a plan is
   adopted first. An answer costs one placement per node that can run the
-  task, charged at the clock's rate.
+  task when the answer begins, charged at the clock's rate, and ranks those
+  of them still up when it ends.
 
 **Rules of the loop**, each a decision of this runner:
 
@@ -62,9 +63,14 @@ from the committed tasks, the plan or answers in force, and the dispatch rule
 for every other task. Recovery after an event is measured on these
 forecasts, see :mod:`~dispatchatlas.online.metrics`.
 
-With planning free (an infinite clock rate) :class:`~dispatchatlas.online.planners.OnlineEft`
-commits every task where the dispatcher alone would, at the same time, and so
-does every planner that seeds with the greedy plan and never searches.
+**The greedy reference.** A planner that seeds with the greedy plan and
+never searches commits every task where
+:class:`~dispatchatlas.online.planners.OnlineEft` does, at the same time,
+under any clock. On a trace of arrivals with planning free (an infinite
+clock rate), both commit every task where the dispatcher alone would. Under
+failures and repairs the two references differ by rule 3: online EFT ranks
+every uncommitted task again at each event, while the dispatcher keeps its
+answers and decides again only the tasks a failure displaces.
 """
 
 from __future__ import annotations

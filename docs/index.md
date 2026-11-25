@@ -42,6 +42,9 @@ feasible 361.0 2000 evaluation-limit
 - [**Solvers**](guide/solvers.md): heuristics, local search, population and
   swarm methods, multi-objective algorithms, learning methods, and exact
   solvers behind one contract with exact budgets and seeded determinism.
+- [**Online scheduling**](guide/online.md): workflows arriving and nodes
+  failing over time, planners charged for their computation in simulated
+  time, and every raw record of a run, with recovery after each event.
 - [**Campaigns**](guide/campaigns.md): experiments described in a file, with
   fair comparisons verified from the plan, paired seeds, hard time limits,
   resumption, and replay.
