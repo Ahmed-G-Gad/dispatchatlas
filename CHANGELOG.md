@@ -506,5 +506,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `write_records`, and `read_records` keep one gzip-compressed JSON-lines file
   per job, written atomically and read strictly, and `check_run` checks an
   executed schedule independently of the runner.
+  A `Trace` holds its times as floats rounded to microseconds, so equal times
+  give equal digests, whether given as `0` or `0.0`. `LogNormal` refuses a
+  `mu + sigma**2 / 2` of 709 or more, whose mean overflows. `WarmRestart`
+  raises `ConfigError` when nothing bounds its search (`evaluations`, a
+  placement cap, or in `measured` mode seconds), where it used to return the
+  greedy plan without running its solver. The recovery matches forecasts to
+  events within the 1e-9 tolerance the runner batches them by, and
+  `RecordWriter` removes its temporary file when the header cannot be written.
 - `Builder.earliest` and `Builder.best` take a `not_before` time below which
   no task is placed.

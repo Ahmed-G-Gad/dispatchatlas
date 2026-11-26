@@ -13,7 +13,9 @@ fails with an exception closes the temporary file, which keeps the runs it
 had finished, and leaves it in place.
 :func:`read_records` refuses a file whose stream or last line is cut, or
 whose line is not a JSON object, a torn line, rather than return part of it.
-The gzip header carries no time or name, so equal runs give equal bytes.
+The gzip header carries no time or name, so equal runs give equal bytes,
+except for each pass's ``wall``, the measured seconds of its planner call,
+which even a counted run records.
 """
 
 from __future__ import annotations
@@ -56,6 +58,10 @@ class RecordWriter:
             when the writer closes without error.
         header: Fields of the header line, besides ``format`` and ``version``.
 
+    Raises:
+        SerializationError: If the header cannot be written as JSON. The
+            temporary file is closed and removed first.
+
     Example::
 
         with RecordWriter(path, {"job": "loop-pilot"}) as writer:
@@ -73,7 +79,14 @@ class RecordWriter:
         self.count = 0
         fields = dict(header or {})
         fields.update({"format": RECORDS_FORMAT, "version": _VERSION})
-        self._write(_line(fields))
+        try:
+            self._write(_line(fields))
+        except BaseException:
+            # A writer that never exists leaves no file behind.
+            self._stream.close()
+            self._raw.close()
+            self.temporary.unlink(missing_ok=True)
+            raise
 
     def _write(self, data: bytes) -> None:
         self._stream.write(data)

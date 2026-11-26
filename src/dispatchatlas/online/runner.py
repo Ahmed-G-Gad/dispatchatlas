@@ -23,9 +23,9 @@ time is charged in simulated time (see
 - An **answer** decides one task with the dispatch rule: it ranks the task's
   nodes and reserves the node that finishes it earliest, given the committed
   tasks and the earlier answers; the task starts there unless a plan is
-  adopted first. An answer costs one placement per node that can run the
-  task when the answer begins, charged at the clock's rate, and ranks those
-  of them still up when it ends.
+  adopted first. An answer costs one placement per allowed mode, a mode of
+  the task whose resources are all up when the answer begins, charged at the
+  clock's rate, and ranks those of them still up when it ends.
 
 **Rules of the loop**, each a decision of this runner:
 
@@ -45,8 +45,9 @@ time is charged in simulated time (see
    at the event.
 5. *Overrun.* A pass that exceeds its budget (see
    :class:`~dispatchatlas.online.planning.Budget`) loses its window: it
-   adopts nothing, holds the scheduler for the whole budget, and the
-   dispatcher decides until the next event.
+   adopts nothing and its charge is recorded as the budget's seconds; answers
+   continue as they do for every pass, so the charge does not delay them, and
+   the dispatcher decides until the next event.
 6. *Failures.* A failure ends every attempt running on the node, at the
    failure time; the attempt is lost and its task is ready again, to restart
    from scratch. The node takes no task until its repair. Finished work is
@@ -88,6 +89,7 @@ from dispatchatlas.core.model import Dependency, Network, Problem, Resource, Tas
 from dispatchatlas.core.seeds import derive_seed
 from dispatchatlas.core.serialization import problem_digest
 from dispatchatlas.online._engine import (
+    TIME_TOLERANCE,
     Model,
     dispatch_rollout,
     earliest_finish,
@@ -115,7 +117,7 @@ RESULT_FORMAT = "dispatchatlas.online-run"
 """Value of the ``format`` field of a run record."""
 
 _VERSION = 1
-_TOLERANCE = 1e-9
+_TOLERANCE = TIME_TOLERANCE
 
 
 class PlatformLike(Protocol):
@@ -160,7 +162,12 @@ class OnlineResult:
             predicted response over arrived workflows; the finishes of the
             unfinished ones, by workflow index, ``None`` where unpredictable.
         recovery: One mapping per event, see :func:`~dispatchatlas.online.metrics.recovery`.
-        summary: Headline numbers of the run.
+        summary: Headline numbers of the run. ``end`` is the time of the
+            last step of the loop: the latest event, task start or finish,
+            answer end, or pass end the loop reached, which is not the horizon
+            of the trace. ``charged`` is the sum of the ``charged`` of every
+            pass and of every answer; an overtaken pass counts its full
+            charge, including the part that never elapsed.
     """
 
     config: dict[str, Any]

@@ -35,7 +35,16 @@ from typing import Protocol
 from dispatchatlas.core.errors import ModelError
 from dispatchatlas.core.model import Resource, Scalar
 from dispatchatlas.core.seeds import derive_seed
-from dispatchatlas.online.events import Arrival, Event, Failure, Repair, Trace, Workflow
+from dispatchatlas.online.events import (
+    TIME_DECIMALS,
+    Arrival,
+    Event,
+    Failure,
+    Repair,
+    Trace,
+    Workflow,
+    round_time,
+)
 
 __all__ = [
     "TIME_DECIMALS",
@@ -51,12 +60,12 @@ __all__ = [
     "workflow_work",
 ]
 
-TIME_DECIMALS = 6
-"""Generated event times are rounded to this many decimals: microseconds."""
+_LOG_MEAN_LIMIT = 709.0
+"""``exp`` of a larger number overflows a float (``log(sys.float_info.max)`` is 709.78)."""
 
 
 def _round(time: float) -> float:
-    return round(time, TIME_DECIMALS)
+    return round_time(time)
 
 
 def _finite(value: float, what: str) -> float:
@@ -142,7 +151,8 @@ class LogNormal:
     ``mu`` and ``sigma`` are the mean and standard deviation of the underlying
     normal distribution of the logarithm, the parameterisation of the fits of
     the Failure Trace Archive. ``mu`` may be negative; ``sigma`` must be
-    positive. The mean is ``exp(mu + sigma**2 / 2)``. The distribution is
+    positive, and ``mu + sigma**2 / 2`` must stay below 709, so that the mean,
+    ``exp(mu + sigma**2 / 2)``, is a finite float. The distribution is
     heavy-tailed, as measured for the repair times of many clusters.
 
     Sampling uses ``rng.lognormvariate``, which draws through
@@ -156,6 +166,11 @@ class LogNormal:
     def __post_init__(self) -> None:
         _finite(self.mu, "log-normal mu")
         _positive(self.sigma, "log-normal sigma")
+        if self.mu + self.sigma**2 / 2.0 >= _LOG_MEAN_LIMIT:
+            raise ModelError(
+                f"log-normal mu + sigma**2 / 2 must be below {_LOG_MEAN_LIMIT:g} for the "
+                f"mean to be finite, got mu={self.mu!r}, sigma={self.sigma!r}"
+            )
 
     @property
     def mean(self) -> float:
@@ -250,12 +265,14 @@ def poisson_arrivals(
 def submitted_arrivals(workflows: Sequence[Workflow], times: Sequence[float]) -> Trace:
     """Return the arrivals of ``workflows`` at the given submit times.
 
+    The times are rounded to microseconds, like every time of a trace.
+
     Raises:
         ModelError: If the two sequences differ in length.
     """
     if len(workflows) != len(times):
         raise ModelError(f"{len(workflows)} workflows but {len(times)} submit times")
-    return Trace(tuple(Arrival(float(t), w) for w, t in zip(workflows, times, strict=True)))
+    return Trace(tuple(Arrival(_round(t), w) for w, t in zip(workflows, times, strict=True)))
 
 
 def workflow_work(workflow: Workflow) -> float:

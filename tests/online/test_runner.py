@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from dispatchatlas.core.errors import ModelError
+from dispatchatlas.core.errors import ConfigError, ModelError
 from dispatchatlas.online import (
     Arrival,
     Budget,
@@ -232,11 +232,11 @@ def test_the_counted_clock_reproduces_a_run_exactly():
     }
     first = run_online(platform, trace, planner, **kwargs)
     second = run_online(platform, trace, planner, **kwargs)
-    for result in (first, second):
+    third = run_online(platform, trace, planner, **{**kwargs, "seed": 8})
+    for result in (first, second, third):
         for row in result.passes:
             row["wall"] = 0.0
     assert first == second
-    third = run_online(platform, trace, planner, **{**kwargs, "seed": 8})
     assert third.attempts != first.attempts or third.passes != first.passes
 
 
@@ -323,3 +323,24 @@ def test_a_trace_naming_an_unknown_node_is_refused():
     trace = Trace.of([Arrival(0.0, fork()), Failure(1.0, "n9")])
     with pytest.raises(ModelError, match="unknown nodes"):
         run_online(TwoNodes(), trace, None)
+
+
+@pytest.mark.parametrize(
+    ("clock", "budget", "evaluations"),
+    [
+        (SLOW, Budget(), None),
+        (FREE, Budget(seconds=5.0), None),
+        (PlanningClock("measured", rate=1.0), Budget(), None),
+    ],
+)
+def test_warm_restart_without_a_bound_on_its_search_is_refused(clock, budget, evaluations):
+    planner = WarmRestart("tabu-search", evaluations=evaluations)
+    with pytest.raises(ConfigError, match="no bound"):
+        run_online(TwoNodes(), fork_trace(), planner, clock=clock, budget=budget)
+
+
+@pytest.mark.parametrize(("budget", "evaluations"), [(Budget(placements=40), None), (Budget(), 3)])
+def test_warm_restart_runs_under_any_one_bound(budget, evaluations):
+    planner = WarmRestart("tabu-search", evaluations=evaluations)
+    result = run_online(TwoNodes(), fork_trace(), planner, clock=SLOW, budget=budget)
+    assert result.summary["unfinished_tasks"] == 0

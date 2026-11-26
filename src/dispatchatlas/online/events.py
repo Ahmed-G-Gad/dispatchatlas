@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
@@ -44,6 +44,7 @@ from dispatchatlas.core.serialization import (
 )
 
 __all__ = [
+    "TIME_DECIMALS",
     "TRACE_FORMAT",
     "Arrival",
     "Event",
@@ -58,7 +59,15 @@ __all__ = [
 TRACE_FORMAT = "dispatchatlas.online-trace"
 """Value of the ``format`` field of a trace document."""
 
+TIME_DECIMALS = 6
+"""A trace holds event times rounded to this many decimals: microseconds."""
+
 _VERSION = 1
+
+
+def round_time(time: float) -> float:
+    """Return ``time`` as a float rounded to :data:`TIME_DECIMALS`, never ``-0.0``."""
+    return round(float(time), TIME_DECIMALS) + 0.0
 
 
 class EventKind(StrEnum):
@@ -199,7 +208,10 @@ class Trace:
 
     Building a trace sorts its events and checks them: times are finite and
     non-negative, workflow ids and task ids are unique, and each node
-    alternates between failure and repair, starting up.
+    alternates between failure and repair, starting up. Times are stored as
+    floats rounded to microseconds (:data:`TIME_DECIMALS`), so ``Arrival(0, w)``
+    and ``Arrival(0.0, w)`` are the same event with the same digest, and two
+    times closer than half a microsecond are one instant.
 
     Attributes:
         events: The events, sorted.
@@ -208,11 +220,8 @@ class Trace:
     events: tuple[Event, ...]
 
     def __post_init__(self) -> None:
-        events = tuple(sorted(self.events, key=_key))
-        workflows: set[str] = set()
-        tasks: set[str] = set()
-        down: set[str] = set()
-        for event in events:
+        rounded: list[Event] = []
+        for event in self.events:
             if not isinstance(event, (Arrival, Failure, Repair)):
                 raise ModelError(f"a trace holds events, got {event!r}")
             if isinstance(event.time, bool) or not (
@@ -221,6 +230,12 @@ class Trace:
                 raise ModelError(f"event time must be a finite number, got {event.time!r}")
             if event.time < 0.0:
                 raise ModelError(f"event time must be non-negative, got {event.time!r}")
+            rounded.append(replace(event, time=round_time(event.time)))
+        events = tuple(sorted(rounded, key=_key))
+        workflows: set[str] = set()
+        tasks: set[str] = set()
+        down: set[str] = set()
+        for event in events:
             if isinstance(event, Arrival):
                 if event.workflow.id in workflows:
                     raise ModelError(f"workflow {event.workflow.id!r} arrives twice")

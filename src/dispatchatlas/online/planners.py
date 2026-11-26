@@ -66,6 +66,12 @@ class WarmRestart:
     after the greedy plan the pass returns the greedy plan: seeding without
     searching.
 
+    The search needs a bound: ``evaluations``, a placement cap in the budget
+    (a seconds budget implies one in ``counted`` mode at a finite rate), or, in
+    ``measured`` mode, a seconds budget. A pass with none raises
+    :class:`~dispatchatlas.core.errors.ConfigError` rather than return the
+    greedy plan without ever running the solver.
+
     Attributes:
         solver: Registered id of the static solver.
         parameters: Its parameters.
@@ -130,7 +136,12 @@ class WarmRestart:
             return best[0]
         seconds = context.remaining_seconds() if context.clock.mode == "measured" else None
         if evaluations is None and seconds is None:
-            return best[0]
+            raise ConfigError(
+                f"WarmRestart({self.solver!r}) has no bound on its search: pass "
+                "evaluations=..., or a Budget with placements, or with seconds "
+                "(the seconds bound a solver only in the measured clock mode, "
+                "and the placement cap a seconds budget implies needs a finite rate)"
+            )
         stop = StopCriteria(
             time_limit=seconds,
             max_evaluations=evaluations,

@@ -206,6 +206,10 @@ def test_lognormal_validates_its_parameters():
     for mu, sigma in [(math.nan, 1.0), (math.inf, 1.0), (0.0, 0.0), (0.0, -1.0), (0.0, math.inf)]:
         with pytest.raises(ModelError):
             LogNormal(mu, sigma)
+    for mu, sigma in [(800.0, 1.0), (709.0, 1.0), (0.0, 40.0)]:
+        with pytest.raises(ModelError, match="finite"):
+            LogNormal(mu, sigma)
+    assert math.isfinite(LogNormal(700.0, 1.0).mean)
     with pytest.raises(ModelError):
         LogNormal(True, 1.0)
     with pytest.raises(ModelError):
@@ -246,3 +250,22 @@ def test_lognormal_in_an_alternating_renewal():
     assert model.describe()["ttr_mu"] == 0.05
     trace = availability_events(["a", "b"], model, seed=3, horizon=500.0)
     assert trace.digest == availability_events(["a", "b"], model, seed=3, horizon=500.0).digest
+
+
+def test_equal_times_give_equal_traces_and_digests():
+    w = fork()
+    a = Trace.of([Arrival(0, w), Failure(3, "n1"), Repair(10, "n1")])
+    b = Trace.of([Arrival(0.0, w), Failure(3.0, "n1"), Repair(10.0, "n1")])
+    assert a == b
+    assert a.digest == b.digest
+    assert all(isinstance(e.time, float) for e in a.events)
+    # times are held to microseconds, and a tiny negative time is refused, not -0.0
+    c = Trace.of([Arrival(2.0000004, w)])
+    assert c.events[0].time == 2.0
+    assert c.digest == Trace.of([Arrival(2.0, w)]).digest
+    with pytest.raises(ModelError):
+        Trace.of([Arrival(-1e-9, w)])
+    assert Trace.of([Arrival(-0.0, w)]).dumps() == Trace.of([Arrival(0.0, w)]).dumps()
+    submitted = submitted_arrivals([w], [1.0000004])
+    assert submitted.events[0].time == 1.0
+    assert submitted.digest == submitted_arrivals([w], [1]).digest

@@ -86,7 +86,7 @@ One scheduler thread does two kinds of work, both charged in simulated time:
   time has elapsed; the runner then places the plan's tasks, in its order and
   on its nodes, on the committed schedule;
 - an **answer** decides one ready task by the earliest-finish rule, at one
-  placement per node that can run it.
+  placement per allowed mode, a mode of the task whose resources are all up.
 
 The runner's rules, each stated in `dispatchatlas.online.runner`:
 
@@ -99,8 +99,9 @@ The runner's rules, each stated in `dispatchatlas.online.runner`:
 3. **Every uncommitted task is planned again** at each event.
 4. **Overtaking**: an event before a pass is adopted, or at the same instant,
    overtakes it; it adopts nothing.
-5. **Overrun**: a pass that exceeds its `Budget` loses its window and holds
-   the scheduler for the whole budget.
+5. **Overrun**: a pass that exceeds its `Budget` loses its window and adopts
+   nothing; its charge is recorded as the whole budget, and answers continue
+   as they do during any pass.
 
 ## Planners and the clock
 
@@ -135,7 +136,8 @@ digests of the trace and of the run's problem, every event, every pass with
 its placements, charge, outcome, estimate before and after, and its anytime
 curve, every answer, every attempt with its outcome, every workflow's
 response time, the forecasts at each decision point, the recovery after each
-event, and a summary. `write_records` and `RecordWriter` write one
+event, and a summary. The summary's `charged` is the sum of the charges of
+the passes and answers, counting the unelapsed part of an overtaken pass. `write_records` and `RecordWriter` write one
 gzip-compressed JSON-lines file per job, a header line then one line per run,
 atomically; `read_records` refuses a torn line.
 
@@ -143,5 +145,7 @@ Recovery is measured on the forecasts: for each event, the cohort of
 workflows open just before it, the time until the cohort's mean planned
 response returns within a tolerance of its value just before the event, and
 the excess response integrated over that time. `dispatchatlas.online.metrics`
-defines both precisely; `recovery(run, tolerance)` recomputes them for any
+defines both precisely, including the censored case, whose recovery time runs
+to `summary["end"]`, the time of the last step of the loop and not the horizon
+of the trace; `recovery(run, tolerance)` recomputes them for any
 tolerance from the raw records.

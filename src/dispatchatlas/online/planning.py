@@ -21,7 +21,8 @@ cap, or, in ``counted`` mode, the seconds, by raising
 :class:`BudgetExhausted`; a planner checks :attr:`PlanningContext.remaining`
 first. A pass that lets the exception escape, or whose measured time
 exceeds the seconds, **overruns**: it loses its window, nothing it computed
-is adopted, and the scheduler is charged the whole budget.
+is adopted, and the pass is recorded with the whole budget as its charge.
+Answers preempt every pass, so an overrun does not delay them.
 
 **Estimates.** The objective estimate of a plan is the mean, over the
 workflows that have arrived, of the predicted response time: the latest

@@ -10,29 +10,35 @@ forecast just before the event, which assumed the event would not happen.
 
 The **recovery time** is ``s - t`` for the first forecast ``s`` from the one
 just after the event on, at which ``R(s) <= (1 + tolerance) R-``. The
-realised outcome at the end of the run counts as a last forecast. An event
-whose cohort never returns within tolerance is **censored**: its recovery
-time runs to the end of the run and ``recovered`` is false.
+realised outcome at the end of the run counts as a last forecast. The end of
+the run is ``summary["end"]``, the time of the last step of the loop (the
+latest event, task start or finish, answer end, or pass end), not the horizon
+of the trace. An event whose cohort never returns within tolerance is
+**censored**: its recovery time runs to that end and ``recovered`` is false.
 
 The **degradation** is the integral of ``max(0, R - R-)`` from ``t`` to the
 recovery, with ``R`` held constant from one forecast to the next. It is
 ``None`` when some forecast in the window cannot predict a cohort workflow,
 because a task of it can run on no node that is up.
 
-Events at one instant share their forecasts, and so their recovery. An event
+Events at one instant share their forecasts, and so their recovery; events
+within 1e-9 of a decision point are at its instant, as in the runner. An event
 with an empty cohort, such as the first arrival, has no recovery.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from typing import TYPE_CHECKING, Any
+
+from dispatchatlas.online._engine import TIME_TOLERANCE
 
 if TYPE_CHECKING:
     from dispatchatlas.online.runner import OnlineResult
 
 __all__ = ["cohort_response", "recovery"]
 
-_EPSILON = 1e-9
+_EPSILON = TIME_TOLERANCE
 
 
 def cohort_response(result: OnlineResult, cohort: list[int], row: list[Any] | None) -> float | None:
@@ -62,6 +68,19 @@ def cohort_response(result: OnlineResult, cohort: list[int], row: list[Any] | No
     return total / len(cohort)
 
 
+def _at(times: list[float], rows: list[int], time: float) -> int | None:
+    """Return the last forecast whose time is within the runner's tolerance of ``time``.
+
+    The runner applies the events within :data:`~dispatchatlas.online._engine.TIME_TOLERANCE`
+    after a step together at that step's time, so a forecast of the decision point
+    can be stamped a hair before its event.
+    """
+    k = bisect_left(times, time + TIME_TOLERANCE) - 1
+    if k < 0 or times[k] < time - TIME_TOLERANCE:
+        return None
+    return rows[k]
+
+
 def recovery(result: OnlineResult, tolerance: float) -> list[dict[str, Any]]:
     """Return the recovery of every event of a run, as the module defines it.
 
@@ -77,9 +96,17 @@ def recovery(result: OnlineResult, tolerance: float) -> list[dict[str, Any]]:
         unpredictable ``R-``.
     """
     forecasts = result.forecasts
-    by_instant: dict[tuple[float, str], int] = {}
+    pre_times: list[float] = []
+    pre_rows: list[int] = []
+    post_times: list[float] = []
+    post_rows: list[int] = []
     for n, row in enumerate(forecasts):
-        by_instant[(row[0], row[1])] = n
+        if row[1] == "pre":
+            pre_times.append(row[0])
+            pre_rows.append(n)
+        elif row[1] == "post":
+            post_times.append(row[0])
+            post_rows.append(n)
     end = result.summary["end"]
     rows: list[dict[str, Any]] = []
     for index, (time, kind, subject) in enumerate(result.events):
@@ -96,8 +123,8 @@ def recovery(result: OnlineResult, tolerance: float) -> list[dict[str, Any]]:
             "degradation": None,
         }
         rows.append(entry)
-        pre = by_instant.get((time, "pre"))
-        post = by_instant.get((time, "post"))
+        pre = _at(pre_times, pre_rows, time)
+        post = _at(post_times, post_rows, time)
         if pre is None or post is None:
             continue
         cohort = [w for w, _ in forecasts[pre][3]]

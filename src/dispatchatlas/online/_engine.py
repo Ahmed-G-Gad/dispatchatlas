@@ -15,6 +15,10 @@ from dispatchatlas.core.errors import ModelError
 from dispatchatlas.core.model import Problem
 from dispatchatlas.solvers.scheduling import EPSILON, Builder, Decoder
 
+TIME_TOLERANCE = 1e-9
+"""Times within this of each other are one instant: the runner batches events by it and the
+recovery measures match forecasts to events by it."""
+
 type Allowed = Callable[[int], Sequence[int]]
 
 

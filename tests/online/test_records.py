@@ -42,9 +42,15 @@ def test_records_round_trip(tmp_path: Path):
 
 
 def test_equal_runs_give_equal_bytes(tmp_path: Path):
-    runs = [run_online(TwoNodes(), fork_trace(), None, clock=PlanningClock(rate=1.0))]
-    first = write_records(tmp_path / "a.jsonl.gz", runs).read_bytes()
-    second = write_records(tmp_path / "b.jsonl.gz", runs).read_bytes()
+    def run() -> OnlineResult:
+        result = run_online(TwoNodes(), fork_trace(), OnlineEft(), clock=PlanningClock(rate=1.0))
+        assert result.passes
+        for row in result.passes:
+            row["wall"] = 0.0  # the one field that measures the machine, even when counted
+        return result
+
+    first = write_records(tmp_path / "a.jsonl.gz", [run()]).read_bytes()
+    second = write_records(tmp_path / "b.jsonl.gz", [run()]).read_bytes()
     assert first == second
 
 
@@ -78,6 +84,15 @@ def test_a_job_that_fails_leaves_its_finished_runs_beside_the_target(tmp_path: P
     header, documents = read_records(temporary[0])
     assert header["format"] == RECORDS_FORMAT
     assert len(documents) == 1
+
+
+def test_a_header_that_is_not_json_leaves_no_temporary_file(tmp_path: Path):
+    target = tmp_path / "sub" / "job.jsonl.gz"
+    for header in ({"bad": object()}, {"bad": math.nan}):
+        with pytest.raises(SerializationError):
+            RecordWriter(target, header)
+        assert list(target.parent.iterdir()) == []
+    assert not target.exists()
 
 
 def test_a_torn_last_line_is_refused(tmp_path: Path):
