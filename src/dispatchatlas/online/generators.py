@@ -18,10 +18,10 @@ Arrivals:
 Availability, :func:`availability_events`: each node alternates between an
 up time drawn from a time-to-failure distribution and a down time drawn from
 a time-to-repair distribution, an alternating renewal process
-(:class:`AlternatingRenewal`). :class:`Exponential` and :class:`Weibull`
-distributions are provided; any object with ``sample`` and ``describe``
-methods can stand in for them, so a published availability model plugs in
-the same way.
+(:class:`AlternatingRenewal`). :class:`Exponential`, :class:`Weibull` and
+:class:`LogNormal` distributions are provided; any object with ``sample``
+and ``describe`` methods can stand in for them, so a published availability
+model plugs in the same way.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ __all__ = [
     "AlternatingRenewal",
     "Distribution",
     "Exponential",
+    "LogNormal",
     "Weibull",
     "availability_events",
     "poisson_arrivals",
@@ -56,6 +57,14 @@ TIME_DECIMALS = 6
 
 def _round(time: float) -> float:
     return round(time, TIME_DECIMALS)
+
+
+def _finite(value: float, what: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ModelError(f"{what} must be a number, got {value!r}")
+    if not math.isfinite(value):
+        raise ModelError(f"{what} must be finite, got {value!r}")
+    return float(value)
 
 
 def _positive(value: float, what: str) -> float:
@@ -124,6 +133,42 @@ class Weibull:
     def describe(self) -> dict[str, Scalar]:
         """Return ``{"distribution": "weibull", "shape": ..., "scale": ...}``."""
         return {"distribution": "weibull", "shape": self.shape, "scale": self.scale}
+
+
+@dataclass(frozen=True)
+class LogNormal:
+    """Log-normal durations, ``exp(mu + sigma * Z)`` for a standard normal ``Z``.
+
+    ``mu`` and ``sigma`` are the mean and standard deviation of the underlying
+    normal distribution of the logarithm, the parameterisation of the fits of
+    the Failure Trace Archive. ``mu`` may be negative; ``sigma`` must be
+    positive. The mean is ``exp(mu + sigma**2 / 2)``. The distribution is
+    heavy-tailed, as measured for the repair times of many clusters.
+
+    Sampling uses ``rng.lognormvariate``, which draws through
+    ``rng.normalvariate``, a rejection method, so the number of uniform
+    numbers a duration consumes from ``rng`` varies.
+    """
+
+    mu: float
+    sigma: float
+
+    def __post_init__(self) -> None:
+        _finite(self.mu, "log-normal mu")
+        _positive(self.sigma, "log-normal sigma")
+
+    @property
+    def mean(self) -> float:
+        """The mean duration."""
+        return math.exp(self.mu + self.sigma**2 / 2.0)
+
+    def sample(self, rng: random.Random) -> float:
+        """Draw one duration."""
+        return rng.lognormvariate(self.mu, self.sigma)
+
+    def describe(self) -> dict[str, Scalar]:
+        """Return ``{"distribution": "lognormal", "mu": ..., "sigma": ...}``."""
+        return {"distribution": "lognormal", "mu": self.mu, "sigma": self.sigma}
 
 
 @dataclass(frozen=True)

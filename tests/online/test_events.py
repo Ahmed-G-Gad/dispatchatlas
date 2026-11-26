@@ -16,6 +16,7 @@ from dispatchatlas.online import (
     Arrival,
     Exponential,
     Failure,
+    LogNormal,
     Repair,
     Trace,
     Weibull,
@@ -198,3 +199,50 @@ def test_a_static_problem_splits_into_workflows_with_offsets():
     )
     with pytest.raises(ModelError, match="joins two workflows"):
         workflows_from_problem(crossing)
+
+
+def test_lognormal_validates_its_parameters():
+    assert LogNormal(mu=-1.02, sigma=1.27).mean == pytest.approx(math.exp(-1.02 + 1.27**2 / 2))
+    for mu, sigma in [(math.nan, 1.0), (math.inf, 1.0), (0.0, 0.0), (0.0, -1.0), (0.0, math.inf)]:
+        with pytest.raises(ModelError):
+            LogNormal(mu, sigma)
+    with pytest.raises(ModelError):
+        LogNormal(True, 1.0)
+    with pytest.raises(ModelError):
+        LogNormal("0", 1.0)  # type: ignore[arg-type]
+
+
+def test_lognormal_durations_have_their_mean_and_are_deterministic():
+    lognormal = LogNormal(mu=0.5, sigma=0.6)
+    draws = [lognormal.sample(r) for r in [random.Random(4)] for _ in range(40000)]
+    assert min(draws) > 0.0
+    assert sum(draws) / len(draws) == pytest.approx(lognormal.mean, rel=0.03)
+    again = [lognormal.sample(r) for r in [random.Random(4)] for _ in range(40000)]
+    assert again == draws
+
+
+def test_lognormal_draws_are_those_of_the_standard_library_formula():
+    # X = exp(mu + sigma * Z) with Z from the stream's normalvariate
+    lognormal = LogNormal(mu=0.91, sigma=1.64)
+    ours, theirs = random.Random(11), random.Random(11)
+    for _ in range(100):
+        assert lognormal.sample(ours) == math.exp(0.91 + 1.64 * theirs.normalvariate(0.0, 1.0))
+
+
+def test_lognormal_equality_repr_and_description():
+    assert LogNormal(0.1, 2.0) == LogNormal(0.1, 2.0)
+    assert LogNormal(0.1, 2.0) != LogNormal(0.1, 2.5)
+    assert repr(LogNormal(0.1, 2.0)) == "LogNormal(mu=0.1, sigma=2.0)"
+    assert LogNormal(0.1, 2.0).describe() == {"distribution": "lognormal", "mu": 0.1, "sigma": 2.0}
+
+
+def test_lognormal_in_an_alternating_renewal():
+    model = AlternatingRenewal(Weibull(0.5, 10.0), LogNormal(0.05, 1.42))
+    first = model.outages(random.Random(6), horizon=500.0)
+    assert first
+    assert first == model.outages(random.Random(6), horizon=500.0)
+    assert all(f < r for f, r in first)
+    assert model.describe()["ttr_distribution"] == "lognormal"
+    assert model.describe()["ttr_mu"] == 0.05
+    trace = availability_events(["a", "b"], model, seed=3, horizon=500.0)
+    assert trace.digest == availability_events(["a", "b"], model, seed=3, horizon=500.0).digest

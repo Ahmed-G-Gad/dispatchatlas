@@ -68,8 +68,9 @@ outages do not change with the others:
   WfCommons or the Alibaba trace, into workflows and submit times;
 - `availability_events(nodes, model, seed, horizon)` with an
   `AlternatingRenewal` of time-to-failure and time-to-repair distributions,
-  `Exponential` and `Weibull` provided; another published model plugs in as
-  any object with `sample` and `describe`.
+  `Exponential`, `Weibull` and `LogNormal` (the parameters of the underlying
+  normal, as the Failure Trace Archive fits them) provided; another published
+  model plugs in as any object with `sample` and `describe`.
 
 ## The rules of the loop
 

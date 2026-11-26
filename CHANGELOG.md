@@ -485,10 +485,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflows and the failures and repairs of nodes, with a SHA-256 content
   digest; seeded generators draw Poisson arrivals at a rate or an offered
   load (`rate_for_load`), arrivals at given submit times, and outages from an
-  alternating renewal of exponential or Weibull up and down times, each from a
-  stream of its own so methods compared on a trace meet the same events. A
-  task commits when it starts and its reservation never moves; a failure
-  loses the attempts running on the node, whose tasks restart from scratch,
+  alternating renewal of exponential, Weibull or log-normal up and down
+  times, each from a stream of its own so methods compared on a trace meet
+  the same events. A task commits when it starts and its reservation never
+  moves; a failure loses the attempts running on the node, whose tasks restart from scratch,
   and the node takes nothing until its repair. A `Planner` returns an order
   and a node for every uncommitted task at each decision point, within a
   `Budget` of placements and seconds, charged in simulated time by a
